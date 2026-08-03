@@ -391,15 +391,21 @@ FLM_EXPORT flm_status FLM_CALL flm_model_get_path(flm_model model, char** out_pa
 /**
  * Download the model.
  *
- * For a package handle this downloads the currently selected variant and the shared
- * assets it references — not the whole package. Select a variant first with
- * flm_package_select_variant() to control what is fetched.
+ * This only completes for a model that already has its files on the device — a package
+ * whose selected variant is present, for instance. There is no catalog fetch: the
+ * Foundry Local catalog publishes desktop builds (CUDA, DirectML, OpenVINO, x64), which
+ * on a phone are gigabytes that cannot execute. A model that is not on the device
+ * returns FLM_ERROR_NOT_IMPLEMENTED pointing at flm_manager_add_model_source_async(),
+ * which is how a mobile app supplies a model: bundled in the app, or downloaded from a
+ * URL the app hosts, picking the variant this device can actually run.
+ *
+ * For a package handle this covers the currently selected variant and the shared assets
+ * it references — not the whole package. Select a variant first with
+ * flm_package_select_variant() to control what is considered.
  *
  * `options_json` may be NULL, or:
  * {
- *   "allow_metered": false,      // override the manager-level metered policy
- *   "resume": true,              // resume a partial download, default true
- *   "verify_checksums": true     // default true
+ *   "allow_metered": false       // override the manager-level metered policy
  * }
  */
 FLM_EXPORT flm_status FLM_CALL flm_model_download_async(flm_model model, const char* options_json,
@@ -408,7 +414,12 @@ FLM_EXPORT flm_status FLM_CALL flm_model_download_async(flm_model model, const c
                                                         flm_job* out_job) FLM_NOEXCEPT;
 
 /**
- * Load the model into memory, downloading it first if necessary.
+ * Load the model into memory.
+ *
+ * The model's files must already be on the device; add it with
+ * flm_manager_add_model_source_async() first. Loading a model that is not present
+ * returns FLM_ERROR_NOT_IMPLEMENTED.
+ *
  * `options_json` may be NULL, or `{ "execution_provider": "QNN", "device": "npu" }` to
  * override the automatically selected placement.
  */

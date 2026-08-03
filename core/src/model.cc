@@ -12,28 +12,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-/// Bridges the upstream C progress callback onto our JobContext.
-struct ProgressBridge {
-  JobContext* context;
-  const char* stage;
-  int64_t total_bytes;
-};
-
-int ForwardProgress(float value, void* user_data) {
-  auto* bridge = static_cast<ProgressBridge*>(user_data);
-  if (bridge == nullptr || bridge->context == nullptr) {
-    return 0;
-  }
-  // Upstream reports percent only, so derive byte counts from the catalog's declared
-  // size. An approximate byte figure is far more useful in a UI than none at all.
-  int64_t completed = FLM_UNKNOWN_SIZE;
-  if (bridge->total_bytes > 0) {
-    completed = static_cast<int64_t>(static_cast<double>(bridge->total_bytes) * (value / 100.0));
-  }
-  bridge->context->ReportProgress(value, bridge->stage, completed, bridge->total_bytes);
-  return bridge->context->IsCancelled() ? 1 : 0;
-}
-
 }  // namespace
 
 Model::Model(std::shared_ptr<Manager> manager, flModel* upstream, bool owns_upstream)
@@ -91,7 +69,6 @@ bool Model::IsLoaded() const {
 
 nlohmann::json Model::Download(const nlohmann::json& options, JobContext& context) {
   manager_->ThrowIfShutdown();
-  const Runtime& runtime = Runtime::Instance();
 
   const nlohmann::json info = GetInfo();
   int64_t expected_bytes = info.value("file_size_bytes", static_cast<int64_t>(0));
@@ -125,21 +102,16 @@ nlohmann::json Model::Download(const nlohmann::json& options, JobContext& contex
 
   context.ReportProgress(0.0f, "downloading", 0, expected_bytes);
 
-  ProgressBridge bridge{&context, "downloading", expected_bytes};
-  runtime.Check(runtime.model_api().Download(upstream_, ForwardProgress, &bridge), "download model");
-
-  context.ThrowIfCancelled();
-  context.ReportProgress(100.0f, "downloading", expected_bytes, expected_bytes);
-
-  {
-    // On-disk layout is authoritative once downloaded; re-parse so variant cache state
-    // and download estimates reflect what actually landed.
-    std::lock_guard<std::mutex> lock(mutex_);
-    package_checked_ = false;
-    package_.reset();
-  }
-
-  return nlohmann::json{{"path", GetPath()}, {"bytes", expected_bytes}};
+  // Deliberately not Foundry Local's downloader. That one resolves the model through the
+  // Azure catalog and fetches the desktop build published there — CUDA, DirectML,
+  // OpenVINO, x64. On a phone those are gigabytes that cannot execute. Mobile models come
+  // from the app instead, through flm_manager_add_model_source_async, which downloads
+  // through this SDK's own downloader and picks the variant this device can actually run.
+  throw Error(FLM_ERROR_NOT_IMPLEMENTED,
+              "this model is not present on the device and cannot be fetched from the Foundry Local "
+              "catalog, which publishes desktop builds. Supply the model with "
+              "flm_manager_add_model_source_async(), either bundled in the app or from a URL you host.",
+              {{"model", GetInfo().value("id", std::string())}, {"expected_bytes", expected_bytes}});
 }
 
 nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
