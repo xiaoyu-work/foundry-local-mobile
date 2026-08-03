@@ -20,12 +20,20 @@ import 'bindings.dart';
 ///   * Linux/Windows — used only by the Dart test host and `flutter test`; the
 ///     library is expected next to the executable.
 class NativeLibrary {
-  NativeLibrary._(this.bindings);
+  NativeLibrary._(this.dylib) : bindings = FlmBindings(dylib);
 
   static NativeLibrary? _instance;
 
+  /// The raw DynamicLibrary. Exposed so the shim adapter layer can look up the
+  /// `flm_dart_bridge_*` trampolines from `src/flm_dart_bridge.c`.
+  final DynamicLibrary dylib;
+
   /// Handle onto the raw FFI bindings. Never null after [instance] has been read.
   final FlmBindings bindings;
+
+  /// Convenience accessor for the DynamicLibrary. Equivalent to
+  /// `NativeLibrary.instance.dylib`.
+  static DynamicLibrary get process => instance.dylib;
 
   /// Lazily open the runtime library the first time it is needed.
   ///
@@ -33,13 +41,13 @@ class NativeLibrary {
   /// so opening it a second time from a background isolate is cheap and matches the
   /// original.
   static NativeLibrary get instance {
-    return _instance ??= NativeLibrary._(FlmBindings(_open()));
+    return _instance ??= NativeLibrary._(_open());
   }
 
   /// Test / integration hook. Callers that already opened the library themselves (or
   /// linked it statically into a host executable) can inject an alternate lookup.
-  static void overrideForTesting(FlmBindings bindings) {
-    _instance = NativeLibrary._(bindings);
+  static void overrideForTesting(DynamicLibrary library) {
+    _instance = NativeLibrary._(library);
   }
 
   static DynamicLibrary _open() {
