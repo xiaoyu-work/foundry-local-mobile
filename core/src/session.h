@@ -93,6 +93,7 @@ class Session {
   void RestoreHistory(const nlohmann::json& history);
 
   SessionType type() const noexcept { return type_; }
+  const std::shared_ptr<Model>& model() const noexcept { return model_; }
 
  private:
   /// Translate generation parameters into upstream key/value options.

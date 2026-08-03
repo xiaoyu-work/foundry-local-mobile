@@ -41,6 +41,12 @@ extern "C" {
  * Library-wide
  * ========================================================================= */
 
+/** Semantic version of this library. Also available at runtime via flm_version_string(). */
+#define FLM_VERSION_MAJOR 0
+#define FLM_VERSION_MINOR 1
+#define FLM_VERSION_PATCH 0
+#define FLM_VERSION_STRING "0.1.0"
+
 /** Semantic version of this library, e.g. "0.1.0". Owned by the library. */
 FLM_EXPORT const char* FLM_CALL flm_version_string(void) FLM_NOEXCEPT;
 

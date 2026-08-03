@@ -55,6 +55,10 @@ nlohmann::json MakeErrorJson(flm_status status, const std::string& message, cons
 /// error. Used by the FLM_TRY/FLM_CATCH wrapper at every ABI entry point.
 flm_status TranslateException(const std::exception_ptr& eptr) noexcept;
 
+/// Forward a log line to the sink installed with flm_set_log_callback, if any and if the
+/// level passes the configured threshold. Defined in api.cc, where the sink lives.
+void EmitLog(flm_log_level level, const char* tag, const char* message) noexcept;
+
 }  // namespace flm
 
 /// Every ABI entry point is wrapped so that no exception can cross the C boundary.

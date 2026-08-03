@@ -65,6 +65,8 @@ endif()
 # --------------------------------------------------------------------------
 set(FLM_SOURCES
     src/error.cc
+    src/encoding.cc
+    src/sha256.cc
     src/handle_table.cc
     src/job.cc
     src/runtime.cc
