@@ -156,7 +156,11 @@ if(FLM_BUILD_SHARED AND NOT APPLE AND NOT MSVC)
 endif()
 
 if(FLM_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
+        add_subdirectory(examples)
+    else()
+        message(WARNING "FLM_BUILD_EXAMPLES is ON but core/examples does not exist; skipping.")
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
