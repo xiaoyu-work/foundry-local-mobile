@@ -67,51 +67,29 @@ bool Model::IsLoaded() const {
   return loaded != 0;
 }
 
-nlohmann::json Model::Download(const nlohmann::json& options, JobContext& context) {
+nlohmann::json Model::Download(const nlohmann::json& /*options*/, JobContext& context) {
   manager_->ThrowIfShutdown();
 
-  const nlohmann::json info = GetInfo();
-  int64_t expected_bytes = info.value("file_size_bytes", static_cast<int64_t>(0));
-
-  // For a package, only the selected variant and its shared assets are fetched, so the
-  // estimate must come from the package rather than the catalog's whole-entry size.
-  if (IsPackage()) {
-    const nlohmann::json estimate = EstimateDownload(std::nullopt);
-    expected_bytes = estimate.value("download_bytes", expected_bytes);
-
-    if (!estimate.value("fits_on_device", true)) {
-      throw Error(FLM_ERROR_STORAGE, "not enough free storage for this model",
-                  {{"required_bytes", expected_bytes},
-                   {"available_bytes", estimate.value("available_storage_bytes", 0)}});
-    }
+  // Already on disk: nothing to fetch. This is the case that succeeds, and it is how a
+  // model added through flm_manager_add_model_source_async behaves, since that call has
+  // already put the files in place.
+  if (IsCached()) {
+    const int64_t bytes = GetInfo().value("file_size_bytes", static_cast<int64_t>(0));
+    context.ReportProgress(100.0f, "downloading", bytes, bytes);
+    return nlohmann::json{{"path", GetPath()}, {"bytes", bytes}};
   }
-
-  // Respect the metered-network policy unless the caller explicitly overrides it. This
-  // is the check that stops an app from silently burning a user's data plan.
-  const bool allow_metered = options.value("allow_metered", manager_->settings().download_on_metered_network);
-  const DeviceProfile profile = GetDeviceProfile();
-  if (!allow_metered && !profile.CanDownloadSilently(expected_bytes)) {
-    if (profile.network == NetworkState::kNone) {
-      throw Error(FLM_ERROR_NETWORK, "no network connection is available for this download");
-    }
-    throw Error(FLM_ERROR_NETWORK,
-                "this download requires a large transfer on a metered connection. Pass "
-                "{\"allow_metered\": true} to proceed.",
-                {{"download_bytes", expected_bytes}, {"network", ToString(profile.network)}});
-  }
-
-  context.ReportProgress(0.0f, "downloading", 0, expected_bytes);
 
   // Deliberately not Foundry Local's downloader. That one resolves the model through the
   // Azure catalog and fetches the desktop build published there — CUDA, DirectML,
-  // OpenVINO, x64. On a phone those are gigabytes that cannot execute. Mobile models come
-  // from the app instead, through flm_manager_add_model_source_async, which downloads
-  // through this SDK's own downloader and picks the variant this device can actually run.
+  // OpenVINO, x64. On a phone those are gigabytes with no execution provider that can run
+  // them. Mobile models come from the app instead, through
+  // flm_manager_add_model_source_async, which fetches through this SDK's own downloader
+  // and picks the variant the device can actually run.
   throw Error(FLM_ERROR_NOT_IMPLEMENTED,
-              "this model is not present on the device and cannot be fetched from the Foundry Local "
-              "catalog, which publishes desktop builds. Supply the model with "
+              "this model is not on the device, and it cannot be fetched from the Foundry Local "
+              "catalog because that catalog publishes desktop builds. Supply the model with "
               "flm_manager_add_model_source_async(), either bundled in the app or from a URL you host.",
-              {{"model", GetInfo().value("id", std::string())}, {"expected_bytes", expected_bytes}});
+              {{"model", GetInfo().value("id", std::string())}});
 }
 
 nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
@@ -119,9 +97,8 @@ nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
   const Runtime& runtime = Runtime::Instance();
 
   if (!IsCached()) {
-    // Loading implies downloading; splitting them would make every caller write the
-    // same two-step dance.
-    context.ReportProgress(0.0f, "downloading");
+    // Not on the device. Download() no longer fetches anything, so this is purely the
+    // route to its error, which names the call an app should have made instead.
     Download(options, context);
   }
 

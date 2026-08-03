@@ -391,22 +391,19 @@ FLM_EXPORT flm_status FLM_CALL flm_model_get_path(flm_model model, char** out_pa
 /**
  * Download the model.
  *
- * This only completes for a model that already has its files on the device — a package
- * whose selected variant is present, for instance. There is no catalog fetch: the
- * Foundry Local catalog publishes desktop builds (CUDA, DirectML, OpenVINO, x64), which
- * on a phone are gigabytes that cannot execute. A model that is not on the device
- * returns FLM_ERROR_NOT_IMPLEMENTED pointing at flm_manager_add_model_source_async(),
- * which is how a mobile app supplies a model: bundled in the app, or downloaded from a
- * URL the app hosts, picking the variant this device can actually run.
+ * Succeeds when the model's files are already on the device, which is the state
+ * flm_manager_add_model_source_async() leaves them in; the result then reports the
+ * cached path. There is no catalog fetch: the Foundry Local catalog publishes desktop
+ * builds (CUDA, DirectML, OpenVINO, x64), which on a phone are gigabytes with no
+ * execution provider that can run them. A model that is not on the device returns
+ * FLM_ERROR_NOT_IMPLEMENTED naming flm_manager_add_model_source_async(), which is how a
+ * mobile app supplies a model: bundled in the app, or downloaded from a URL the app
+ * hosts, picking the variant this device can actually run.
  *
- * For a package handle this covers the currently selected variant and the shared assets
- * it references — not the whole package. Select a variant first with
- * flm_package_select_variant() to control what is considered.
+ * `options_json` is accepted and ignored; it exists so the call keeps the shape of the
+ * other async operations.
  *
- * `options_json` may be NULL, or:
- * {
- *   "allow_metered": false       // override the manager-level metered policy
- * }
+ * Result: `{ "path": "/data/.../models/qwen2.5-0.5b", "bytes": 542113792 }`.
  */
 FLM_EXPORT flm_status FLM_CALL flm_model_download_async(flm_model model, const char* options_json,
                                                         flm_progress_callback on_progress,
@@ -699,6 +696,7 @@ FLM_EXPORT flm_status FLM_CALL flm_job_cancel(flm_job job) FLM_NOEXCEPT;
  *                       "bytes_reused": 0,              // already on disk, not refetched
  *                       "was_cached": false }           // true if nothing had to be fetched
  *   load              { "path": "/data/.../models/qwen2.5-0.5b", "bytes": 542113792 }
+ *   download          { "path": "...", "bytes": 542113792 }   // only when already cached
  *   complete          { "text": "...",
  *                       "finish_reason": "stop",        // stop | length | tool_calls | cancelled | error | none
  *                       "tool_calls": [ { "call_id": "c1",
