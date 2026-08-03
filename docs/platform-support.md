@@ -137,12 +137,19 @@ emulator or a device.
 ## Model size and download budgets
 
 The SDK enforces per-device budgets rather than trusting an app to know how big a
-device can go. These apply to model acquisition through
-`flm_manager_add_model_source_async` — the two shipping mobile model sources are a
-model bundled into the app (no download) and a URL the app itself hosts (subject to
-these budgets). There is no built-in Foundry Local catalog fetch on mobile; the
-desktop catalog publishes CUDA/DirectML/OpenVINO/x64 builds that are not the shape
-mobile targets need.
+model it can accept. These apply to the mobile acquisition path,
+`flm_manager_add_model_source_async` — either a model bundled into the app (no
+download) or a URL the app itself hosts (subject to these budgets). Cross-platform
+policy is expressed as `VariantConstraints` on the source and applied against the
+manifest *before* any weights transfer; the four supported fields are
+`max_download_bytes`, `allowed_devices`, `prefer_smallest`, `require_cached`, and
+adding others will silently do nothing.
+
+The catalog surface (`flm_catalog_list_models_async`, `flm_catalog_get_model_async`)
+still lists and inspects models already on the device, but it is not an acquisition
+path on mobile: the upstream Foundry Local catalog publishes desktop
+CUDA/DirectML/OpenVINO/x64 builds that are not the shape mobile targets need, and
+`flm_model_download_async` on a catalog model returns `FLM_ERROR_NOT_IMPLEMENTED`.
 
 The budget constants live in `core/src/device_profile.cc`:
 
