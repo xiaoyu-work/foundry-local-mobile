@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "error.h"
 
@@ -50,7 +51,9 @@ class Runtime {
 
   /// Convert an upstream flStatus* into an Error and release it. No-op when null.
   /// Every upstream call site funnels through this so error mapping stays in one place.
-  void Check(flStatus* status, const char* operation) const;
+  /// `operation` is folded into the message, so callers may compose it with the model or
+  /// alias involved without needing a separate buffer to keep alive.
+  void Check(flStatus* status, std::string_view operation) const;
 
   /// Same, but returns the status code instead of throwing. For destructors and
   /// best-effort cleanup paths.

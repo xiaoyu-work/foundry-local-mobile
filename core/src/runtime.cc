@@ -190,7 +190,7 @@ void Runtime::ResolveApiTables() {
   }
 }
 
-void Runtime::Check(flStatus* status, const char* operation) const {
+void Runtime::Check(flStatus* status, std::string_view operation) const {
   if (status == nullptr) {
     return;
   }
@@ -199,8 +199,9 @@ void Runtime::Check(flStatus* status, const char* operation) const {
   std::string message_copy = message != nullptr ? message : "unspecified runtime error";
   api_->Status_Release(status);
 
-  throw Error(MapUpstreamError(code), std::string(operation) + ": " + message_copy,
-              {{"operation", operation}, {"upstream_code", static_cast<int>(code)}});
+  std::string operation_copy(operation);
+  throw Error(MapUpstreamError(code), operation_copy + ": " + message_copy,
+              {{"operation", operation_copy}, {"upstream_code", static_cast<int>(code)}});
 }
 
 flm_status Runtime::CheckNoThrow(flStatus* status) const noexcept {

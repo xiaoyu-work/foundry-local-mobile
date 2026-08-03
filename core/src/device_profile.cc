@@ -4,6 +4,7 @@
 #include "device_profile.h"
 
 #include <algorithm>
+#include <cctype>
 #include <mutex>
 
 namespace flm {
@@ -131,7 +132,7 @@ bool DeviceProfile::CanDownloadSilently(int64_t bytes) const {
   return true;
 }
 
-const DeviceProfile& GetDeviceProfile() {
+DeviceProfile GetDeviceProfile() {
   std::lock_guard<std::mutex> lock(g_profile_mutex);
   if (!g_static_initialized) {
     platform::FillStaticInfo(g_profile);
@@ -147,6 +148,45 @@ const DeviceProfile& GetDeviceProfile() {
 void RefreshDeviceProfile() {
   std::lock_guard<std::mutex> lock(g_profile_mutex);
   g_static_initialized = false;
+}
+
+void ClassifyExecutionProvider(const std::string& name, flm_device* out_device, int* out_priority) {
+  // Names arrive in several shapes across runtime versions ("QNN", "QNNExecutionProvider",
+  // "qnn"), so match case-insensitively on a substring rather than on equality.
+  std::string lower;
+  lower.reserve(name.size());
+  for (char c : name) {
+    lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  }
+
+  const auto contains = [&lower](const char* needle) { return lower.find(needle) != std::string::npos; };
+
+  flm_device device = FLM_DEVICE_CPU;
+  int priority = 100;
+
+  if (contains("qnn") || contains("nnapi") || contains("vitisai") || contains("openvino") || contains("coreml")) {
+    // CoreML and OpenVINO span CPU/GPU/NPU; report NPU because that is the placement
+    // worth selecting a specialised variant for.
+    device = FLM_DEVICE_NPU;
+    priority = 0;
+  } else if (contains("cuda") || contains("dml") || contains("directml") || contains("rocm") || contains("webgpu") ||
+             contains("metal")) {
+    device = FLM_DEVICE_GPU;
+    priority = 10;
+  } else if (contains("xnnpack")) {
+    device = FLM_DEVICE_CPU;
+    priority = 20;
+  } else if (contains("cpu")) {
+    device = FLM_DEVICE_CPU;
+    priority = 30;
+  }
+
+  if (out_device != nullptr) {
+    *out_device = device;
+  }
+  if (out_priority != nullptr) {
+    *out_priority = priority;
+  }
 }
 
 void MergeRuntimeExecutionProviders(std::vector<ExecutionProviderInfo> runtime_providers) {

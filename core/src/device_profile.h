@@ -84,7 +84,11 @@ struct DeviceProfile {
 
 /// Detect the device profile. Static fields are cached; dynamic fields (memory, thermal,
 /// network) are re-read on every call, so this is safe to poll before a large download.
-const DeviceProfile& GetDeviceProfile();
+///
+/// Returned by value on purpose. The cached profile is mutated by dynamic re-reads and by
+/// lifecycle notifications from other threads, so handing out a reference would race with
+/// any worker that is midway through scoring variants against it.
+DeviceProfile GetDeviceProfile();
 
 /// Force a full re-detection. Called on lifecycle transitions that invalidate the
 /// cached dynamic state.
@@ -94,6 +98,12 @@ void RefreshDeviceProfile();
 /// which EPs are actually registered; platform detection only knows what the hardware
 /// could support. The intersection is what variant selection may use.
 void MergeRuntimeExecutionProviders(std::vector<ExecutionProviderInfo> runtime_providers);
+
+/// Infer the device type and scheduling priority of an execution provider from its name.
+/// The runtime's EP discovery reports only a name and a registration flag, but variant
+/// scoring needs to know whether "QNNExecutionProvider" means NPU or CPU. Keeping the
+/// mapping in one place stops each platform backend from inventing its own.
+void ClassifyExecutionProvider(const std::string& name, flm_device* out_device, int* out_priority);
 
 /// Platform hooks, implemented per-OS.
 namespace platform {
