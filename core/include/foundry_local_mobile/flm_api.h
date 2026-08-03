@@ -62,6 +62,19 @@ FLM_EXPORT flm_status FLM_CALL flm_set_log_callback(flm_log_callback callback, v
 /** Set the minimum level forwarded to the log sink. Defaults to FLM_LOG_WARNING. */
 FLM_EXPORT flm_status FLM_CALL flm_set_log_level(flm_log_level level) FLM_NOEXCEPT;
 
+/**
+ * Point the loader at the Foundry Local runtime shared library. Must be called before
+ * the first flm_manager_create(); later calls have no effect.
+ *
+ * Needed on Android, where the reliable way to locate a bundled `.so` across OEM devices
+ * is `ApplicationInfo.nativeLibraryDir` rather than the default loader search path, and
+ * for apps that download the runtime after first launch to keep the initial install small.
+ */
+FLM_EXPORT flm_status FLM_CALL flm_set_runtime_library_path(const char* path) FLM_NOEXCEPT;
+
+/** Whether the runtime library is present and loadable. Never throws or logs on failure. */
+FLM_EXPORT int32_t FLM_CALL flm_is_runtime_available(void) FLM_NOEXCEPT;
+
 /* =========================================================================
  * Errors
  * ========================================================================= */
