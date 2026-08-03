@@ -67,6 +67,15 @@ struct ModelSource {
   VariantConstraints constraints;
   nlohmann::json prompt_templates = nlohmann::json::object();
 
+  /// Continue a partial file rather than restarting it. Defaults to true; an app can
+  /// turn it off when it suspects a server that mishandles Range requests.
+  bool resume = true;
+
+  /// Verify each downloaded file against the digest in the manifest. Defaults to true
+  /// and should stay on: a model from a URL is untrusted input that the runtime will
+  /// mmap and execute operators from.
+  bool verify_checksums = true;
+
   static ModelSource FromJson(const nlohmann::json& json);
 };
 

@@ -260,6 +260,10 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *   "constraints": { ... }           // optional
  * }
  *
+ * Both kinds also accept:
+ *   "resume": true,                  // continue a partial download, default true
+ *   "verify_checksums": true         // check each file's digest, default true
+ *
  * A bundled source is loaded in place by default, since the files are already on the
  * device and copying would double the storage the user pays for.
  *

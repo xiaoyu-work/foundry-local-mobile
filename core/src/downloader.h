@@ -66,6 +66,9 @@ struct DownloadPlan {
   /// manifest is pruned to describe only the variant that was actually downloaded.
   nlohmann::json manifest_override;
 
+  bool resume = true;
+  bool verify_checksums = true;
+
   int64_t total_bytes = 0;
 };
 
