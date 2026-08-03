@@ -1,0 +1,232 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and attach artifacts to'
+        required: true
+        type: string
+
+# Read-only by default. The `publish` job below opts into `contents: write` for
+# the sole purpose of creating and updating the GitHub Release.
+permissions:
+  contents: read
+
+env:
+  FLM_FOUNDRY_LOCAL_REF: cli-preview-0.10.2
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Android AAR / jniLibs bundle.
+  # We always produce a jniLibs.zip with the three ABIs. If the Android binding
+  # directory has landed (owned by another agent), we additionally run its
+  # `assembleRelease` and attach the AAR. If it has not, the binding artefact
+  # step is skipped rather than failing the release.
+  # ---------------------------------------------------------------------------
+  android:
+    name: android artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Resolve NDK
+        run: |
+          ndk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}/ndk"
+          latest="$(ls -1 "${ndk_root}" | sort -V | tail -n1)"
+          echo "ANDROID_NDK_HOME=${ndk_root}/${latest}" >> "$GITHUB_ENV"
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Build all Android ABIs
+        run: ./scripts/build_android.sh --build-type Release
+
+      - name: Package jniLibs.zip
+        run: |
+          cd build/android
+          zip -r "${GITHUB_WORKSPACE}/foundry-local-mobile-android-jniLibs.zip" jniLibs
+
+      - name: Build AAR (if the Android binding is present)
+        if: hashFiles('bindings/android/gradlew') != ''
+        env:
+          # Point the Android Gradle module at the freshly built native
+          # libraries. The binding's build.gradle is expected to honour this.
+          FLM_NATIVE_JNI_LIBS_DIR: ${{ github.workspace }}/build/android/jniLibs
+        run: |
+          cd bindings/android
+          chmod +x gradlew
+          ./gradlew --no-daemon :assembleRelease
+          find . -type f -name '*.aar' \
+            -exec cp {} "${GITHUB_WORKSPACE}/foundry-local-mobile-android.aar" \;
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            foundry-local-mobile-android-jniLibs.zip
+            foundry-local-mobile-android.aar
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Apple XCFramework. Always produced; the iOS binding either bundles it in
+  # its Package.swift as a binaryTarget or lets consumers download it directly.
+  # ---------------------------------------------------------------------------
+  apple:
+    name: apple artifacts
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Build XCFramework
+        run: ./scripts/build_apple.sh --build-type Release
+
+      - name: Zip XCFramework
+        # Bare `zip` preserves symlinks inside the XCFramework, which
+        # `actions/upload-artifact` alone does not — critical for iOS
+        # dyld_shared_cache resolution.
+        run: |
+          cd build/apple
+          zip -ry "${GITHUB_WORKSPACE}/foundry-local-mobile-apple-xcframework.zip" \
+            FoundryLocalMobile.xcframework
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple
+          path: foundry-local-mobile-apple-xcframework.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Flutter pub package. Delegates entirely to the plugin's own pubspec; the
+  # only thing this job knows is the directory. `pub publish --dry-run` is the
+  # standard packaging step and produces the .tar.gz publish would upload.
+  # ---------------------------------------------------------------------------
+  flutter:
+    name: flutter package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for Flutter binding
+        id: probe
+        run: |
+          if [ -f bindings/flutter/pubspec.yaml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::bindings/flutter is not present; skipping Flutter packaging"
+          fi
+
+      - name: Set up Dart
+        if: steps.probe.outputs.present == 'true'
+        uses: dart-lang/setup-dart@v1
+
+      - name: Package Flutter plugin
+        if: steps.probe.outputs.present == 'true'
+        run: |
+          cd bindings/flutter
+          dart pub get
+          dart pub publish --dry-run
+          # `dart pub publish --dry-run` does not emit an archive, but pana +
+          # tar of the tracked files matches what the pub server would receive.
+          tar -czf "${GITHUB_WORKSPACE}/foundry-local-mobile-flutter.tar.gz" \
+            --exclude .dart_tool --exclude build --exclude '*.g.dart' -- .
+
+      - name: Upload
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter
+          path: foundry-local-mobile-flutter.tar.gz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # React Native npm package.
+  # ---------------------------------------------------------------------------
+  react-native:
+    name: react-native package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for React Native binding
+        id: probe
+        run: |
+          if [ -f bindings/react-native/package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::bindings/react-native is not present; skipping npm packaging"
+          fi
+
+      - name: Set up Node
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Pack
+        if: steps.probe.outputs.present == 'true'
+        run: |
+          cd bindings/react-native
+          npm ci --ignore-scripts || npm install --ignore-scripts
+          npm pack
+          mv ./*.tgz "${GITHUB_WORKSPACE}/foundry-local-mobile-react-native.tgz"
+
+      - name: Upload
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-native
+          path: foundry-local-mobile-react-native.tgz
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Attach every artifact produced above to the tagged release.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish release
+    needs: [android, apple, flutter, react-native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Flatten dist/<artifact>/... into dist/, since the release UI does
+          # not display artifact directories.
+          assets=()
+          while IFS= read -r -d '' f; do assets+=("$f"); done \
+            < <(find dist -type f -print0)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No release assets were produced by upstream jobs." >&2
+            exit 1
+          fi
+          # Create the release lazily so re-runs against an existing tag just
+          # add or overwrite assets (--clobber).
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 \
+            || gh release create "${RELEASE_TAG}" \
+                --title "${RELEASE_TAG}" \
+                --generate-notes
+          gh release upload "${RELEASE_TAG}" --clobber "${assets[@]}"

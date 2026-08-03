@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Default to read-only. Individual jobs (none today) can opt in to write scopes.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the upstream ref every job stages so a moving branch cannot make CI
+  # flake between two nearby runs.
+  FLM_FOUNDRY_LOCAL_REF: cli-preview-0.10.2
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Shell and workflow linting. Cheap; runs on every PR.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint (shellcheck + workflow syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+      - name: Validate workflow YAML
+        run: |
+          python3 -c '
+          import sys, yaml, pathlib
+          errors = 0
+          for path in pathlib.Path(".github/workflows").glob("*.yml"):
+              try:
+                  yaml.safe_load(path.read_text())
+                  print(f"OK  {path}")
+              except yaml.YAMLError as e:
+                  print(f"BAD {path}: {e}")
+                  errors += 1
+          sys.exit(errors)
+          '
+
+  # ---------------------------------------------------------------------------
+  # Native Linux build of the core. Doubles as the C++ warning check: the core
+  # already compiles with -Wall -Wextra -Wpedantic; we add -Werror here so a
+  # newly introduced warning fails CI instead of quietly landing.
+  # ---------------------------------------------------------------------------
+  linux-core:
+    name: core / linux-${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Cache upstream SDK headers
+        uses: actions/cache@v4
+        with:
+          path: third_party/foundry-local
+          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Cache CMake FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/linux/_deps
+          key: fetchcontent-linux-${{ matrix.build_type }}-${{ hashFiles('core/CMakeLists.txt') }}
+
+      - name: Configure
+        run: |
+          cmake -S core -B build/linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DFLM_BUILD_SHARED=ON \
+            -DCMAKE_CXX_FLAGS="-Werror"
+
+      - name: Build
+        run: cmake --build build/linux --parallel
+
+      - name: Verify the flat C ABI is exported
+        # Sanity check the header→symbol path: the ABI defines 60+ flm_*
+        # functions; if the shared library ships with none of them the build
+        # succeeded for the wrong reason.
+        run: |
+          count=$(nm -D --defined-only build/linux/libfoundry_local_mobile.so \
+            | grep -Ec ' T flm_')
+          echo "exported flm_* symbols: ${count}"
+          test "${count}" -ge 40
+
+  # ---------------------------------------------------------------------------
+  # Android cross-build via the NDK preinstalled on the GitHub-hosted runner.
+  # We do not ship an emulator run: the core dlopens the Foundry Local runtime
+  # library, which is not available on a stock public runner. The build itself
+  # is the useful signal.
+  # ---------------------------------------------------------------------------
+  android-cross:
+    name: core / android-${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Resolve NDK
+        # The GitHub-hosted ubuntu image ships one or more NDKs under
+        # $ANDROID_HOME/ndk/. Pick the newest so we track upstream, and export
+        # ANDROID_NDK_HOME for the build script.
+        run: |
+          ndk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}/ndk"
+          if [ ! -d "${ndk_root}" ]; then
+            echo "No NDK directory at ${ndk_root}" >&2
+            exit 1
+          fi
+          latest="$(ls -1 "${ndk_root}" | sort -V | tail -n1)"
+          echo "ANDROID_NDK_HOME=${ndk_root}/${latest}" >> "$GITHUB_ENV"
+          echo "Selected NDK: ${ndk_root}/${latest}"
+
+      - name: Cache upstream SDK headers
+        uses: actions/cache@v4
+        with:
+          path: third_party/foundry-local
+          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Cache CMake FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/android/cmake/${{ matrix.abi }}/_deps
+          key: fetchcontent-android-${{ matrix.abi }}-${{ hashFiles('core/CMakeLists.txt') }}
+
+      - name: Build
+        run: ./scripts/build_android.sh --abi ${{ matrix.abi }} --build-type Release
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.abi }}
+          path: build/android/jniLibs/${{ matrix.abi }}/libfoundry_local_mobile.so
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Apple cross-build. macOS runners are slower and more expensive, so this
+  # runs on push to main and on PRs that touch code affecting the Apple build.
+  # ---------------------------------------------------------------------------
+  apple-xcframework:
+    name: core / apple xcframework
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache upstream SDK headers
+        uses: actions/cache@v4
+        with:
+          path: third_party/foundry-local
+          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Cache CMake FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/apple/cmake
+          key: fetchcontent-apple-${{ hashFiles('core/CMakeLists.txt') }}
+
+      - name: Build XCFramework
+        run: ./scripts/build_apple.sh --build-type Release
+
+      - name: Upload XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-xcframework
+          path: build/apple/FoundryLocalMobile.xcframework
+          if-no-files-found: error
