@@ -136,6 +136,25 @@ elseif(UNIX)
     target_link_libraries(foundry_local_mobile PRIVATE dl pthread)
 endif()
 
+# Restrict the dynamic symbol table to the documented ABI. Hidden visibility alone leaves
+# weak template instantiations exported, which widens the surface beyond what the header
+# declares. Apple uses an unexported-symbols list rather than a version script, and
+# -fvisibility=hidden is already enough there because the framework is not the interposition
+# target Android's flat namespace makes it.
+if(FLM_BUILD_SHARED AND NOT APPLE AND NOT MSVC)
+    include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE FLM_HAVE_CHECK_LINKER_FLAG)
+    set(FLM_VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/flm.map")
+    if(FLM_HAVE_CHECK_LINKER_FLAG)
+        check_linker_flag(CXX "-Wl,--version-script=${FLM_VERSION_SCRIPT}" FLM_LINKER_ACCEPTS_VERSION_SCRIPT)
+    else()
+        set(FLM_LINKER_ACCEPTS_VERSION_SCRIPT ON)
+    endif()
+    if(FLM_LINKER_ACCEPTS_VERSION_SCRIPT)
+        target_link_options(foundry_local_mobile PRIVATE "-Wl,--version-script=${FLM_VERSION_SCRIPT}")
+        set_target_properties(foundry_local_mobile PROPERTIES LINK_DEPENDS "${FLM_VERSION_SCRIPT}")
+    endif()
+endif()
+
 if(FLM_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
