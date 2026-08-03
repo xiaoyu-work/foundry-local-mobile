@@ -1,0 +1,9 @@
+---
+# Matches the Foundry Local (microsoft/Foundry-Local) C++ style.
+BasedOnStyle:  Google
+
+# ColumnLimit 0 keeps developer line-break choices. Adhere to a 120 character maximum manually.
+ColumnLimit:     0
+SortIncludes: false
+DerivePointerAlignment: false
+...

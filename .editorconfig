@@ -1,0 +1,33 @@
+# EditorConfig is awesome: https://EditorConfig.org
+root = true
+
+[*]
+indent_style = space
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+indent_size = 4
+
+[*.{h,hpp,c,cc,cpp,mm,m}]
+indent_size = 2
+guidelines = 120
+
+[*.{kt,kts,java}]
+indent_size = 4
+
+[*.swift]
+indent_size = 4
+
+[*.dart]
+indent_size = 2
+
+[*.{ts,tsx,js,jsx,json}]
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.{gradle,properties}]
+indent_size = 4

@@ -1,0 +1,79 @@
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+build/
+out/
+dist/
+bin/
+obj/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
+*.pdb
+compile_commands.json
+.cmake/
+CMakeCache.txt
+CMakeFiles/
+
+# Prebuilt / downloaded Foundry Local native artifacts
+prebuilt/
+third_party/foundry-local/
+
+# ---------------------------------------------------------------------------
+# Android
+# ---------------------------------------------------------------------------
+.gradle/
+local.properties
+*.iml
+.cxx/
+captures/
+bindings/android/**/build/
+
+# ---------------------------------------------------------------------------
+# Apple / iOS
+# ---------------------------------------------------------------------------
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+xcuserdata/
+.build/
+*.xcframework/
+Pods/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ---------------------------------------------------------------------------
+# Flutter / Dart
+# ---------------------------------------------------------------------------
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+
+# ---------------------------------------------------------------------------
+# Node / React Native
+# ---------------------------------------------------------------------------
+node_modules/
+lib/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+.expo/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+Thumbs.db

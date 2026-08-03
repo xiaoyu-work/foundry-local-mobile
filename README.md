@@ -1,0 +1,180 @@
+<div align="center">
+
+# Foundry Local Mobile
+
+**Ship on-device AI inside your mobile app — iOS, Android, Flutter and React Native.**
+
+</div>
+
+Foundry Local Mobile brings the [Foundry Local](https://github.com/microsoft/Foundry-Local)
+on-device AI runtime to mobile platforms. It wraps the Foundry Local C++ core in a single,
+FFI-friendly C ABI and layers idiomatic SDKs on top of it, so the same runtime, the same
+model catalog, and the same **ONNX Runtime Model Packages** are available from Kotlin,
+Swift, Dart and TypeScript.
+
+User data never leaves the device, responses start immediately with zero network latency,
+and your app works offline. No per-token costs, no API keys, no backend to maintain.
+
+## Supported targets
+
+| Target | Package | Language surface |
+|---|---|---|
+| **Android** | `com.microsoft.ai.foundry.local:foundry-local-mobile` (AAR) | Kotlin — suspend functions + `Flow` streaming |
+| **iOS** | `FoundryLocalMobile` (Swift Package / XCFramework) | Swift — `async/await` + `AsyncThrowingStream` |
+| **Flutter** | `foundry_local_mobile` (pub) | Dart — FFI, `Future` + `Stream` |
+| **React Native** | `@foundry-local/react-native` (npm) | TypeScript — `Promise` + async iterators |
+
+All four bindings sit on the **same** native core, so behaviour, model cache layout and
+model-package selection are identical across platforms.
+
+## Why a separate mobile SDK?
+
+Mobile is not just "desktop with a smaller screen". This repo exists because on-device AI
+on phones has constraints that the desktop SDK does not model:
+
+- **Sandboxed storage.** Model caches must live in app-private directories that the OS may
+  evict. The SDK resolves and manages those paths for you.
+- **Metered networks and multi-GB models.** Downloads must be resumable, cancellable,
+  Wi-Fi-aware, and must fetch *only* the model-package variants the device can actually run.
+- **Hard memory ceilings.** iOS jetsam and Android low-memory kills mean models must unload
+  on memory pressure and reload transparently.
+- **App lifecycle.** Inference has to pause and resume as the app moves between foreground
+  and background.
+- **Heterogeneous NPUs.** Qualcomm QNN, Apple Neural Engine and CPU fallbacks are selected
+  per-device from model-package variant metadata.
+
+## Native ONNX Runtime Model Package support
+
+Model packages are a first-class concept in this SDK, not an implementation detail.
+A package bundles multiple build **variants** of the same model — one per execution
+provider / device / compatibility string — behind a single manifest.
+
+Your app can inspect the variants of a package and decide what to download, which is
+exactly what a cross-platform app needs:
+
+```dart
+final pkg = await catalog.getPackage('qwen2.5-0.5b');
+
+// Every variant in the package, with the metadata needed to choose.
+for (final v in pkg.variants) {
+  print('${v.id}  ep=${v.executionProvider} device=${v.device} '
+        'size=${v.downloadSizeBytes} compatible=${v.isCompatible}');
+}
+
+// Let the SDK pick the best variant for *this* device...
+final best = pkg.selectBestVariant();
+
+// ...or apply your own cross-platform policy.
+final chosen = pkg.variants.firstWhere(
+  (v) => v.isCompatible && v.downloadSizeBytes < 800 * 1024 * 1024,
+  orElse: () => pkg.variants.firstWhere((v) => v.device == FlmDevice.cpu),
+);
+
+await pkg.download(chosen, onProgress: (p) => print('${p.percent}%'));
+```
+
+Only the selected variant's files (plus the shared assets it references) are downloaded —
+so a device never pays for variants it cannot run. See
+[`docs/model-packages.md`](docs/model-packages.md) for the full model.
+
+## Quickstart
+
+<details open>
+<summary><strong>Kotlin (Android)</strong></summary>
+
+```kotlin
+val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
+
+val model = foundry.catalog.getModel("qwen2.5-0.5b")
+model.download().collect { progress -> println("${progress.percent}%") }
+model.load()
+
+val chat = model.createChatSession()
+chat.completeStreaming("What is the golden ratio?").collect { delta ->
+    print(delta.text)
+}
+```
+
+</details>
+
+<details open>
+<summary><strong>Swift (iOS)</strong></summary>
+
+```swift
+let foundry = try FoundryLocal(config: .init(appName: "my-app"))
+
+let model = try await foundry.catalog.model(alias: "qwen2.5-0.5b")
+for try await progress in model.download() { print("\(progress.percent)%") }
+try await model.load()
+
+let chat = try model.createChatSession()
+for try await delta in chat.completeStreaming("What is the golden ratio?") {
+    print(delta.text, terminator: "")
+}
+```
+
+</details>
+
+<details open>
+<summary><strong>Dart (Flutter)</strong></summary>
+
+```dart
+final foundry = await FoundryLocal.create(const FoundryLocalConfig(appName: 'my-app'));
+
+final model = await foundry.catalog.getModel('qwen2.5-0.5b');
+await for (final p in model.download()) { print('${p.percent}%'); }
+await model.load();
+
+final chat = model.createChatSession();
+await for (final delta in chat.completeStreaming('What is the golden ratio?')) {
+  stdout.write(delta.text);
+}
+```
+
+</details>
+
+<details open>
+<summary><strong>TypeScript (React Native)</strong></summary>
+
+```ts
+const foundry = await FoundryLocal.create({ appName: 'my-app' });
+
+const model = await foundry.catalog.getModel('qwen2.5-0.5b');
+await model.download((p) => console.log(`${p.percent}%`));
+await model.load();
+
+const chat = model.createChatSession();
+for await (const delta of chat.completeStreaming('What is the golden ratio?')) {
+  process.stdout.write(delta.text);
+}
+```
+
+</details>
+
+## Repository layout
+
+```
+core/                 C++ core + flat C ABI (flm_*) that every binding calls
+  include/            Public headers — the single source of truth for the ABI
+  src/                Implementation over the Foundry Local flApi function tables
+bindings/
+  android/            Gradle library: JNI bridge + Kotlin API
+  ios/                Swift Package: C interop + Swift API
+  flutter/            Dart FFI plugin
+  react-native/       TurboModule (Kotlin + Swift) + TypeScript API
+samples/              Runnable sample apps for each target
+scripts/              Cross-compilation and packaging scripts
+docs/                 Architecture, model packages, platform notes
+```
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — how the layers fit together and why
+- [Model packages](docs/model-packages.md) — variants, selection, selective download
+- [Building from source](docs/building.md) — NDK / Xcode toolchains and packaging
+- [Platform support](docs/platform-support.md) — OS versions, ABIs, accelerators
+
+## License
+
+MIT — see [LICENSE](LICENSE). Models downloaded through Foundry Local are subject to their
+own license terms.
