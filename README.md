@@ -52,30 +52,37 @@ provider / device / compatibility string — behind a single manifest.
 Your app can inspect the variants of a package and decide what to download, which is
 exactly what a cross-platform app needs:
 
+Point the SDK at a package manifest and it scores this device against every variant,
+then fetches only the one that device can run:
+
 ```dart
-final pkg = await catalog.getPackage('qwen2.5-0.5b');
-
-// Every variant in the package, with the metadata needed to choose.
-for (final v in pkg.variants) {
-  print('${v.id}  ep=${v.executionProvider} device=${v.device} '
-        'size=${v.downloadSizeBytes} compatible=${v.isCompatible}');
-}
-
-// Let the SDK pick the best variant for *this* device...
-final best = pkg.selectBestVariant();
-
-// ...or apply your own cross-platform policy.
-final chosen = pkg.variants.firstWhere(
-  (v) => v.isCompatible && v.downloadSizeBytes < 800 * 1024 * 1024,
-  orElse: () => pkg.variants.firstWhere((v) => v.device == FlmDevice.cpu),
+final model = await foundry.addModelSource(
+  const ModelSource.remote(
+    name: 'qwen2.5-0.5b',
+    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
+    // Your cross-platform policy, applied before anything is transferred.
+    constraints: VariantConstraints(
+      maxDownloadBytes: 800 * 1024 * 1024,
+      allowedDevices: [FlmDevice.npu, FlmDevice.gpu, FlmDevice.cpu],
+    ),
+  ),
+  onProgress: (p) => print('${p.percent}%'),
 );
 
-await pkg.download(chosen, onProgress: (p) => print('${p.percent}%'));
+// What was actually chosen, and what else the package offered.
+for (final v in model.package!.variants) {
+  print('${v.id}  ep=${v.executionProvider} device=${v.device} '
+        'size=${v.downloadSizeBytes} compatible=${v.isCompatible} '
+        'reason=${v.incompatibilityReason}');
+}
 ```
 
-Only the selected variant's files (plus the shared assets it references) are downloaded —
-so a device never pays for variants it cannot run. See
-[`docs/model-packages.md`](docs/model-packages.md) for the full model.
+The scoring runs against the manifest before any weights move, so a phone never spends
+bytes on a QNN build it has no NPU for, or an iOS-only CoreML build. Only the selected
+variant's files plus the shared assets it references are fetched — in a package whose
+variants share a tokenizer, that shared file is downloaded once.
+
+See [`docs/model-packages.md`](docs/model-packages.md) for the full model.
 
 ## Bring your own model
 
@@ -111,8 +118,14 @@ verified against its manifest digest. See
 ```kotlin
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
-val model = foundry.catalog.getModel("qwen2.5-0.5b")
-model.download().collect { progress -> println("${progress.percent}%") }
+// Point the SDK at your model: bundled in the app, or hosted on storage you control.
+val model = foundry.addModelSource(
+    ModelSource.Remote(
+        name = "qwen2.5-0.5b",
+        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
+    )
+) { progress -> println("${progress.percent}%") }
+
 model.load()
 
 val chat = model.createChatSession()
@@ -129,8 +142,15 @@ chat.completeStreaming("What is the golden ratio?").collect { delta ->
 ```swift
 let foundry = try FoundryLocal(config: .init(appName: "my-app"))
 
-let model = try await foundry.catalog.model(alias: "qwen2.5-0.5b")
-for try await progress in model.download() { print("\(progress.percent)%") }
+// Point the SDK at your model: bundled in the app, or hosted on storage you control.
+let source = ModelSource.remote(
+    name: "qwen2.5-0.5b",
+    url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!
+)
+let model = try await foundry.addModelSource(source) { progress in
+    print("\(progress.percent)%")
+}
+
 try await model.load()
 
 let chat = try model.createChatSession()
@@ -147,8 +167,15 @@ for try await delta in chat.completeStreaming("What is the golden ratio?") {
 ```dart
 final foundry = await FoundryLocal.create(const FoundryLocalConfig(appName: 'my-app'));
 
-final model = await foundry.catalog.getModel('qwen2.5-0.5b');
-await for (final p in model.download()) { print('${p.percent}%'); }
+// Point the SDK at your model: bundled in the app, or hosted on storage you control.
+final model = await foundry.addModelSource(
+  const ModelSource.remote(
+    name: 'qwen2.5-0.5b',
+    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
+  ),
+  onProgress: (p) => print('${p.percent}%'),
+);
+
 await model.load();
 
 final chat = model.createChatSession();
@@ -165,8 +192,13 @@ await for (final delta in chat.completeStreaming('What is the golden ratio?')) {
 ```ts
 const foundry = await FoundryLocal.create({ appName: 'my-app' });
 
-const model = await foundry.catalog.getModel('qwen2.5-0.5b');
-await model.download((p) => console.log(`${p.percent}%`));
+// Point the SDK at your model: bundled in the app, or hosted on storage you control.
+const model = await foundry.addModelSource(
+  { kind: 'remote', name: 'qwen2.5-0.5b',
+    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json' },
+  (p) => console.log(`${p.percent}%`),
+);
+
 await model.load();
 
 const chat = model.createChatSession();

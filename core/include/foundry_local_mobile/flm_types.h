@@ -245,7 +245,9 @@ typedef struct flm_http_request {
   const char* method;            ///< "GET" or "HEAD".
   const char* headers_json;      ///< JSON object of request headers. Never NULL; may be "{}".
   const char* destination_path;  ///< Write the body here. NULL means deliver it in memory.
-  int64_t offset;                ///< Resume offset in bytes; 0 for a fresh request. Send a Range header when > 0.
+  int64_t offset;                ///< Resume offset in bytes; 0 for a fresh request. When > 0, send a
+                                 ///< `Range: bytes=<offset>-` header AND append to destination_path.
+                                 ///< Opening the file truncating would silently corrupt the model.
   int64_t expected_bytes;        ///< Expected body size, or FLM_UNKNOWN_SIZE.
 } flm_http_request;
 

@@ -1,0 +1,17 @@
+# Linker version script for the ELF builds (Android, Linux).
+#
+# -fvisibility=hidden already hides everything not marked FLM_EXPORT, but it does not
+# hide vague-linkage template instantiations: std::map<std::string, std::string> and
+# friends still come out as weak symbols with default visibility. Those are harmless on
+# their own, but they make the exported surface larger than the header claims, and on
+# Android every extra dynamic symbol is one more chance to interpose or be interposed by
+# whatever else the app has loaded — commonly its own copy of ONNX Runtime.
+#
+# Naming the surface explicitly makes the guarantee checkable: nm -D on the result should
+# show flm_* and nothing else.
+{
+    global:
+        flm_*;
+    local:
+        *;
+};

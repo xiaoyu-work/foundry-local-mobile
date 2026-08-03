@@ -260,6 +260,10 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *   "constraints": { ... }           // optional
  * }
  *
+ * Both kinds also accept:
+ *   "resume": true,                  // continue a partial download, default true
+ *   "verify_checksums": true         // check each file's digest, default true
+ *
  * A bundled source is loaded in place by default, since the files are already on the
  * device and copying would double the storage the user pays for.
  *
@@ -387,16 +391,19 @@ FLM_EXPORT flm_status FLM_CALL flm_model_get_path(flm_model model, char** out_pa
 /**
  * Download the model.
  *
- * For a package handle this downloads the currently selected variant and the shared
- * assets it references — not the whole package. Select a variant first with
- * flm_package_select_variant() to control what is fetched.
+ * Succeeds when the model's files are already on the device, which is the state
+ * flm_manager_add_model_source_async() leaves them in; the result then reports the
+ * cached path. There is no catalog fetch: the Foundry Local catalog publishes desktop
+ * builds (CUDA, DirectML, OpenVINO, x64), which on a phone are gigabytes with no
+ * execution provider that can run them. A model that is not on the device returns
+ * FLM_ERROR_NOT_IMPLEMENTED naming flm_manager_add_model_source_async(), which is how a
+ * mobile app supplies a model: bundled in the app, or downloaded from a URL the app
+ * hosts, picking the variant this device can actually run.
  *
- * `options_json` may be NULL, or:
- * {
- *   "allow_metered": false,      // override the manager-level metered policy
- *   "resume": true,              // resume a partial download, default true
- *   "verify_checksums": true     // default true
- * }
+ * `options_json` is accepted and ignored; it exists so the call keeps the shape of the
+ * other async operations.
+ *
+ * Result: `{ "path": "/data/.../models/qwen2.5-0.5b", "bytes": 542113792 }`.
  */
 FLM_EXPORT flm_status FLM_CALL flm_model_download_async(flm_model model, const char* options_json,
                                                         flm_progress_callback on_progress,
@@ -404,7 +411,12 @@ FLM_EXPORT flm_status FLM_CALL flm_model_download_async(flm_model model, const c
                                                         flm_job* out_job) FLM_NOEXCEPT;
 
 /**
- * Load the model into memory, downloading it first if necessary.
+ * Load the model into memory.
+ *
+ * The model's files must already be on the device; add it with
+ * flm_manager_add_model_source_async() first. Loading a model that is not present
+ * returns FLM_ERROR_NOT_IMPLEMENTED.
+ *
  * `options_json` may be NULL, or `{ "execution_provider": "QNN", "device": "npu" }` to
  * override the automatically selected placement.
  */
@@ -675,13 +687,35 @@ FLM_EXPORT flm_status FLM_CALL flm_job_cancel(flm_job job) FLM_NOEXCEPT;
  * Take the job's result JSON, transferring ownership to the caller (subsequent calls
  * return NULL). Valid once the job has succeeded. Shape depends on the operation:
  *
- *   catalog list      { "models": [ ... ] }
+ *   catalog list      { "models": [ ... ] }             // entries as flm_model_get_info_json
  *   catalog get       { "model_handle": 42 }
- *   download / load   { "path": "/data/.../models/qwen2.5-0.5b", "bytes": 542113792 }
- *   complete          { "text": "...", "finish_reason": "stop",
- *                       "tool_calls": [ ... ], "usage": { ... } }
- *   transcribe        { "text": "...", "language": "en", "segments": [ ... ] }
- *   embed             { "embeddings": [ ... ], "dimensions": 384 }
+ *   add model source  { "name": "phi-4-mini",
+ *                       "path": "/data/.../models/phi-4-mini",
+ *                       "variant_id": "cpu-int4",       // "" when not a package
+ *                       "bytes_downloaded": 542113792,
+ *                       "bytes_reused": 0,              // already on disk, not refetched
+ *                       "was_cached": false }           // true if nothing had to be fetched
+ *   load              { "path": "/data/.../models/qwen2.5-0.5b", "bytes": 542113792 }
+ *   download          { "path": "...", "bytes": 542113792 }   // only when already cached
+ *   complete          { "text": "...",
+ *                       "finish_reason": "stop",        // stop | length | tool_calls | cancelled | error | none
+ *                       "tool_calls": [ { "call_id": "c1",
+ *                                         "name": "get_weather",
+ *                                         "arguments": "{\"city\":\"Paris\"}" } ],
+ *                       "usage": { "prompt_tokens": 12,
+ *                                  "completion_tokens": 40,
+ *                                  "total_tokens": 52 } }
+ *   transcribe        { "text": "...", "language": "en",
+ *                       "segments": [ { "text": "...",
+ *                                       "start_time_ms": 0,
+ *                                       "end_time_ms": 1500,
+ *                                       "language": "en" } ] }
+ *   embed             { "embeddings": [ [0.1, ...], [0.2, ...] ], "dimensions": 384 }
+ *
+ * `tool_calls` is absent when the model called no tools, and `arguments` is a JSON
+ * *string* to be parsed, not an object — the model may emit something that does not
+ * match the declared schema, and failing to parse it is the app's decision, not ours.
+ * `usage` is absent if the runtime reported no token counts.
  */
 FLM_EXPORT flm_status FLM_CALL flm_job_take_result_json(flm_job job, char** out_json) FLM_NOEXCEPT;
 

@@ -227,7 +227,9 @@ nlohmann::json Downloader::Execute(const DownloadPlan& plan, JobContext& context
     if (fs::exists(target, ec)) {
       const int64_t existing = FileSizeOrZero(target);
       const bool size_matches = file.size < 0 || existing == file.size;
-      if (size_matches && (file.digest.empty() || DigestMatches(file.digest, Sha256File(target.string())))) {
+      const bool digest_ok = !plan.verify_checksums || file.digest.empty() ||
+                             DigestMatches(file.digest, Sha256File(target.string()));
+      if (size_matches && digest_ok) {
         reused += existing;
         report(0, file.relative_path);
         continue;
@@ -241,7 +243,7 @@ nlohmann::json Downloader::Execute(const DownloadPlan& plan, JobContext& context
       // Resume from whatever is already on disk, unless this is a retry after a digest
       // mismatch — in that case the existing bytes are suspect and must go.
       int64_t offset = 0;
-      if (attempt > 0) {
+      if (attempt > 0 || !plan.resume) {
         fs::remove(target, ec);
       } else if (fs::exists(target, ec)) {
         const int64_t existing = FileSizeOrZero(target);
@@ -282,7 +284,7 @@ nlohmann::json Downloader::Execute(const DownloadPlan& plan, JobContext& context
         continue;
       }
 
-      if (!file.digest.empty()) {
+      if (plan.verify_checksums && !file.digest.empty()) {
         const std::string actual = Sha256File(target.string());
         if (!DigestMatches(file.digest, actual)) {
           if (attempt == kDigestRetries) {

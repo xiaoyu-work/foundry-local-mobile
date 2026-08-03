@@ -99,6 +99,8 @@ ModelSource ModelSource::FromJson(const nlohmann::json& json) {
       templates != json.end() && templates->is_object()) {
     source.prompt_templates = *templates;
   }
+  source.resume = json.value("resume", true);
+  source.verify_checksums = json.value("verify_checksums", true);
 
   return source;
 }
@@ -201,6 +203,8 @@ DownloadPlan ModelSourceResolver::PlanPackageDownload(const ModelSource& source,
   plan.layout = DownloadPlan::Layout::kPackage;
   plan.headers = source.headers;
   plan.prompt_templates = source.prompt_templates;
+  plan.resume = source.resume;
+  plan.verify_checksums = source.verify_checksums;
   plan.manifest_override = package.BuildPrunedManifest(*selected);
 
   // Only the selected variant's files, plus the shared assets it references. Every other
@@ -252,6 +256,8 @@ DownloadPlan ModelSourceResolver::PlanDirectoryDownload(const ModelSource& sourc
   plan.layout = DownloadPlan::Layout::kFlatModel;
   plan.headers = source.headers;
   plan.prompt_templates = source.prompt_templates;
+  plan.resume = source.resume;
+  plan.verify_checksums = source.verify_checksums;
 
   const auto files = listing.find("files");
   if (files == listing.end() || !files->is_array() || files->empty()) {
