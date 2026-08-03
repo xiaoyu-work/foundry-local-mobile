@@ -77,6 +77,32 @@ Only the selected variant's files (plus the shared assets it references) are dow
 so a device never pays for variants it cannot run. See
 [`docs/model-packages.md`](docs/model-packages.md) for the full model.
 
+## Bring your own model
+
+Models do not have to come from a catalog. Ship one inside your app, or host it on storage
+you control and give the SDK the URL and credentials:
+
+```kotlin
+// Bundled in the app — works offline from first launch.
+val local = foundry.addModelSource(
+    ModelSource.Bundled(name = "phi-4-mini", path = extractedModelDir.absolutePath)
+)
+
+// Or downloaded from your own storage, with your own credentials.
+val remote = foundry.addModelSource(
+    ModelSource.Remote(
+        name = "phi-4-mini",
+        url = "https://models.example.com/phi-4-mini/manifest.json",
+        headers = mapOf("Authorization" to "Bearer $token"),
+    )
+)
+```
+
+When the URL serves a model package, the SDK scores this device against the variants and
+downloads only the one it can run. Downloads resume across restarts and every file is
+verified against its manifest digest. See
+[`docs/model-sources.md`](docs/model-sources.md).
+
 ## Quickstart
 
 <details open>
@@ -170,6 +196,7 @@ docs/                 Architecture, model packages, platform notes
 ## Documentation
 
 - [Architecture](docs/architecture.md) — how the layers fit together and why
+- [Model sources](docs/model-sources.md) — bundling a model, or downloading from your own storage
 - [Model packages](docs/model-packages.md) — variants, selection, selective download
 - [Building from source](docs/building.md) — NDK / Xcode toolchains and packaging
 - [Platform support](docs/platform-support.md) — OS versions, ABIs, accelerators
