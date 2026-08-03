@@ -198,6 +198,95 @@ FLM_EXPORT flm_status FLM_CALL flm_manager_update_settings(flm_manager manager,
                                                            const char* settings_json) FLM_NOEXCEPT;
 
 /* =========================================================================
+ * Model sources
+ *
+ * How an app supplies its own model, rather than taking one from the catalog. Two
+ * shapes, both resolving to a directory the runtime can load.
+ * ========================================================================= */
+
+/**
+ * Install the HTTP transport used for downloads. Must be called before adding a remote
+ * model source; bindings do it during initialization.
+ *
+ * The core plans downloads but never performs them, because a multi-gigabyte transfer
+ * has to survive the app being backgrounded and only the platform's own background
+ * download APIs can do that. Delegating also means the app's certificate pinning, proxy
+ * configuration and credential refresh apply without the core knowing anything about
+ * them.
+ *
+ * Pass NULL to uninstall. The struct is copied; it need not outlive the call.
+ */
+FLM_EXPORT flm_status FLM_CALL flm_set_transport(const flm_transport* transport) FLM_NOEXCEPT;
+
+/** Report bytes transferred for an in-flight request. Safe from any thread. */
+FLM_EXPORT flm_status FLM_CALL flm_transport_report_progress(uint64_t request_id, int64_t completed_bytes,
+                                                             int64_t total_bytes) FLM_NOEXCEPT;
+
+/**
+ * Deliver body bytes for an in-memory request — one whose `destination_path` was NULL.
+ * Requests that name a destination are written to that file by the transport instead.
+ */
+FLM_EXPORT flm_status FLM_CALL flm_transport_report_body(uint64_t request_id, const char* data,
+                                                         size_t size) FLM_NOEXCEPT;
+
+/**
+ * Report that a request finished. Must be called exactly once per request, including
+ * after a cancel. `headers_json` may be NULL; `error_message` is NULL on success.
+ */
+FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id, int32_t status_code,
+                                                             const char* headers_json,
+                                                             const char* error_message) FLM_NOEXCEPT;
+
+/**
+ * Make an app-supplied model available locally, then return a model handle for it.
+ *
+ * `source_json` is one of:
+ *
+ * {
+ *   "kind": "bundled",               // optional; inferred from "path"
+ *   "name": "phi-4-mini",            // required: the name the model is registered under
+ *   "path": "/data/.../models/phi",  // required: a directory the app controls
+ *   "copy_into_cache": false,        // optional: copy rather than load in place
+ *   "constraints": { ... }           // optional; see flm_model_select_variant
+ * }
+ *
+ * {
+ *   "kind": "remote",                // optional; inferred from "url"
+ *   "name": "phi-4-mini",            // required
+ *   "url": "https://.../manifest.json",   // required
+ *   "headers": {                     // optional: sent with every request
+ *     "Authorization": "Bearer ..."
+ *   },
+ *   "constraints": { ... }           // optional
+ * }
+ *
+ * A bundled source is loaded in place by default, since the files are already on the
+ * device and copying would double the storage the user pays for.
+ *
+ * A remote URL may serve either a model package manifest (an object with "components")
+ * or a flat file index (an object with "files"). The document is sniffed rather than the
+ * URL, so a signed blob link with no meaningful path still works. When it is a package,
+ * the device is scored against the variants and only the matching variant is downloaded,
+ * together with the shared assets it references — on a metered connection the variants a
+ * phone cannot run are routinely larger than the one it can.
+ *
+ * Credentials are whatever the app puts in "headers", which covers a SAS URL, an API key
+ * or a bearer token with no per-provider code. A credential that must be refreshed
+ * mid-download belongs in the transport, which is the app's own code.
+ *
+ * Downloads resume across app restarts and every file is verified against the digest in
+ * the manifest before the model is committed.
+ *
+ * The job's result is
+ * `{"name", "path", "variant_id", "bytes_downloaded", "bytes_reused", "was_cached"}`.
+ */
+FLM_EXPORT flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, const char* source_json,
+                                                                  flm_progress_callback on_progress,
+                                                                  flm_completion_callback on_complete,
+                                                                  void* user_data,
+                                                                  flm_job* out_job) FLM_NOEXCEPT;
+
+/* =========================================================================
  * Catalog
  * ========================================================================= */
 

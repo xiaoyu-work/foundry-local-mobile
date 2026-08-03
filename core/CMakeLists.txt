@@ -72,6 +72,9 @@ set(FLM_SOURCES
     src/runtime.cc
     src/device_profile.cc
     src/model_package.cc
+    src/transport.cc
+    src/downloader.cc
+    src/model_source.cc
     src/manager.cc
     src/catalog.cc
     src/model.cc

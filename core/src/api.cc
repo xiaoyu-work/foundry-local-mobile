@@ -22,8 +22,10 @@
 #include "job.h"
 #include "manager.h"
 #include "model.h"
+#include "model_source.h"
 #include "runtime.h"
 #include "session.h"
+#include "transport.h"
 #include "third_party/json.h"
 
 namespace {
@@ -64,6 +66,19 @@ nlohmann::json ParseJsonOrEmpty(const char* json, const char* what) {
 void RequireNonNull(const void* pointer, const char* name) {
   if (pointer == nullptr) {
     throw Error(FLM_ERROR_INVALID_ARGUMENT, std::string(name) + " must not be NULL");
+  }
+}
+
+/// Reject a versioned struct this build cannot interpret. A binding compiled against a
+/// newer header may set fields past the end of what this core knows about, so reading it
+/// would be undefined; a version older than the current one is fine, since fields are
+/// only ever appended.
+void RequireVersion(uint32_t version, const char* name) {
+  if (version == 0 || version > FLM_API_VERSION) {
+    throw Error(FLM_ERROR_UNSUPPORTED_VERSION,
+                std::string(name) + " reports version " + std::to_string(version) + ", but this build supports " +
+                    std::to_string(FLM_API_VERSION),
+                {{"struct", name}, {"version", version}, {"supported_version", FLM_API_VERSION}});
   }
 }
 
@@ -254,6 +269,68 @@ flm_status FLM_CALL flm_manager_update_settings(flm_manager manager, const char*
   RequireNonNull(settings_json, "settings_json");
   ResolveManager(manager)->UpdateSettings(ParseJsonOrEmpty(settings_json, "settings_json"));
   return FLM_OK;
+  FLM_CATCH
+}
+
+/* =========================================================================
+ * Model sources
+ * ========================================================================= */
+
+flm_status FLM_CALL flm_set_transport(const flm_transport* transport) FLM_NOEXCEPT {
+  FLM_TRY
+  if (transport != nullptr) {
+    RequireVersion(transport->version, "flm_transport");
+    if (transport->send == nullptr) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT, "flm_transport.send must not be NULL");
+    }
+  }
+  Transport::Instance().Install(transport);
+  return FLM_OK;
+  FLM_CATCH
+}
+
+flm_status FLM_CALL flm_transport_report_progress(uint64_t request_id, int64_t completed_bytes,
+                                                  int64_t total_bytes) FLM_NOEXCEPT {
+  FLM_TRY
+  Transport::Instance().ReportProgress(request_id, completed_bytes, total_bytes);
+  return FLM_OK;
+  FLM_CATCH
+}
+
+flm_status FLM_CALL flm_transport_report_body(uint64_t request_id, const char* data, size_t size) FLM_NOEXCEPT {
+  FLM_TRY
+  Transport::Instance().ReportBody(request_id, data, size);
+  return FLM_OK;
+  FLM_CATCH
+}
+
+flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id, int32_t status_code,
+                                                  const char* headers_json,
+                                                  const char* error_message) FLM_NOEXCEPT {
+  FLM_TRY
+  Transport::Instance().ReportComplete(request_id, status_code, headers_json, error_message);
+  return FLM_OK;
+  FLM_CATCH
+}
+
+flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, const char* source_json,
+                                                       flm_progress_callback on_progress,
+                                                       flm_completion_callback on_complete, void* user_data,
+                                                       flm_job* out_job) FLM_NOEXCEPT {
+  FLM_TRY
+  RequireNonNull(source_json, "source_json");
+  auto instance = ResolveManager(manager);
+
+  // Parse before submitting so a malformed descriptor fails synchronously, where the
+  // caller can see it, rather than as an asynchronous job failure.
+  const ModelSource source = ModelSource::FromJson(ParseJsonOrEmpty(source_json, "source_json"));
+
+  return SubmitJob(
+      instance, "manager.add_model_source",
+      [instance, source](JobContext& context) {
+        return ModelSourceResolver(instance).Resolve(source, context);
+      },
+      on_progress, nullptr, on_complete, user_data, out_job);
   FLM_CATCH
 }
 

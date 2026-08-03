@@ -82,6 +82,31 @@ std::string NormalizeAssetRef(const std::string& reference) {
   return slash == std::string::npos ? reference : reference.substr(0, slash);
 }
 
+/// Read an optional "files" array. Only manifests published for remote download carry
+/// one; a package read from disk has the real filesystem to enumerate instead.
+std::vector<PackageFile> ParsePackageFiles(const nlohmann::json& owner) {
+  std::vector<PackageFile> files;
+  const auto entry = owner.find("files");
+  if (entry == owner.end() || !entry->is_array()) {
+    return files;
+  }
+
+  for (const auto& item : *entry) {
+    PackageFile file;
+    if (item.is_string()) {
+      file.relative_path = item.get<std::string>();
+    } else if (item.is_object()) {
+      file.relative_path = item.value("path", "");
+      file.size = item.value("size", static_cast<int64_t>(-1));
+      file.digest = item.value("digest", item.value("sha256", ""));
+    }
+    if (!file.relative_path.empty()) {
+      files.push_back(std::move(file));
+    }
+  }
+  return files;
+}
+
 }  // namespace
 
 VariantConstraints VariantConstraints::FromJson(const nlohmann::json& json) {
@@ -134,6 +159,8 @@ ModelPackage ModelPackage::FromManifest(const nlohmann::json& manifest, const st
         asset.relative_path = descriptor.value("path", "shared_assets/" + digest);
         asset.bytes = descriptor.value("size", static_cast<int64_t>(0));
         asset.override_path = descriptor.value("override_path", "");
+        asset.files = ParsePackageFiles(descriptor);
+        asset.source_entry = descriptor;
       }
       if (asset.relative_path.empty()) {
         asset.relative_path = "shared_assets/" + digest;
@@ -172,6 +199,26 @@ ModelPackage ModelPackage::FromManifest(const nlohmann::json& manifest, const st
       variant.compatibility_string = entry.value("compatibility_string", "");
       variant.platform = entry.value("platform", "any");
       variant.own_bytes = entry.value("size", static_cast<int64_t>(0));
+      variant.files = ParsePackageFiles(entry);
+      variant.source_entry = entry;
+
+      // A manifest published for remote download lists each variant's files so the
+      // downloader knows what to fetch. When sizes are given but the variant's total is
+      // not, derive it — the estimate drives the storage check before anything is pulled.
+      if (variant.own_bytes == 0 && !variant.files.empty()) {
+        int64_t sum = 0;
+        bool complete = true;
+        for (const PackageFile& file : variant.files) {
+          if (file.size < 0) {
+            complete = false;
+            break;
+          }
+          sum += file.size;
+        }
+        if (complete) {
+          variant.own_bytes = sum;
+        }
+      }
 
       if (auto refs = entry.find("shared_asset_refs"); refs != entry.end() && refs->is_array()) {
         for (const auto& reference : *refs) {
@@ -433,6 +480,46 @@ const SharedAsset* ModelPackage::FindAsset(const std::string& digest) const {
   auto it = std::find_if(shared_assets_.begin(), shared_assets_.end(),
                          [&digest](const SharedAsset& asset) { return asset.digest == digest; });
   return it == shared_assets_.end() ? nullptr : &*it;
+}
+
+nlohmann::json ModelPackage::BuildPrunedManifest(const std::string& variant_id) const {
+  const ModelVariant* variant = FindVariant(variant_id);
+  if (variant == nullptr) {
+    throw Error(FLM_ERROR_NOT_FOUND, "unknown variant '" + variant_id + "'", {{"variant_id", variant_id}});
+  }
+
+  nlohmann::json manifest;
+  manifest["schema_version"] = schema_version_;
+
+  nlohmann::json entry = variant->source_entry.is_object() ? variant->source_entry : nlohmann::json::object();
+  // The file list is a Foundry-Local-Mobile download-planning aid, not part of the
+  // package format. Drop it so the installed manifest is a plain package manifest.
+  entry.erase("files");
+
+  nlohmann::json component;
+  component["name"] = variant->component;
+  component["variants"] = nlohmann::json::array({std::move(entry)});
+  manifest["components"] = nlohmann::json::array({std::move(component)});
+
+  nlohmann::json assets = nlohmann::json::object();
+  for (const std::string& reference : variant->shared_asset_refs) {
+    const SharedAsset* asset = FindAsset(reference);
+    if (asset == nullptr) {
+      continue;
+    }
+    nlohmann::json descriptor =
+        asset->source_entry.is_object() ? asset->source_entry : nlohmann::json::object();
+    descriptor.erase("files");
+    if (!descriptor.contains("path")) {
+      descriptor["path"] = asset->relative_path;
+    }
+    assets[asset->digest] = std::move(descriptor);
+  }
+  if (!assets.empty()) {
+    manifest["shared_assets"] = std::move(assets);
+  }
+
+  return manifest;
 }
 
 /* ------------------------------------------------------------------------- */

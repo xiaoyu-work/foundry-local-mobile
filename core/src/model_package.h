@@ -34,6 +34,15 @@
 
 namespace flm {
 
+/// One file within a variant or shared asset. Present only in manifests published for
+/// remote download: selective download has to know exactly which files a variant needs
+/// before fetching anything, and HTTPS offers no way to list a directory.
+struct PackageFile {
+  std::string relative_path;  ///< Relative to the package root.
+  int64_t size = -1;
+  std::string digest;  ///< "sha256:<hex>", optional.
+};
+
 /// One build variant of a package, plus everything needed to decide whether to download it.
 struct ModelVariant {
   std::string id;                    ///< Unique within the package, e.g. "qwen2.5-0.5b.qnn-npu".
@@ -46,6 +55,7 @@ struct ModelVariant {
 
   int64_t own_bytes = 0;                         ///< Files belonging only to this variant.
   std::vector<std::string> shared_asset_refs;    ///< "sha256:<hex>" references.
+  std::vector<PackageFile> files;                ///< Empty unless the manifest lists them.
 
   bool is_cached = false;
 
@@ -55,6 +65,10 @@ struct ModelVariant {
   std::string incompatibility_reason;
 
   nlohmann::json additional_metadata = nlohmann::json::object();
+
+  /// The manifest entry this variant was parsed from, so a pruned manifest can be
+  /// rewritten for the subset that was actually downloaded.
+  nlohmann::json source_entry = nlohmann::json::object();
 };
 
 /// A content-addressed asset shared by one or more variants.
@@ -64,6 +78,9 @@ struct SharedAsset {
   int64_t bytes = 0;
   bool is_cached = false;
   std::string override_path;  ///< Manifest override pointing outside the package, if any.
+  std::vector<PackageFile> files;  ///< Assets are directories; empty means a single file.
+
+  nlohmann::json source_entry = nlohmann::json::object();
 };
 
 /// Constraints an app can impose on automatic variant selection.
@@ -107,6 +124,14 @@ class ModelPackage {
 
   const std::string& selected_variant_id() const noexcept { return selected_variant_id_; }
   const ModelVariant* FindVariant(const std::string& variant_id) const;
+
+  /// Public lookup of a shared asset by "sha256:<hex>" reference.
+  const SharedAsset* FindSharedAsset(const std::string& digest) const { return FindAsset(digest); }
+
+  /// A manifest describing only `variant_id` and the shared assets it references. Written
+  /// to disk after a selective download so the package directory does not advertise
+  /// variants whose files were never fetched.
+  nlohmann::json BuildPrunedManifest(const std::string& variant_id) const;
 
   /// Bytes to transfer for a set of variants: their own files plus the *union* of the
   /// shared assets they reference, minus whatever is already cached. Counting shared
