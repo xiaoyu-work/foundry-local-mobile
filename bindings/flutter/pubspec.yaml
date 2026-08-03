@@ -23,6 +23,7 @@ dependencies:
   ffi: ^2.1.0
   http: ^1.1.0
   meta: ^1.10.0
+  path_provider: ^2.1.0
 
 dev_dependencies:
   ffigen: ^11.0.0
