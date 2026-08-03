@@ -137,8 +137,14 @@ emulator or a device.
 ## Model size and download budgets
 
 The SDK enforces per-device budgets rather than trusting an app to know how big a
-device can go. These live in `core/src/device_profile.cc` and are the guardrail for
-selective variant download:
+device can go. These apply to model acquisition through
+`flm_manager_add_model_source_async` — the two shipping mobile model sources are a
+model bundled into the app (no download) and a URL the app itself hosts (subject to
+these budgets). There is no built-in Foundry Local catalog fetch on mobile; the
+desktop catalog publishes CUDA/DirectML/OpenVINO/x64 builds that are not the shape
+mobile targets need.
+
+The budget constants live in `core/src/device_profile.cc`:
 
 | Rule | Value | Where |
 |---|---|---|

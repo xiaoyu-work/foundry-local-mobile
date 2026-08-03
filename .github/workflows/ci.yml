@@ -93,15 +93,47 @@ jobs:
       - name: Build
         run: cmake --build build/linux --parallel
 
-      - name: Verify the flat C ABI is exported
-        # Sanity check the header→symbol path: the ABI defines 60+ flm_*
-        # functions; if the shared library ships with none of them the build
-        # succeeded for the wrong reason.
+      - name: Verify the exported ABI matches the header
+        # Two invariants land here, both of which have silently regressed
+        # before:
+        #
+        #  1. Every symbol on the dynamic symbol table must be flm_*. Hidden
+        #     visibility alone does not hide vague-linkage template
+        #     instantiations from std::map & friends, so the core also links
+        #     with a --version-script (core/flm.map). If that script does not
+        #     take effect — the linker refuses --version-script, or someone
+        #     drops the link flag — weak symbols reappear and this check
+        #     catches it. On Android's flat namespace an extra exported
+        #     symbol can interpose or be interposed by another copy of ORT
+        #     the app has loaded, so this really is a bug.
+        #
+        #  2. The exported count must equal the number of FLM_EXPORT
+        #     declarations in the header. Deriving the expected value from
+        #     the header (rather than hardcoding a number) means adding a
+        #     new ABI function does not require touching this workflow.
         run: |
-          count=$(nm -D --defined-only build/linux/libfoundry_local_mobile.so \
-            | grep -Ec ' T flm_')
-          echo "exported flm_* symbols: ${count}"
-          test "${count}" -ge 40
+          so=build/linux/libfoundry_local_mobile.so
+
+          expected=$(grep -c '^FLM_EXPORT' core/include/foundry_local_mobile/flm_api.h)
+          actual=$(nm -D --defined-only "$so" | awk '$NF ~ /^flm_/' | wc -l)
+          echo "FLM_EXPORT declarations in flm_api.h: ${expected}"
+          echo "Exported flm_* symbols in $(basename "$so"): ${actual}"
+
+          leaks=$(nm -D --defined-only "$so" \
+            | awk '{print $NF}' \
+            | grep -Ev '^flm_' || true)
+          if [ -n "${leaks}" ]; then
+            echo "::error::libfoundry_local_mobile.so exports non-ABI symbols:"
+            printf '  %s\n' ${leaks}
+            echo "The --version-script (core/flm.map) may not be in effect."
+            exit 1
+          fi
+
+          if [ "${expected}" != "${actual}" ]; then
+            echo "::error::Exported symbol count (${actual}) does not match header (${expected})."
+            echo "Update core/flm.map, or check that every ABI function is FLM_EXPORT-declared."
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # Android cross-build via the NDK preinstalled on the GitHub-hosted runner.
