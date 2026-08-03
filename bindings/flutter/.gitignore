@@ -1,3 +1,8 @@
+# The root .gitignore has `lib/` from the React Native rules, which would
+# incidentally hide our Dart source tree. Un-ignore it for this package.
+!lib/
+!lib/**
+
 .dart_tool/
 .packages
 .pub/
