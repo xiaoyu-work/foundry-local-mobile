@@ -63,8 +63,9 @@ public enum TransportReport {
     /// call this.
     public static func body(id: UInt64, data: Data) {
         data.withUnsafeBytes { rawBuffer in
-            guard let base = rawBuffer.baseAddress else { return }
-            _ = flm_transport_report_body(id, base.assumingMemoryBound(to: CChar.self), data.count)
+            let bound = rawBuffer.bindMemory(to: CChar.self)
+            guard let base = bound.baseAddress else { return }
+            _ = flm_transport_report_body(id, base, data.count)
         }
     }
 
