@@ -60,6 +60,23 @@ Detected at compile time in `core/src/platform/device_profile_android.cc` and
 `x86` (32-bit) is not produced. There is no viable inference target left on 32-bit
 x86 Android.
 
+If your own app builds an `x86` slice — Flutter's default template does, and some
+dependencies pull one in — the resulting APK will install on a 32-bit x86 image and
+then fail at the first `dlopen` of the core, because the ABI it advertises is one the
+SDK does not ship. That surfaces as a crash on launch rather than as an install-time
+refusal, which is the worse of the two. Pin your ABI set to what the SDK ships:
+
+```kotlin
+android {
+    defaultConfig {
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+    }
+}
+```
+
+Both sample apps in this repo do exactly that, and CI asserts no `lib/x86/` slice
+survives in either APK.
+
 ### Apple
 
 | Slice | Architectures | Where it runs |
