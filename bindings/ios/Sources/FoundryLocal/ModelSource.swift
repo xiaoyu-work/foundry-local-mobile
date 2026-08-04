@@ -18,17 +18,24 @@ public enum ModelSource: Sendable {
     /// `verifyChecksums` still applies here: bundled model manifests may carry
     /// per-file SHA-256 hashes and the runtime checks them at load if this stays
     /// `true`. `resume` is a no-op for bundled sources since nothing downloads,
-    /// but the ABI accepts the key on either kind.
+    /// but the ABI accepts the key on either kind. `constraints` picks a variant
+    /// when the bundled directory is a package manifest.
     case bundled(
         name: String,
         path: String,
         copyIntoCache: Bool = false,
+        constraints: VariantConstraints = .init(),
         resume: Bool = true,
         verifyChecksums: Bool = true
     )
 
     /// Model hosted on app-controlled storage. `headers` are sent with every request
     /// through the installed transport.
+    ///
+    /// `constraints` is the declarative, cross-platform way to pick a variant
+    /// **before** any weights transfer: the runtime evaluates them against the
+    /// manifest and only fetches the winning variant. Prefer this over the
+    /// imperative ``Model/selectBestVariant`` for the acquisition path.
     ///
     /// - Parameter resume: When a partial download is on disk, ask the transport
     ///   to send `Range: bytes=<offset>-` and continue rather than start over.
@@ -40,6 +47,7 @@ public enum ModelSource: Sendable {
         name: String,
         url: URL,
         headers: [String: String] = [:],
+        constraints: VariantConstraints = .init(),
         resume: Bool = true,
         verifyChecksums: Bool = true
     )
@@ -47,17 +55,19 @@ public enum ModelSource: Sendable {
     func encodeAsJSON() throws -> String {
         var payload: [String: Any] = [:]
         switch self {
-        case .bundled(let name, let path, let copy, let resume, let verifyChecksums):
+        case .bundled(let name, let path, let copy, let constraints, let resume, let verifyChecksums):
             payload["kind"] = "bundled"
             payload["name"] = name
             payload["path"] = path
             if copy { payload["copy_into_cache"] = true }
+            encodeConstraints(into: &payload, constraints: constraints)
             encodeDownloadOptions(into: &payload, resume: resume, verifyChecksums: verifyChecksums)
-        case .remote(let name, let url, let headers, let resume, let verifyChecksums):
+        case .remote(let name, let url, let headers, let constraints, let resume, let verifyChecksums):
             payload["kind"] = "remote"
             payload["name"] = name
             payload["url"] = url.absoluteString
             if !headers.isEmpty { payload["headers"] = headers }
+            encodeConstraints(into: &payload, constraints: constraints)
             encodeDownloadOptions(into: &payload, resume: resume, verifyChecksums: verifyChecksums)
         }
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
@@ -75,6 +85,14 @@ private func encodeDownloadOptions(
 ) {
     if !resume { payload["resume"] = false }
     if !verifyChecksums { payload["verify_checksums"] = false }
+}
+
+// Only emit `constraints` when at least one field is set. The default empty block
+// would round-trip as `{}` which the core accepts but doesn't need.
+private func encodeConstraints(into payload: inout [String: Any], constraints: VariantConstraints) {
+    let inner = constraints.encodePayload()
+    guard !inner.isEmpty else { return }
+    payload["constraints"] = inner
 }
 
 extension ModelSource {
@@ -101,6 +119,7 @@ extension ModelSource {
         folder: String,
         in bundle: Bundle = .main,
         subdirectory: String? = nil,
+        constraints: VariantConstraints = .init(),
         verifyChecksums: Bool = true
     ) throws -> ModelSource {
         // Bundle.url(forResource:withExtension:) returns nil for a directory without
@@ -124,7 +143,7 @@ extension ModelSource {
                 message: "Bundled model path '\(url.path)' is a file, not a directory."
             )
         }
-        return .bundled(name: name, path: url.path, verifyChecksums: verifyChecksums)
+        return .bundled(name: name, path: url.path, constraints: constraints, verifyChecksums: verifyChecksums)
     }
 }
 

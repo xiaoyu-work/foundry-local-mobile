@@ -164,14 +164,20 @@ struct CatalogGetResult: Decodable {
     let modelHandle: UInt64
 }
 
-/// Payload of `flm_manager_add_model_source_async`.
-public struct AddModelSourceResult: Decodable, Sendable {
-    public let name: String
-    public let path: String
-    public let variantId: String?
-    public let bytesDownloaded: Int64
-    public let bytesReused: Int64
-    public let wasCached: Bool
+/// Payload of `flm_manager_add_model_source_async`. Internal — the public API
+/// returns the ``Model`` handle carried in ``modelHandle`` directly. The other
+/// fields are informational and not currently surfaced beyond decoding.
+struct AddModelSourceResult: Decodable {
+    let name: String
+    let path: String
+    let variantId: String?
+    let bytesDownloaded: Int64
+    let bytesReused: Int64
+    let wasCached: Bool
+    /// Ready-to-use model handle, or `0` (`FLM_INVALID_HANDLE`) when the catalog
+    /// scan missed the freshly-committed files. `0` still means the transfer
+    /// succeeded — fall back to `flm_catalog_get_model_async` in that case.
+    let modelHandle: UInt64
 }
 
 /// Payload of `flm_model_load_async`. `flm_model_download_async` returns the same

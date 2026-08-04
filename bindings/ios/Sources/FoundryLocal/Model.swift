@@ -10,14 +10,15 @@ import FoundryLocalMobile
 /// Sessions are created against a loaded model, so the typical lifecycle is:
 ///
 /// ```swift
-/// // Model acquisition is model-source-only — see ``FoundryLocal/addModelSource``.
-/// let added = try await sdk.addModelSource(
+/// let model = try await sdk.addModelSource(
 ///     .remote(name: "qwen2.5-0.5b", url: myURL)
-/// )
-/// let model = try await sdk.catalog.model(alias: added.name)
+/// ) { p in print("\(p.percent)%") }
 /// try await model.load()
 /// let chat = try model.createChatSession()
 /// ```
+///
+/// See ``FoundryLocal/addModelSource(_:progress:)`` for how a model gets on the
+/// device in the first place.
 public final class Model: @unchecked Sendable {
     public let handle: flm_model
     private let released = ManagedAtomicBool()
@@ -78,7 +79,7 @@ public final class Model: @unchecked Sendable {
     /// Load the model into memory.
     ///
     /// The model's files must already be resident on the device — either shipped in
-    /// the app bundle via ``ModelSource/bundled(name:folder:in:subdirectory:verifyChecksums:)``
+    /// the app bundle via ``ModelSource/bundled(name:folder:in:subdirectory:constraints:verifyChecksums:)``
     /// or fetched by ``FoundryLocal/addModelSource(_:progress:)`` from an
     /// app-controlled URL. `load` does **not** download files on demand: the
     /// Foundry Local desktop catalog isn't reachable from mobile, so

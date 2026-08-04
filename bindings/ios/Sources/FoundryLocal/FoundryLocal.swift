@@ -98,17 +98,28 @@ public final class FoundryLocal: @unchecked Sendable {
 
     // MARK: - Model sources
 
-    /// Register an app-supplied model with the manager and return a handle for it.
+    /// Register an app-supplied model with the manager and return a usable handle.
+    ///
+    /// **This is the model acquisition call on iOS.** The desktop Foundry Local
+    /// catalog isn't reachable from mobile, so `catalog.model(alias:)` only surfaces
+    /// what a source has already committed to disk. A model source is either a
+    /// directory already on disk (``ModelSource/bundled(name:folder:in:subdirectory:constraints:verifyChecksums:)``)
+    /// or a URL the app hosts (``ModelSource/remote(name:url:headers:constraints:resume:verifyChecksums:)``).
     ///
     /// For a bundled source this is fast (the files are already on disk). For a
     /// remote source it kicks off a possibly-multi-gigabyte download; progress is
-    /// reported through the closure.
+    /// delivered through the closure.
+    ///
+    /// Variant selection is expressed declaratively via ``VariantConstraints`` on
+    /// the source itself — the runtime picks the best variant against the manifest
+    /// before any weights transfer, so the phone never spends bytes on the wrong
+    /// build.
     public func addModelSource(
         _ source: ModelSource,
         progress: (@Sendable (DownloadProgress) -> Void)? = nil
-    ) async throws -> AddModelSourceResult {
+    ) async throws -> Model {
         let json = try source.encodeAsJSON()
-        return try await runAsyncJob(
+        let result: AddModelSourceResult = try await runAsyncJob(
             progress: progress,
             decode: { job in
                 let text = try takeJobResultJSON(job)
@@ -120,6 +131,12 @@ public final class FoundryLocal: @unchecked Sendable {
                 }
             }
         )
+        if result.modelHandle != 0 {
+            return Model(handle: flm_model(result.modelHandle))
+        }
+        // Files landed but the catalog scan missed them. The transfer succeeded —
+        // fall back to a normal catalog lookup rather than failing the caller.
+        return try await catalog.model(alias: result.name)
     }
 
     // MARK: - Introspection

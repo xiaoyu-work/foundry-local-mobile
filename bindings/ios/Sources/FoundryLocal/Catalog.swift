@@ -4,7 +4,12 @@
 import Foundation
 import FoundryLocalMobile
 
-/// Read-only view of the model catalog. Obtained from ``FoundryLocal/catalog``.
+/// Read-only view of what's already on the device. Obtained from ``FoundryLocal/catalog``.
+///
+/// The catalog is **for inspection, not acquisition**: it lists and resolves models
+/// that a source has already committed to disk. To bring a new model onto the device,
+/// call ``FoundryLocal/addModelSource(_:progress:)`` — that is the acquisition path
+/// on mobile. The Foundry Local desktop catalogue isn't reachable from a phone.
 ///
 /// Catalog handles are borrowed from the owning ``FoundryLocal``: releasing them is a
 /// no-op, and they become invalid when the manager is released.

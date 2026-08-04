@@ -6,6 +6,15 @@ import FoundryLocalMobile
 
 /// Model-package facet of ``Model``. On a non-package handle these calls throw
 /// ``FoundryLocalError/Code/invalidState``.
+///
+/// These are **inspection tools** for a package that is already on the device — they
+/// walk the manifest, re-select a variant after the fact, or estimate what an app
+/// would transfer. Primary variant selection is declarative: attach a
+/// ``VariantConstraints`` to the ``ModelSource`` before calling
+/// ``FoundryLocal/addModelSource(_:progress:)`` and the runtime picks the winning
+/// variant against the manifest before any weights transfer. Use these methods for
+/// after-the-fact re-selection, multi-variant orchestration, or a UI that wants to
+/// let the user see every option.
 extension Model {
     /// Enumerate this package's variants, each scored against the local device.
     ///
@@ -17,8 +26,10 @@ extension Model {
         return try flmJSONDecoder.decode(PackageVariants.self, from: Data(json.utf8))
     }
 
-    /// Pin the package to a specific variant. Subsequent download / load / session
-    /// calls act on it.
+    /// Pin the package to a specific variant. Subsequent load / session calls act
+    /// on it. Use this to switch variants after acquisition (say the user picked a
+    /// different device tier in Settings) — for the initial acquisition, pass
+    /// ``VariantConstraints`` on the ``ModelSource`` instead.
     public func selectVariant(_ variantId: String) throws {
         let status = variantId.withCString { flm_package_select_variant(handle, $0) }
         if status != FLM_OK {
@@ -26,12 +37,15 @@ extension Model {
         }
     }
 
-    /// Let the SDK choose the best variant for this device, applying optional
-    /// constraints. Returns the variant id that was chosen (also selected as the
-    /// package's active variant).
+    /// Re-run the SDK's variant selection over the manifest and pin the winner.
+    /// Returns the variant id that was chosen.
     ///
-    /// - Throws: ``FoundryLocalError/Code/incompatible`` when no variant satisfies the
-    ///   constraints (e.g. an NPU-only constraint on a device with no NPU).
+    /// The runtime already applies constraints once at ``FoundryLocal/addModelSource(_:progress:)``
+    /// time. Call this when the device situation has changed (thermal, storage,
+    /// user preference) and the app wants to reselect without redownloading.
+    ///
+    /// - Throws: ``FoundryLocalError/Code/incompatible`` when no variant satisfies
+    ///   the constraints (e.g. an NPU-only constraint on a device with no NPU).
     @discardableResult
     public func selectBestVariant(_ constraints: VariantConstraints = .init()) throws -> String {
         let constraintsJSON = constraints.encodeAsJSON()
@@ -82,33 +96,55 @@ extension Model {
     }
 }
 
-/// Constraints for ``Model/selectBestVariant``. Mirrors the JSON schema documented on
-/// `flm_package_select_best_variant`.
+/// Declarative variant policy applied against a package's manifest **before** any
+/// weights are transferred.
+///
+/// This is the cross-platform way to say "NPU if you can, cap at 800 MB, otherwise
+/// fall back to CPU": you attach it to a ``ModelSource`` and the runtime picks the
+/// best-scoring variant that satisfies the constraints, then downloads only that
+/// one. It also feeds the imperative ``Model/selectBestVariant`` for after-the-fact
+/// re-selection.
+///
+/// Only the four fields below round-trip through the ABI. Any extra field would
+/// be silently dropped.
 public struct VariantConstraints: Sendable {
-    /// Skip variants whose download would exceed this many bytes. `nil` = no limit.
+    /// Skip variants whose transfer would exceed this many bytes. `nil` = no limit.
     public var maxDownloadBytes: Int64?
 
-    /// Only consider variants for these devices. `nil` = any device.
-    public var allowedDevices: Set<Device>?
+    /// Consider only variants for these devices. Empty = any device.
+    public var allowedDevices: Set<Device>
 
-    /// Break ties on smallest download instead of highest compatibility score.
-    public var preferSmallest: Bool = false
+    /// Break ties on smallest transfer instead of highest compatibility score.
+    public var preferSmallest: Bool
+
+    /// Consider only variants already resident on disk. Useful for an offline
+    /// pass that wants to re-select without triggering any transfer.
+    public var requireCached: Bool
 
     public init(
         maxDownloadBytes: Int64? = nil,
-        allowedDevices: Set<Device>? = nil,
-        preferSmallest: Bool = false
+        allowedDevices: Set<Device> = [],
+        preferSmallest: Bool = false,
+        requireCached: Bool = false
     ) {
         self.maxDownloadBytes = maxDownloadBytes
         self.allowedDevices = allowedDevices
         self.preferSmallest = preferSmallest
+        self.requireCached = requireCached
     }
 
     func encodeAsJSON() -> String {
+        encodePayload().jsonString() ?? "{}"
+    }
+
+    func encodePayload() -> [String: Any] {
         var payload: [String: Any] = [:]
         if let maxDownloadBytes { payload["max_download_bytes"] = maxDownloadBytes }
-        if let allowedDevices { payload["allowed_devices"] = allowedDevices.map(\.rawValue).sorted() }
+        if !allowedDevices.isEmpty {
+            payload["allowed_devices"] = allowedDevices.map(\.rawValue).sorted()
+        }
         if preferSmallest { payload["prefer_smallest"] = true }
-        return payload.jsonString() ?? "{}"
+        if requireCached { payload["require_cached"] = true }
+        return payload
     }
 }
