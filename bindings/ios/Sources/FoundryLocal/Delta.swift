@@ -26,6 +26,23 @@ public enum ChatDelta: Sendable, Equatable {
     /// Terminal marker. No further events will follow.
     case completed(FinishReason, TokenCounts?)
 
+    /// Text fragment when this is a ``text`` event, empty otherwise. Convenience
+    /// for typewriter UIs that just want to append every text delta to a buffer:
+    ///
+    /// ```swift
+    /// for try await delta in chat.completeStreaming(prompt) {
+    ///     print(delta.text, terminator: "")
+    /// }
+    /// ```
+    ///
+    /// Non-text events (reasoning, tool calls, usage, completion) return `""` so
+    /// they compose cleanly with `terminator: ""`. Discriminate on the enum
+    /// itself when the caller needs to react to reasoning or tool calls.
+    public var text: String {
+        if case .text(let value) = self { return value }
+        return ""
+    }
+
     public struct TokenCounts: Sendable, Equatable {
         public let promptTokens: Int64
         public let completionTokens: Int64
@@ -62,6 +79,14 @@ public enum SpeechDelta: Sendable, Equatable {
     case partial(SpeechSegment)
     /// Stable segment; safe to persist.
     case final(SpeechSegment)
+
+    /// Segment text regardless of interim / final. Convenience for callers that
+    /// stream to a running buffer without discriminating on the case.
+    public var text: String {
+        switch self {
+        case .partial(let s), .final(let s): return s.text
+        }
+    }
 
     public struct SpeechSegment: Sendable, Equatable {
         public let text: String

@@ -124,9 +124,14 @@ try await model.load()
 // 3. Chat.
 let chat = try model.createChatSession()
 for try await delta in chat.completeStreaming("Explain vector databases in one line.") {
-    if case .text(let fragment) = delta { print(fragment, terminator: "") }
+    print(delta.text, terminator: "")
 }
 ```
+
+`delta.text` is empty for the non-text events (reasoning traces, tool calls,
+usage counters, terminal marker), so a typewriter UI can concatenate blindly.
+Pattern-match on the `ChatDelta` case itself when you need to react to
+reasoning or handle a tool call.
 
 For a model package (a manifest with several device-specific variants) attach the
 policy to the source itself — the runtime picks the winning variant against the
