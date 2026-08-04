@@ -233,15 +233,22 @@ extension URLSessionBackgroundTransport: URLSessionDownloadDelegate {
         totalBytesExpectedToWrite: Int64
     ) {
         guard let entry = pendingEntry(forTask: downloadTask) else { return }
-        // The core reasons about the full file, not the current range; offset the
-        // response byte counters by the request's resume position so the caller sees a
-        // monotonic percentage across resumes.
-        let completed = totalBytesWritten + entry.request.offset
+        // Whether to fold `entry.request.offset` into the counters depends on what
+        // the SERVER did, not what we asked for. A `Range` request that came back
+        // as `206 Partial Content` means the body is the tail; add the prefix we
+        // already have on disk so the caller sees a monotonic percentage across
+        // resumes. A `Range` request that came back as `200 OK` means the server
+        // ignored the range and is sending the whole resource — the counters
+        // already cover the full download, and adding the offset on top would
+        // report >100% and a bogus ETA.
+        let serverHonouredRange = respondedWithPartialContent(downloadTask) && entry.request.offset > 0
+        let offsetAdjustment: Int64 = serverHonouredRange ? entry.request.offset : 0
+        let completed = totalBytesWritten + offsetAdjustment
         let total: Int64
         if totalBytesExpectedToWrite == NSURLSessionTransferSizeUnknown {
             total = Int64(FLM_UNKNOWN_SIZE)
         } else {
-            total = totalBytesExpectedToWrite + entry.request.offset
+            total = totalBytesExpectedToWrite + offsetAdjustment
         }
         TransportReport.progress(id: entry.request.id, completedBytes: completed, totalBytes: total)
     }
@@ -254,11 +261,20 @@ extension URLSessionBackgroundTransport: URLSessionDownloadDelegate {
         guard let entry = pendingEntry(forTask: downloadTask) else { return }
         let request = entry.request
 
+        // URLSession fires this delegate even for non-2xx responses — the "downloaded
+        // file" is then the error body (a 404 page, a 500 stack trace). Writing that
+        // into the destination would corrupt the model directory; the actual status
+        // is surfaced by `didCompleteWithError` immediately after. Only 200 and 206
+        // are legitimate write cases.
+        let statusCode = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 || statusCode == 206 else { return }
+        let serverHonouredRange = statusCode == 206 && request.offset > 0
+
         // Synchronous work only — the temp file at `location` is deleted the moment
         // this method returns.
         if let destination = request.destinationPath {
             do {
-                try saveDownload(from: location, to: destination, offset: request.offset)
+                try saveDownload(from: location, to: destination, append: serverHonouredRange)
             } catch {
                 TransportReport.complete(
                     id: request.id, statusCode: 0, headers: nil,
@@ -271,8 +287,21 @@ extension URLSessionBackgroundTransport: URLSessionDownloadDelegate {
         } else {
             // In-memory delivery: read the file and forward to the ABI. Manifests
             // are small (a few tens of KB); reading them into RAM is fine.
-            if let data = try? Data(contentsOf: location, options: [.mappedIfSafe]) {
+            //
+            // A read failure here MUST be surfaced — swallowing it would let
+            // `didCompleteWithError` report a 200 with no body, and the core would
+            // fail later with a confusing "unexpected empty document" from the
+            // manifest parser instead of the real disk error.
+            do {
+                let data = try Data(contentsOf: location, options: [.mappedIfSafe])
                 TransportReport.body(id: request.id, data: data)
+            } catch {
+                TransportReport.complete(
+                    id: request.id, statusCode: 0, headers: nil,
+                    error: "failed to read downloaded body: \(error)"
+                )
+                removePending(forId: request.id)
+                return
             }
         }
     }
@@ -340,20 +369,20 @@ extension URLSessionBackgroundTransport: URLSessionDownloadDelegate {
 
 // MARK: - Persistence
 
-private func saveDownload(from tempURL: URL, to destinationPath: String, offset: Int64) throws {
+private func saveDownload(from tempURL: URL, to destinationPath: String, append: Bool) throws {
     let fm = FileManager.default
     let destinationURL = URL(fileURLWithPath: destinationPath)
     try fm.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-    if offset > 0 {
-        // Resume path. Per the ABI contract on `flm_http_request.offset > 0` we sent
-        // `Range: bytes=<offset>-`, so `tempURL` contains bytes at logical position
-        // `offset` onward. We MUST append them to the existing destination — moving
-        // the temp file over an existing file (or into place when there is none)
-        // would produce a same-length file whose first `offset` bytes are the
-        // resumed tail, which passes any length check and only fails at the
-        // core's SHA-256 verification step. That in turn triggers a second full
-        // refetch, doubling the user's bandwidth for a corrupt outcome.
+    if append {
+        // Server returned 206 Partial Content in response to our Range header, so
+        // `tempURL` contains only the tail starting at the offset the core planned.
+        // The prefix at `destinationPath` is what the core relied on when it asked
+        // for a Range, so it must survive: open in append (`FileHandle.seekToEnd`
+        // + write) rather than moving `tempURL` over the destination. Moving would
+        // produce a same-length file whose leading `offset` bytes are the resumed
+        // tail — passes any length check and only fails at the core's SHA-256
+        // step, triggering a second full refetch of a corrupt outcome.
         guard fm.fileExists(atPath: destinationPath) else {
             // The core planned a resume against a file that is no longer on disk.
             // Fail loud so the core can re-plan from offset 0 rather than write
@@ -364,7 +393,7 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, offset:
                 code: 1,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "resume requested (offset=\(offset)) but destination \(destinationPath) is missing",
+                        "resume requested but destination \(destinationPath) is missing",
                 ]
             )
         }
@@ -381,9 +410,10 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, offset:
         }
         try? fm.removeItem(at: tempURL)
     } else {
-        // Fresh download: remove any stale partial and move the temp file into
-        // place. Move is atomic within the same filesystem, which is what the
-        // temp dir and the app sandbox both are.
+        // Fresh download OR the server ignored our Range and sent a full 200 body.
+        // Both mean `tempURL` is the whole resource from byte 0, so any stale
+        // partial has to be discarded — moving the temp file over it is
+        // self-healing for the "server ignored Range" case.
         if fm.fileExists(atPath: destinationPath) {
             try fm.removeItem(at: destinationURL)
         }
@@ -396,4 +426,8 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, offset:
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
     try? url.setResourceValues(values)
+}
+
+private func respondedWithPartialContent(_ task: URLSessionTask) -> Bool {
+    (task.response as? HTTPURLResponse)?.statusCode == 206
 }
