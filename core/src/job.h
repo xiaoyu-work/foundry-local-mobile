@@ -91,6 +91,14 @@ class Job : public std::enable_shared_from_this<Job> {
   /// Take the result JSON, transferring ownership. Empty after the first call.
   std::optional<std::string> TakeResult();
 
+  /// Re-raise the failure that ended this job. Does nothing unless it failed.
+  ///
+  /// A job reports its failure through the completion callback, so a caller that passes
+  /// one learns why. A caller that polls instead — flm_job_wait then flm_job_get_state,
+  /// which the ABI documents and every synchronous wrapper uses — passes no callback, and
+  /// without this the reason is built, handed to nobody and dropped.
+  void ThrowIfFailed() const;
+
   /// Run the body inline on the calling thread. Called by the pool worker.
   void Execute();
 
@@ -116,6 +124,12 @@ class Job : public std::enable_shared_from_this<Job> {
   std::condition_variable finished_cv_;
   bool finished_ = false;
   std::optional<std::string> result_json_;
+
+  // The failure that ended the job, retained so a polling caller can be told why rather
+  // than being left to infer it from the state.
+  flm_status status_ = FLM_OK;
+  std::string error_message_;
+  nlohmann::json error_context_;
 
   // Progress rate estimation state, guarded by mutex_.
   int64_t last_progress_bytes_ = 0;

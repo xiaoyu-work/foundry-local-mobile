@@ -164,6 +164,9 @@ void Job::Finish(flm_status status, nlohmann::json result, const std::string& er
       result_json_ = result.dump();
     }
     if (status != FLM_OK) {
+      status_ = status;
+      error_message_ = error_message;
+      error_context_ = error_context;
       error_json = MakeErrorJson(status, error_message, error_context).dump();
     }
   }
@@ -190,6 +193,13 @@ std::optional<std::string> Job::TakeResult() {
   auto result = std::move(result_json_);
   result_json_.reset();
   return result;
+}
+
+void Job::ThrowIfFailed() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (status_ != FLM_OK) {
+    throw Error(status_, error_message_, error_context_);
+  }
 }
 
 /* ------------------------------------------------------------------------- */

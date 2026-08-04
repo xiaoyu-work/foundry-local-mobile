@@ -786,6 +786,9 @@ flm_status FLM_CALL flm_job_take_result_json(flm_job job, char** out_json) FLM_N
     if (instance->state() == FLM_JOB_PENDING || instance->state() == FLM_JOB_RUNNING) {
       throw Error(FLM_ERROR_INVALID_STATE, "the job has not finished yet");
     }
+    // A job that failed never had a result to take, so reporting one as taken would send
+    // the caller looking for a double-take in their own code instead of at the failure.
+    instance->ThrowIfFailed();
     throw Error(FLM_ERROR_INVALID_STATE, "the job's result has already been taken");
   }
   *out_json = DuplicateString(*result);
