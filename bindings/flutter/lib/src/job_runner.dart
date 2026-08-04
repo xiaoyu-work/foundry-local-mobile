@@ -161,13 +161,19 @@ class JobRunner {
     final completionListener = NativeCallable<raw.flm_completion_callback_native>
         .listener(_onCompletion);
     _completionListener = completionListener;
+    ctx.ref.on_complete = completionListener.nativeFunction;
 
     final outJob = calloc<Uint64>();
     try {
       final status = start(
         onProgress: progressPtr,
         onDelta: deltaPtr,
-        onComplete: completionListener.nativeFunction,
+        // Route completion through the C trampoline too. `error_json` is
+        // stack-local in the core (job.cc:156) — passing the listener
+        // directly would let the pointer dangle for exactly the same
+        // reason the delta pointer does. The trampoline strdup's it and
+        // Dart frees it in `_onCompletion`'s finally.
+        onComplete: DartBridge.completeAdapter(),
         userData: ctx.cast<Void>(),
         outJob: outJob,
       );
@@ -189,58 +195,80 @@ class JobRunner {
     }
   }
 
+  // The C shim (`src/flm_dart_bridge.c`) has already deep-copied `ptr` and
+  // the strings it points at onto the heap before this listener runs — see
+  // the top-of-file comment on why (the raw core pointer would be freed by
+  // the time this asynchronous listener body executes). We only need to
+  // read the fields, dispatch, and free.
   void _onProgress(int job, Pointer<raw.flm_progress> ptr, Pointer<Void> _) {
-    if (_progressController?.isClosed ?? true) return;
     if (ptr == nullptr) return;
-    final progress = Progress.fromNative(
-      ptr.ref,
-      cStringToDart(ptr.ref.stage),
-      detail: ptr.ref.detail == nullptr ? null : cStringToDart(ptr.ref.detail),
-    );
-    _progressController!.add(progress);
+    try {
+      if (_progressController?.isClosed ?? true) return;
+      final progress = Progress.fromNative(
+        ptr.ref,
+        cStringToDart(ptr.ref.stage),
+        detail:
+            ptr.ref.detail == nullptr ? null : cStringToDart(ptr.ref.detail),
+      );
+      _progressController!.add(progress);
+    } finally {
+      DartBridge.freeProgress(ptr);
+    }
   }
 
   void _onDelta(int job, Pointer<raw.flm_delta> ptr, Pointer<Void> _) {
-    if (_deltaController?.isClosed ?? true) return;
     if (ptr == nullptr) return;
-    _deltaController!.add(SessionDelta.fromNative(ptr));
+    try {
+      if (_deltaController?.isClosed ?? true) return;
+      _deltaController!.add(SessionDelta.fromNative(ptr));
+    } finally {
+      DartBridge.freeDelta(ptr);
+    }
   }
 
   void _onCompletion(
       int job, int status, Pointer<Char> errorJson, Pointer<Void> _) {
-    final String? err = errorJson == nullptr ? null : cStringToDart(errorJson);
+    // `errorJson` is now heap-owned by the C shim; must be freed here.
+    try {
+      final String? err =
+          errorJson == nullptr ? null : cStringToDart(errorJson);
 
-    // Regardless of success or failure, close the delta / progress streams so
-    // consumers see `done` and any StreamSubscription.cancel completes.
-    void closeStreams() {
-      _progressController?.close();
-      _deltaController?.close();
-    }
-
-    if (status == raw.FlmStatus.ok) {
-      final resultJson = _takeResultJson();
-      Map<String, Object?> parsed = const <String, Object?>{};
-      if (resultJson != null && resultJson.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(resultJson);
-          if (decoded is Map<String, Object?>) {
-            parsed = decoded;
-          } else if (decoded is Map) {
-            parsed = decoded.cast<String, Object?>();
-          }
-        } on FormatException {
-          parsed = <String, Object?>{'raw': resultJson};
-        }
+      // Regardless of success or failure, close the delta / progress streams
+      // so consumers see `done` and any StreamSubscription.cancel completes.
+      void closeStreams() {
+        _progressController?.close();
+        _deltaController?.close();
       }
-      _resultCompleter.complete(parsed);
-    } else {
-      final ex = exceptionFromErrorJson(status, err);
-      _progressController?.addError(ex);
-      _deltaController?.addError(ex);
-      _resultCompleter.completeError(ex);
+
+      if (status == raw.FlmStatus.ok) {
+        final resultJson = _takeResultJson();
+        Map<String, Object?> parsed = const <String, Object?>{};
+        if (resultJson != null && resultJson.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(resultJson);
+            if (decoded is Map<String, Object?>) {
+              parsed = decoded;
+            } else if (decoded is Map) {
+              parsed = decoded.cast<String, Object?>();
+            }
+          } on FormatException {
+            parsed = <String, Object?>{'raw': resultJson};
+          }
+        }
+        _resultCompleter.complete(parsed);
+      } else {
+        final ex = exceptionFromErrorJson(status, err);
+        _progressController?.addError(ex);
+        _deltaController?.addError(ex);
+        _resultCompleter.completeError(ex);
+      }
+      closeStreams();
+      _finalize();
+    } finally {
+      if (errorJson != nullptr) {
+        DartBridge.freeString(errorJson);
+      }
     }
-    closeStreams();
-    _finalize();
   }
 
   String? _takeResultJson() {

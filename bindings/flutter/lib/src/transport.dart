@@ -198,8 +198,17 @@ TransportRegistration installTransport(FlmTransport transport) {
   ctxPtr.ref.version = 1;
   ctxPtr.ref.on_progress = nullptr;
   ctxPtr.ref.on_delta = nullptr;
+  ctxPtr.ref.on_complete = nullptr;
   ctxPtr.ref.user_data = nullptr;
 
+  // The transport `send` path is the ONE callback the C shim does not deep-
+  // copy before handing to Dart. The core blocks in Transport::Send() waiting
+  // on the pending request until we call flm_transport_report_complete
+  // (core/src/transport.cc), which keeps the `flm_http_request` struct and
+  // every string it points at alive across the async hand-off to this
+  // listener. flm_types.h documents this as the single exception to the
+  // borrowed-for-the-call rule. Every field is read into Dart-owned Strings
+  // synchronously below, so the borrowed pointer does not escape.
   final sendListener = NativeCallable<
       Void Function(Pointer<raw.flm_http_request>,
           Pointer<Void>)>.listener((Pointer<raw.flm_http_request> ptr, Pointer<Void> _) {

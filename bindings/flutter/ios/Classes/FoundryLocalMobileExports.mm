@@ -100,7 +100,11 @@ void* FoundryLocalMobile_KeepSymbols(int index) {
         // could not resolve them either). -----------------------------------
         (void*)&flm_dart_bridge_progress,
         (void*)&flm_dart_bridge_delta,
+        (void*)&flm_dart_bridge_complete,
         (void*)&flm_dart_bridge_send,
+        (void*)&flm_dart_bridge_free_progress,
+        (void*)&flm_dart_bridge_free_delta,
+        (void*)&flm_dart_bridge_free_string,
     };
     // clang-format on
     NSInteger const count = sizeof(symbols) / sizeof(symbols[0]);
