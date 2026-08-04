@@ -93,7 +93,7 @@ you control and give the SDK the URL and credentials:
 // Bundled in the app — works offline from first launch.
 val local = foundry.addModelSource(
     ModelSource.Bundled(name = "phi-4-mini", path = extractedModelDir.absolutePath)
-)
+).model
 
 // Or downloaded from your own storage, with your own credentials.
 val remote = foundry.addModelSource(
@@ -102,7 +102,7 @@ val remote = foundry.addModelSource(
         url = "https://models.example.com/phi-4-mini/manifest.json",
         headers = mapOf("Authorization" to "Bearer $token"),
     )
-)
+).model
 ```
 
 When the URL serves a model package, the SDK scores this device against the variants and
@@ -119,12 +119,16 @@ verified against its manifest digest. See
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
-val model = foundry.addModelSource(
+val added = foundry.addModelSource(
     ModelSource.Remote(
         name = "qwen2.5-0.5b",
         url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
     )
 ) { progress -> println("${progress.percent}%") }
+
+// Acquiring a model hands one straight back. `model` is null only in the rare case
+// where the files landed but the local scan missed them, so fall back to the catalog.
+val model = added.model ?: foundry.catalog.getModel(added.name)
 
 model.load()
 
