@@ -282,7 +282,13 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  * the manifest before the model is committed.
  *
  * The job's result is
- * `{"name", "path", "variant_id", "bytes_downloaded", "bytes_reused", "was_cached"}`.
+ * `{"name", "path", "variant_id", "bytes_downloaded", "bytes_reused", "was_cached",
+ *   "model_handle"}`.
+ *
+ * `model_handle` is a ready-to-use model, so there is no need to look the model up
+ * through the catalog afterwards. It is FLM_INVALID_HANDLE in the unexpected case where
+ * the files landed but the catalog did not pick them up; the download still succeeded.
+ * Release it with flm_model_release() as usual.
  */
 FLM_EXPORT flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, const char* source_json,
                                                                   flm_progress_callback on_progress,
@@ -694,7 +700,8 @@ FLM_EXPORT flm_status FLM_CALL flm_job_cancel(flm_job job) FLM_NOEXCEPT;
  *                       "variant_id": "cpu-int4",       // "" when not a package
  *                       "bytes_downloaded": 542113792,
  *                       "bytes_reused": 0,              // already on disk, not refetched
- *                       "was_cached": false }           // true if nothing had to be fetched
+ *                       "was_cached": false,            // true if nothing had to be fetched
+ *                       "model_handle": 42 }            // ready to use; no catalog lookup needed
  *   load              { "path": "/data/.../models/qwen2.5-0.5b", "bytes": 542113792 }
  *   download          { "path": "...", "bytes": 542113792 }   // only when already cached
  *   complete          { "text": "...",
