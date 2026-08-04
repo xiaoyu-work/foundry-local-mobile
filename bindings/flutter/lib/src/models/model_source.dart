@@ -20,7 +20,13 @@ sealed class ModelSource {
     this.verifyChecksums = true,
   });
 
-  /// Name the model is registered under. Used later as an alias for lookup.
+  /// Name the model is registered under, and the thing that decides whether it
+  /// can run. The runtime picks a session implementation from the model's task,
+  /// and it learns tasks from the Foundry Local catalog. Name the source after
+  /// the catalog model it actually is — say
+  /// `qwen2.5-0.5b-instruct-generic-cpu:4` rather than `my-model` — and the task
+  /// comes with it. A name the catalog has never seen still downloads, installs
+  /// and loads, but creating a session on it will fail.
   final String name;
 
   /// Cross-platform variant policy for a package source (see

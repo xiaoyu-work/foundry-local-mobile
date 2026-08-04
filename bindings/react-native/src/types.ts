@@ -153,7 +153,15 @@ export interface VariantConstraints {
 // -----------------------------------------------------------------------------
 
 interface ModelSourceCommon {
-  /** Common name the model is registered under. */
+  /**
+   * Name the model is registered under, and the thing that decides whether it
+   * can run. The runtime picks a session implementation from the model's task,
+   * and it learns tasks from the Foundry Local catalog. Name the source after
+   * the catalog model it actually is — say
+   * `qwen2.5-0.5b-instruct-generic-cpu:4` rather than `my-model` — and the task
+   * comes with it. A name the catalog has never seen still downloads, installs
+   * and loads, but creating a session on it will fail.
+   */
   name: string;
   /**
    * Whether a partial download already on disk should be resumed. Defaults

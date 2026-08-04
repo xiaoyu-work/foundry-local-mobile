@@ -14,6 +14,13 @@ import FoundryLocalMobile
 /// loads it in place so the storage is not doubled. A ``remote`` source names a URL
 /// that resolves to either a model package manifest or a flat file index — the SDK
 /// figures out which from the document itself.
+///
+/// In both cases `name` decides whether the model can run, not just how it is
+/// labelled. The runtime picks a session implementation from the model's task, and it
+/// learns tasks from the Foundry Local catalog, so name a source after the catalog
+/// model it actually is — `qwen2.5-0.5b-instruct-generic-cpu:4` rather than
+/// `my-model`. A name the catalog has never seen still downloads, installs and loads,
+/// but ``Model/createChatSession(_:)`` will refuse it.
 public enum ModelSource: Sendable {
     /// Model shipped inside the app bundle, extracted to `path` (or already a real
     /// path when it comes from a folder reference on iOS).

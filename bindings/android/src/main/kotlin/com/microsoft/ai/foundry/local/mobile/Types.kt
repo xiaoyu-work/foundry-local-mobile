@@ -231,7 +231,15 @@ public data class DownloadEstimate(
  * APK, or hosted on storage the app controls. See `docs/model-sources.md`.
  */
 public sealed class ModelSource {
-    /** Common name the model is registered under. */
+    /**
+     * Name the model is registered under, and the thing that decides whether
+     * it can run. The runtime picks a session implementation from the model's
+     * task, and it learns tasks from the Foundry Local catalog. Name the
+     * source after the catalog model it actually is — say
+     * `qwen2.5-0.5b-instruct-generic-cpu:4` rather than `my-model` — and the
+     * task comes with it. A name the catalog has never seen still downloads,
+     * installs and loads, but [Model.createChatSession] will refuse it.
+     */
     public abstract val name: String
 
     /**
