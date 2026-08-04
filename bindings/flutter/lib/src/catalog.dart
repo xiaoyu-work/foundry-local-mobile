@@ -70,8 +70,13 @@ class Catalog {
     return list.map(ModelInfo.fromJson).toList(growable: false);
   }
 
-  /// Resolve a model by alias (`qwen2.5-0.5b`). This may hit the network to
-  /// resolve the alias if the catalog has not been fetched yet.
+  /// Resolve a model by alias (`qwen2.5-0.5b`).
+  ///
+  /// On mobile this only reaches models the app has already registered via
+  /// [FoundryLocal.addModelSource]. There is no fetch from a remote catalog:
+  /// the Foundry Local catalog only publishes desktop-only builds, so
+  /// `flm_model_download_async` returns `FLM_ERROR_NOT_IMPLEMENTED` for
+  /// anything not already on the device.
   Future<Model> getModel(String alias) async {
     final bindings = NativeLibrary.instance.bindings;
     final result = await withCString<Future<Map<String, Object?>>>(

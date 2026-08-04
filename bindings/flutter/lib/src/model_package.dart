@@ -53,8 +53,8 @@ class ModelPackage {
   /// Currently selected variant id, or null when none has been chosen.
   String? get selectedVariantId => manifest.selectedVariantId;
 
-  /// Pin the package to a specific variant. Subsequent [Model.download] /
-  /// [Model.load] calls on this package act on it.
+  /// Pin the package to a specific variant. Subsequent [Model.load] calls
+  /// on this package act on it.
   void selectVariant(String variantId) {
     withCString(variantId, (ptr) {
       final status =
@@ -89,7 +89,7 @@ class ModelPackage {
   }
 
   /// Obtain a standalone [Model] handle for one variant, so it can be
-  /// downloaded / loaded / released independently of the package.
+  /// loaded / released independently of the package.
   Model getVariant(String variantId) {
     final bindings = NativeLibrary.instance.bindings;
     final out = calloc<Uint64>();

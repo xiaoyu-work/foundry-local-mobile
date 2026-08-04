@@ -339,8 +339,10 @@ Future<Map<String, Object?>> runProgressJob({
 /// Run an async ABI call that reports progress + completion and expose the
 /// result as a [JobHandles] with a cancel hook wired to `flm_job_cancel`.
 ///
-/// This is the primitive [Model.download] / [Model.load] use so subscription
-/// cancellation on the exposed stream actually cancels the underlying job.
+/// The main use for this primitive today is streaming progress from any ABI
+/// call that surfaces intermediate work; [Model.load] itself uses the
+/// [runProgressJob] wrapper because it just wants a Future plus optional
+/// callback.
 JobHandles<Progress> runProgressStreamJob(
   int Function(
     Pointer<NativeFunction<Int32 Function(Uint64, Pointer<raw.flm_progress>, Pointer<Void>)>> onProgress,

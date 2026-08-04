@@ -5,6 +5,8 @@ import 'dart:convert';
 
 import 'package:meta/meta.dart';
 
+import 'delta.dart' show FinishReason;
+
 /// A tool the model may call. Mirrors the OpenAI tool shape.
 @immutable
 class ChatTool {
@@ -185,30 +187,111 @@ class ChatCompletion {
     required this.text,
     required this.finishReason,
     required this.toolCalls,
-    required this.promptTokens,
-    required this.completionTokens,
+    required this.usage,
     this.raw = const <String, Object?>{},
   });
 
+  /// Final assistant text.
   final String text;
-  final String finishReason;
-  final List<Map<String, Object?>> toolCalls;
-  final int promptTokens;
-  final int completionTokens;
+
+  /// How generation stopped. Includes [FinishReason.none] and falls back to
+  /// that for any reason string the runtime adds in the future.
+  final FinishReason finishReason;
+
+  /// Tool calls the model produced, or `null` if the model did not call any.
+  /// The distinction between "no tools called" and "field absent" matters:
+  /// core omits the field entirely when there is nothing to report.
+  final List<ToolCall>? toolCalls;
+
+  /// Token accounting, or `null` if the runtime did not report any. Again,
+  /// nullable rather than a zero'd struct so callers can tell an absent
+  /// report from `0 in, 0 out`.
+  final Usage? usage;
+
+  /// Raw JSON payload the core produced. Kept so ABI-level additions surface
+  /// without a Dart change; every field the Dart layer knows about is parsed
+  /// out into the typed fields above.
   final Map<String, Object?> raw;
 
   factory ChatCompletion.fromJson(Map<String, Object?> json) {
-    final usage = (json['usage'] as Map?)?.cast<String, Object?>() ??
-        const <String, Object?>{};
+    final rawToolCalls = json['tool_calls'];
+    List<ToolCall>? toolCalls;
+    if (rawToolCalls is List) {
+      toolCalls = rawToolCalls
+          .whereType<Map<Object?, Object?>>()
+          .map((m) => ToolCall.fromJson(m.cast<String, Object?>()))
+          .toList(growable: false);
+    }
+
+    final rawUsage = json['usage'];
+    final usage = rawUsage is Map
+        ? Usage.fromJson(rawUsage.cast<String, Object?>())
+        : null;
+
     return ChatCompletion(
       text: json['text'] as String? ?? '',
-      finishReason: json['finish_reason'] as String? ?? 'stop',
-      toolCalls: (json['tool_calls'] as List?)?.cast<Map<String, Object?>>() ??
-          const <Map<String, Object?>>[],
-      promptTokens: (usage['prompt_tokens'] as num?)?.toInt() ?? 0,
-      completionTokens:
-          (usage['completion_tokens'] as num?)?.toInt() ?? 0,
+      finishReason: FinishReason.fromString(json['finish_reason'] as String?),
+      toolCalls: toolCalls,
+      usage: usage,
       raw: json,
+    );
+  }
+}
+
+/// One tool the model asked the host to execute in a non-streaming
+/// completion. Corresponds to one entry in the completion result's
+/// `tool_calls` array.
+///
+/// The `arguments` payload is intentionally left as a raw JSON string: the
+/// model can emit arguments that do not conform to the declared tool schema,
+/// and whether that is fatal is the calling app's decision, not this
+/// binding's. Parse it yourself (e.g. `jsonDecode(call.argumentsJson)`) when
+/// dispatching to your tool implementation.
+@immutable
+class ToolCall {
+  const ToolCall({
+    required this.callId,
+    required this.name,
+    required this.argumentsJson,
+  });
+
+  final String callId;
+  final String name;
+  final String argumentsJson;
+
+  factory ToolCall.fromJson(Map<String, Object?> json) => ToolCall(
+        callId: json['call_id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        argumentsJson: json['arguments'] as String? ?? '',
+      );
+}
+
+/// Token accounting reported by the runtime at the end of a completion.
+///
+/// `totalTokens` is stored as reported by core rather than recomputed from
+/// the other two: the runtime is authoritative and its total may include
+/// tokens the plugin does not otherwise account for (system prompts folded
+/// in, cached KV segments, etc.).
+@immutable
+class Usage {
+  const Usage({
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.totalTokens,
+  });
+
+  final int promptTokens;
+  final int completionTokens;
+  final int totalTokens;
+
+  factory Usage.fromJson(Map<String, Object?> json) {
+    final prompt = (json['prompt_tokens'] as num?)?.toInt() ?? 0;
+    final completion = (json['completion_tokens'] as num?)?.toInt() ?? 0;
+    final total = (json['total_tokens'] as num?)?.toInt() ?? prompt + completion;
+    return Usage(
+      promptTokens: prompt,
+      completionTokens: completion,
+      totalTokens: total,
     );
   }
 }
@@ -245,15 +328,54 @@ class TranscriptionResult {
 
   final String text;
   final String language;
-  final List<Map<String, Object?>> segments;
+  final List<TranscriptionSegment> segments;
   final Map<String, Object?> raw;
 
-  factory TranscriptionResult.fromJson(Map<String, Object?> json) =>
-      TranscriptionResult(
+  factory TranscriptionResult.fromJson(Map<String, Object?> json) {
+    final rawSegments = json['segments'];
+    final segments = rawSegments is List
+        ? rawSegments
+            .whereType<Map<Object?, Object?>>()
+            .map((m) => TranscriptionSegment.fromJson(m.cast<String, Object?>()))
+            .toList(growable: false)
+        : const <TranscriptionSegment>[];
+    return TranscriptionResult(
+      text: json['text'] as String? ?? '',
+      language: json['language'] as String? ?? '',
+      segments: segments,
+      raw: json,
+    );
+  }
+}
+
+/// One aligned segment of a transcription.
+@immutable
+class TranscriptionSegment {
+  const TranscriptionSegment({
+    required this.text,
+    required this.startTimeMs,
+    required this.endTimeMs,
+    required this.language,
+  });
+
+  final String text;
+
+  /// Offset relative to the start of the audio, in ms.
+  final int startTimeMs;
+  final int endTimeMs;
+
+  /// Language reported per-segment. Usually matches
+  /// [TranscriptionResult.language] but may differ on multilingual audio.
+  final String language;
+
+  Duration get start => Duration(milliseconds: startTimeMs);
+  Duration get end => Duration(milliseconds: endTimeMs);
+
+  factory TranscriptionSegment.fromJson(Map<String, Object?> json) =>
+      TranscriptionSegment(
         text: json['text'] as String? ?? '',
+        startTimeMs: (json['start_time_ms'] as num?)?.toInt() ?? 0,
+        endTimeMs: (json['end_time_ms'] as num?)?.toInt() ?? 0,
         language: json['language'] as String? ?? '',
-        segments: (json['segments'] as List?)?.cast<Map<String, Object?>>() ??
-            const <Map<String, Object?>>[],
-        raw: json,
       );
 }

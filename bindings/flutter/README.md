@@ -38,15 +38,25 @@ core from source and the FFI binding is registered automatically.
 ## Quickstart
 
 ```dart
+import 'dart:io';
 import 'package:foundry_local_mobile/foundry_local_mobile.dart';
 
 Future<void> main() async {
   final foundry = await FoundryLocal.create();
 
-  // Discover, download and load a chat model.
-  final model = await foundry.catalog.getModelById('phi-4-mini-instruct');
-  await model.downloadAndWait();
-  await for (final _ in model.load()) {}
+  // Register a model the app either bundles or fetches from its own storage.
+  // See "Model sources" below for the full contract.
+  final model = await foundry.addModelSource(
+    RemoteModelSource(
+      name: 'phi-4-mini',
+      url: 'https://storage.example.com/phi-4-mini/manifest.json',
+    ),
+  );
+
+  final load = await model.load(
+    onProgress: (p) => print('${p.stage} ${p.percent}%'),
+  );
+  print('Loaded ${load.bytes} bytes from ${load.path}');
 
   final chat = model.createChatSession(
     options: const ChatSessionOptions(
@@ -64,35 +74,72 @@ Future<void> main() async {
     if (delta is CompletedDelta) break;
   }
 
-  await chat.release();
-  await model.release();
+  chat.release();
+  model.release();
   await foundry.dispose();
 }
 ```
 
 ## Model sources
 
-`Model` can come from a **bundled** on-device source (a directory the app
-already ships) or a **remote** URL the transport fetches.
+Models on mobile are **always** provided by the app: there is no built-in
+"download from a public catalog" flow. `flm_model_download_async` returns
+`FLM_ERROR_NOT_IMPLEMENTED` for anything not already on the device — the
+Foundry Local catalog only publishes desktop CUDA/DirectML/OpenVINO builds,
+which are useless on a phone.
+
+Give the SDK a model by registering a `ModelSource`:
+
+- **Bundled** — a directory the app already ships (assets extracted to
+  `getApplicationSupportDirectory()`, an in-app-purchase bundle, an
+  encrypted archive you decrypted yourself).
+- **Remote** — an HTTPS manifest the transport (see below) fetches on demand.
 
 ```dart
-await foundry.addModelSource(
+// A model shipped inside the app.
+final localModel = await foundry.addModelSource(
   BundledModelSource(
-    name: 'my-bundled-model',
+    name: 'phi-4-mini-bundled',
     path: '/path/to/model/dir',
   ),
 );
 
-await foundry.addModelSource(
+// A model the app hosts on its own storage.
+final remoteModel = await foundry.addModelSource(
   RemoteModelSource(
-    name: 'my-remote-catalog',
-    url: 'https://example.com/catalog.json',
+    name: 'phi-4-mini-remote',
+    url: 'https://storage.example.com/phi-4-mini/manifest.json',
   ),
 );
 ```
 
-See [`docs/model-sources.md`](../../docs/model-sources.md) at the repo root for
-the full contract.
+Both `ModelSource` kinds accept two optional flags that pass straight through
+to the core, both defaulting to `true`:
+
+- `resume: true` — resume a partial download rather than restart it. Turn
+  off only when the origin server mishandles `Range` requests, which is
+  fatal on a multi-gigabyte download that keeps hitting network transitions.
+- `verifyChecksums: true` — SHA-256-check every downloaded file. **Should
+  stay on** for anything you did not just build yourself: the runtime
+  `mmap`s the file and executes operators from it.
+
+Once a source resolves, [`Model.load`](lib/src/model.dart) makes it resident:
+
+```dart
+final result = await model.load(
+  onProgress: (p) => print('${p.stage} ${p.percent}%'),
+);
+print('Loaded ${result.bytes} B from ${result.path}');
+```
+
+`load()` does **not** download on demand. If the underlying model files
+were not fetched during `addModelSource`, load rejects with a
+`FoundryLocalException` carrying `FLM_ERROR_NOT_IMPLEMENTED`. This is
+deliberate: mobile apps must consciously choose when to spend the user's
+bandwidth.
+
+See [`docs/model-sources.md`](../../docs/model-sources.md) at the repo root
+for the full contract.
 
 ## Transport
 
@@ -168,13 +215,29 @@ method channel; only these low-frequency signals do.
 The public surface lives in `package:foundry_local_mobile/foundry_local_mobile.dart`.
 Highlights:
 
-- `FoundryLocal` — root object, one per process.
-- `Catalog` — model discovery.
-- `Model` — one shipped model (`download`, `load`, `unload`, `delete`).
+- `FoundryLocal` — root object, one per process. Provides
+  [`addModelSource`](lib/src/foundry_local.dart), the only supported way to
+  hand the SDK a model on mobile.
+- `Catalog` — models already registered with the SDK (`listCachedModels`,
+  cache size). Not a fetcher — see [Model sources](#model-sources) above.
+- `Model` — one shipped model (`load`, `unload`, `delete`). Loading returns
+  a typed `LoadResult` with `path` and `bytes`.
 - `ModelPackage` — a model made of multiple per-device variants.
 - `ChatSession` — `complete`, `completeStreaming`, `submitToolResults`,
   history export/restore.
+  - `ChatCompletion.toolCalls` is `null` when the model asked for no tools,
+    not an empty list — the distinction between "field absent" and "empty"
+    is preserved. Each `ToolCall.argumentsJson` is the model's raw JSON
+    string; parse it yourself when dispatching, so malformed arguments are
+    the app's decision to handle.
+  - `ChatCompletion.usage` is likewise nullable when the runtime did not
+    report counters.
+  - `ChatCompletion.finishReason` decodes to the [`FinishReason`] enum and
+    falls back to `FinishReason.none` for unknown strings future runtimes
+    may add.
 - `AudioSession` — batch file transcription and streaming microphone input.
+  Batch results are `TranscriptionResult` with typed
+  `TranscriptionSegment`s.
 - `EmbeddingSession` — single-batch text embeddings.
 - `FlmTransport` — pluggable HTTP transport.
 

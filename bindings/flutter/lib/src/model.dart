@@ -6,9 +6,9 @@ import 'dart:convert';
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart';
 
 import 'audio_session.dart';
-import 'bindings/bindings.dart' as raw;
 import 'bindings/native_library.dart';
 import 'chat_session.dart';
 import 'embedding_session.dart';
@@ -18,27 +18,6 @@ import 'model_package.dart';
 import 'models/model_info.dart';
 import 'models/progress.dart';
 import 'native_strings.dart';
-
-/// Options passed to [Model.download].
-class DownloadOptions {
-  const DownloadOptions({
-    this.allowMetered,
-    this.resume = true,
-    this.verifyChecksums = true,
-  });
-
-  /// Override the manager-level metered-network policy for this download.
-  final bool? allowMetered;
-
-  final bool resume;
-  final bool verifyChecksums;
-
-  Map<String, Object?> toJson() => <String, Object?>{
-        if (allowMetered != null) 'allow_metered': allowMetered,
-        'resume': resume,
-        'verify_checksums': verifyChecksums,
-      };
-}
 
 /// Options passed to [Model.load].
 class LoadOptions {
@@ -51,8 +30,32 @@ class LoadOptions {
       };
 }
 
-/// A catalog model, a bundled model, a model package or one variant of a
-/// package. See [isPackage] to distinguish package handles.
+/// Result of a successful [Model.load] call. Mirrors the
+/// `flm_job_take_result_json` shape for `flm_model_load_async`:
+/// `{ "path": "...", "bytes": 542113792 }`.
+@immutable
+class LoadResult {
+  const LoadResult({required this.path, required this.bytes});
+
+  /// Absolute on-disk path the model was loaded from. Same value as
+  /// [Model.path] once loading has finished, and mirrors `flm_model_get_path`.
+  final String path;
+
+  /// Number of bytes now resident in memory for this model. Useful for
+  /// telemetry and for driving `flm_manager_notify_lifecycle` cache decisions
+  /// once several models are loaded.
+  final int bytes;
+
+  factory LoadResult.fromJson(Map<String, Object?> json) => LoadResult(
+        path: json['path'] as String? ?? '',
+        bytes: (json['bytes'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// A model handle owned by the app. Comes from
+/// [FoundryLocal.addModelSource] (the only supported acquisition path on
+/// mobile) or from [Catalog.getModel]/[Catalog.getModelById] for a model that
+/// has already been added.
 class Model {
   Model._(this._handle);
 
@@ -158,48 +161,52 @@ class Model {
     return ModelPackage.internal(this);
   }
 
-  /// Download the model, streaming progress events. The [Stream] must be
-  /// listened to for the download to actually start.
+  /// Load the model into memory.
   ///
-  /// For a package handle this downloads the currently selected variant plus
-  /// the shared assets it references — not the whole package. Call
-  /// [ModelPackage.selectBestVariant] first to choose.
-  Stream<Progress> download({DownloadOptions options = const DownloadOptions()}) {
+  /// Does **not** download on demand: the model must already be present on
+  /// disk (via a bundled or remote [ModelSource] registered through
+  /// [FoundryLocal.addModelSource]). If it is not, this rejects with a
+  /// `FoundryLocalException` carrying `FLM_ERROR_NOT_IMPLEMENTED`. See the
+  /// package README for the model-source flow.
+  ///
+  /// Progress events (weight-mmap, execution-provider warmup, …) are
+  /// delivered to [onProgress] as they arrive. The Future resolves with the
+  /// [LoadResult] the core reports when loading is complete.
+  Future<LoadResult> load({
+    LoadOptions options = const LoadOptions(),
+    void Function(Progress)? onProgress,
+  }) async {
     _ensureAlive();
-    return _startProgressStream(
-      (progressPtr, completionPtr, userData, outJob) {
-        return withCString(jsonEncode(options.toJson()), (optsPtr) {
-          return NativeLibrary.instance.bindings.flm_model_download_async(
-            _handle,
-            optsPtr,
-            progressPtr,
-            completionPtr,
-            userData,
-            outJob,
-          );
-        });
-      },
-    );
-  }
+    final bindings = NativeLibrary.instance.bindings;
 
-  /// Load the model into memory, streaming progress. Downloads the model
-  /// first if it is not cached.
-  Stream<Progress> load({LoadOptions options = const LoadOptions()}) {
-    _ensureAlive();
-    return _startProgressStream(
-      (progressPtr, completionPtr, userData, outJob) {
-        return withCString(jsonEncode(options.toJson()), (optsPtr) {
-          return NativeLibrary.instance.bindings.flm_model_load_async(
+    Sink<Progress>? sink;
+    StreamController<Progress>? controller;
+    if (onProgress != null) {
+      controller = StreamController<Progress>();
+      sink = controller.sink;
+      controller.stream.listen(onProgress);
+    }
+
+    try {
+      final result = await withCString<Future<Map<String, Object?>>>(
+        jsonEncode(options.toJson()),
+        (optsPtr) => runProgressJob(
+          abiCall: (progressPtr, completionPtr, userDataPtr, outJob) =>
+              bindings.flm_model_load_async(
             _handle,
             optsPtr,
             progressPtr,
             completionPtr,
-            userData,
+            userDataPtr,
             outJob,
-          );
-        });
-      },
-    );
+          ),
+          onProgress: sink,
+        ),
+      );
+      return LoadResult.fromJson(result);
+    } finally {
+      await controller?.close();
+    }
   }
 
   /// Unload the model, releasing its memory. Active sessions are stopped.
@@ -230,22 +237,6 @@ class Model {
     );
   }
 
-  /// Convenience wrapper matching the README quickstart: awaits a full
-  /// download rather than exposing the progress stream.
-  Future<void> downloadAndWait({
-    DownloadOptions options = const DownloadOptions(),
-    void Function(Progress)? onProgress,
-  }) async {
-    final stream = download(options: options);
-    if (onProgress == null) {
-      await for (final _ in stream) {}
-    } else {
-      await for (final p in stream) {
-        onProgress(p);
-      }
-    }
-  }
-
   /// Create a chat session over this (loaded) model.
   ChatSession createChatSession({ChatSessionOptions? options}) {
     _ensureAlive();
@@ -274,51 +265,5 @@ class Model {
 
   void _ensureAlive() {
     if (_released) throw StateError('Model handle has been released.');
-  }
-
-  /// Start a progress-streaming ABI call and expose the underlying stream.
-  ///
-  /// Cancellation of the returned subscription is forwarded to
-  /// `flm_job_cancel`. The stream reflects the job's underlying progress
-  /// stream 1:1, and errors on the job are re-thrown by the stream so
-  /// `await for` unwinds naturally.
-  Stream<Progress> _startProgressStream(
-    int Function(
-      Pointer<NativeFunction<Int32 Function(Uint64, Pointer<raw.flm_progress>, Pointer<Void>)>> onProgress,
-      Pointer<NativeFunction<raw.flm_completion_callback_native>> onComplete,
-      Pointer<Void> userData,
-      Pointer<Uint64> outJob,
-    ) abiCall,
-  ) {
-    late StreamController<Progress> controller;
-    JobHandles<Progress>? handles;
-    StreamSubscription<Progress>? sub;
-
-    controller = StreamController<Progress>(
-      onListen: () {
-        try {
-          handles = runProgressStreamJob(abiCall);
-        } catch (e, st) {
-          controller.addError(e, st);
-          controller.close();
-          return;
-        }
-        sub = handles!.stream.listen(
-          controller.add,
-          onError: controller.addError,
-          onDone: () => controller.close(),
-        );
-        handles!.result.catchError((Object e, StackTrace st) {
-          // Errors are also delivered to the stream; swallow here so the
-          // Future does not remain uncaught.
-          return <String, Object?>{};
-        });
-      },
-      onCancel: () async {
-        handles?.cancel();
-        await sub?.cancel();
-      },
-    );
-    return controller.stream;
   }
 }

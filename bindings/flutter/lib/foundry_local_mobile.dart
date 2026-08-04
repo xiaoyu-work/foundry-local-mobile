@@ -16,7 +16,7 @@ export 'src/catalog.dart' show Catalog, CatalogFilter;
 export 'src/chat_session.dart' show ChatSession, ChatSessionOptions;
 export 'src/embedding_session.dart' show EmbeddingSession;
 export 'src/foundry_local.dart' show FoundryLocal, FlmLifecycleEventKind;
-export 'src/model.dart' show Model, DownloadOptions, LoadOptions;
+export 'src/model.dart' show LoadOptions, LoadResult, Model;
 export 'src/model_package.dart' show ModelPackage;
 export 'src/models/chat.dart'
     show
@@ -29,8 +29,11 @@ export 'src/models/chat.dart'
         EmbeddingResult,
         ImageContent,
         TextContent,
+        ToolCall,
         ToolResult,
-        TranscriptionResult;
+        TranscriptionResult,
+        TranscriptionSegment,
+        Usage;
 export 'src/models/config.dart' show FoundryLocalConfig, RuntimeSettings;
 export 'src/models/delta.dart'
     show

@@ -10,6 +10,10 @@ import 'package:meta/meta.dart';
 import '../bindings/bindings.dart' as raw;
 
 /// Terminal reason for a completed generation.
+///
+/// `none` is the sentinel emitted by core when nothing terminal has happened
+/// yet (also the fallback for reason strings the runtime may add in a future
+/// release — see [fromString]).
 enum FinishReason {
   none,
   stop,
@@ -30,6 +34,31 @@ enum FinishReason {
         return FinishReason.cancelled;
       case raw.FlmFinishReason.error:
         return FinishReason.error;
+      default:
+        return FinishReason.none;
+    }
+  }
+
+  /// Map a `finish_reason` JSON string as it appears in the non-streaming
+  /// completion result (`stop | length | tool_calls | cancelled | error |
+  /// none`). Unknown values fall back to [FinishReason.none] rather than
+  /// throwing — the runtime may introduce new reasons and locking apps out
+  /// of a completion because we did not recognise a new string would be a
+  /// worse failure mode than a slightly stale enum.
+  static FinishReason fromString(String? value) {
+    switch (value) {
+      case 'stop':
+        return FinishReason.stop;
+      case 'length':
+        return FinishReason.length;
+      case 'tool_calls':
+        return FinishReason.toolCalls;
+      case 'cancelled':
+        return FinishReason.cancelled;
+      case 'error':
+        return FinishReason.error;
+      case 'none':
+      case null:
       default:
         return FinishReason.none;
     }
