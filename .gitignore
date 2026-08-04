@@ -89,3 +89,6 @@ flutter/
 !.vscode/extensions.json
 *.swp
 Thumbs.db
+
+# Cache directory created by core/examples/hello_flm when run from the repo root
+hello_flm_data/
