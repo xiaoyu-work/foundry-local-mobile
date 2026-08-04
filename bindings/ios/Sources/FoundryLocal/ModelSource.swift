@@ -14,29 +14,67 @@ import FoundryLocalMobile
 public enum ModelSource: Sendable {
     /// Model shipped inside the app bundle, extracted to `path` (or already a real
     /// path when it comes from a folder reference on iOS).
-    case bundled(name: String, path: String, copyIntoCache: Bool = false)
+    ///
+    /// `verifyChecksums` still applies here: bundled model manifests may carry
+    /// per-file SHA-256 hashes and the runtime checks them at load if this stays
+    /// `true`. `resume` is a no-op for bundled sources since nothing downloads,
+    /// but the ABI accepts the key on either kind.
+    case bundled(
+        name: String,
+        path: String,
+        copyIntoCache: Bool = false,
+        resume: Bool = true,
+        verifyChecksums: Bool = true
+    )
 
     /// Model hosted on app-controlled storage. `headers` are sent with every request
     /// through the installed transport.
-    case remote(name: String, url: URL, headers: [String: String] = [:])
+    ///
+    /// - Parameter resume: When a partial download is on disk, ask the transport
+    ///   to send `Range: bytes=<offset>-` and continue rather than start over.
+    ///   Setting to `false` forces every restart to redownload the whole file.
+    /// - Parameter verifyChecksums: Verify each file's SHA-256 against the
+    ///   manifest after download. Setting to `false` is only sensible when your
+    ///   own server enforces integrity (e.g. code-signed archives).
+    case remote(
+        name: String,
+        url: URL,
+        headers: [String: String] = [:],
+        resume: Bool = true,
+        verifyChecksums: Bool = true
+    )
 
     func encodeAsJSON() throws -> String {
         var payload: [String: Any] = [:]
         switch self {
-        case .bundled(let name, let path, let copy):
+        case .bundled(let name, let path, let copy, let resume, let verifyChecksums):
             payload["kind"] = "bundled"
             payload["name"] = name
             payload["path"] = path
             if copy { payload["copy_into_cache"] = true }
-        case .remote(let name, let url, let headers):
+            encodeDownloadOptions(into: &payload, resume: resume, verifyChecksums: verifyChecksums)
+        case .remote(let name, let url, let headers, let resume, let verifyChecksums):
             payload["kind"] = "remote"
             payload["name"] = name
             payload["url"] = url.absoluteString
             if !headers.isEmpty { payload["headers"] = headers }
+            encodeDownloadOptions(into: &payload, resume: resume, verifyChecksums: verifyChecksums)
         }
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return String(data: data, encoding: .utf8) ?? "{}"
     }
+}
+
+// Both flags default to `true` in the ABI, so we only emit a key when the caller
+// opts out. This keeps the JSON minimal for the common case while still surfacing
+// the option to callers that need to disable resume or checksum verification.
+private func encodeDownloadOptions(
+    into payload: inout [String: Any],
+    resume: Bool,
+    verifyChecksums: Bool
+) {
+    if !resume { payload["resume"] = false }
+    if !verifyChecksums { payload["verify_checksums"] = false }
 }
 
 extension ModelSource {
@@ -62,7 +100,8 @@ extension ModelSource {
         name: String,
         folder: String,
         in bundle: Bundle = .main,
-        subdirectory: String? = nil
+        subdirectory: String? = nil,
+        verifyChecksums: Bool = true
     ) throws -> ModelSource {
         // Bundle.url(forResource:withExtension:) returns nil for a directory without
         // an extension unless we pass `""` explicitly.
@@ -85,6 +124,7 @@ extension ModelSource {
                 message: "Bundled model path '\(url.path)' is a file, not a directory."
             )
         }
-        return .bundled(name: name, path: url.path)
+        return .bundled(name: name, path: url.path, verifyChecksums: verifyChecksums)
     }
 }
+

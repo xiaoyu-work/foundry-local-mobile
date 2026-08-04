@@ -164,6 +164,20 @@ The URL must point at a manifest — a Foundry model package `manifest.json` or 
 `model.json` file index. The SDK follows relative asset URLs against the manifest's
 base.
 
+Both `resume` and `verifyChecksums` default to `true`. Override them per source
+when you need to force a full redownload (`resume: false`) or trust your storage
+to enforce integrity another way (`verifyChecksums: false`):
+
+```swift
+.remote(
+    name: "my-fine-tune",
+    url: url,
+    headers: ["Authorization": "******"],
+    resume: false,          // start every restart from byte 0
+    verifyChecksums: true   // still SHA-256 every file after download
+)
+```
+
 ### Bundled
 
 For a model shipped inside the app bundle as a folder reference (see
