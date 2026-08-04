@@ -127,13 +127,13 @@ this device can run and the shared assets it references are downloaded —
 never the variants a phone cannot run, which are routinely larger than the
 one it can.
 
-**On acquisition and downloads.** `Model.download()` and `Model.load()`
-work on a model whose files are already on the device: the ones from
-`addModelSource`, or a bundled model already extracted with
-`BundledAssets`. There is no implicit catalog fetch — the Foundry Local
-catalog publishes desktop builds (CUDA, DirectML, OpenVINO, x64), which are
-gigabytes of weights a phone cannot execute. A model that is not on the
-device throws `NotImplementedException` pointing at `addModelSource`.
+**On acquisition.** `addModelSource` is the only supply path — the SDK does
+not fetch from a catalog. The Foundry Local catalog publishes desktop builds
+(CUDA, DirectML, OpenVINO, x64), which are gigabytes of weights a phone
+cannot execute, so the catalog only serves as a name/metadata registry for
+models the app has already registered. `Model.load()` never downloads on
+demand: calling it on a model whose files are not on the device throws
+`NotImplementedException` pointing back at `addModelSource`.
 
 ## HTTP transport
 

@@ -339,16 +339,40 @@ public sealed class Delta {
 }
 
 public enum class FinishReason(public val nativeValue: Int) {
+    /** The runtime reported no terminal reason (still generating, or unset). */
     NONE(0),
+    /** Natural end of turn or a stop sequence was hit. */
     STOP(1),
+    /** Output token limit was reached. */
     LENGTH(2),
+    /** The model is waiting on tool results. */
     TOOL_CALLS(3),
+    /** Cancelled by the caller. */
     CANCELLED(4),
-    ERROR(5);
+    /** Aborted by an error. */
+    ERROR(5),
+
+    /**
+     * A reason the runtime returned but this binding does not model. The raw
+     * value is available in [CompleteResult.rawJson]. Never thrown; the SDK
+     * decodes forward-compatibly so a runtime update cannot break callers.
+     */
+    UNKNOWN(Int.MIN_VALUE);
 
     public companion object {
         internal fun fromInt(v: Int): FinishReason =
-            values().firstOrNull { it.nativeValue == v } ?: NONE
+            values().firstOrNull { it.nativeValue == v } ?: UNKNOWN
+
+        internal fun fromString(s: String?): FinishReason = when (s) {
+            null, "" -> NONE
+            "none" -> NONE
+            "stop" -> STOP
+            "length" -> LENGTH
+            "tool_calls" -> TOOL_CALLS
+            "cancelled" -> CANCELLED
+            "error" -> ERROR
+            else -> UNKNOWN
+        }
     }
 }
 

@@ -108,15 +108,6 @@ internal object JsonCodec {
         }.toString()
     }
 
-    fun encodeDownloadOptions(
-        allowMetered: Boolean? = null,
-    ): String? {
-        if (allowMetered == null) return null
-        return buildJsonObject {
-            allowMetered.let { put("allow_metered", it) }
-        }.toString()
-    }
-
     fun encodeLoadOptions(executionProvider: String?, device: FlmDevice?): String? {
         if (executionProvider == null && device == null) return null
         return buildJsonObject {

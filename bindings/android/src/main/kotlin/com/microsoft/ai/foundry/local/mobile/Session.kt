@@ -127,31 +127,24 @@ public class ChatSession internal constructor(model: Model, options: ChatOptions
         } ?: return CompleteResult(text = "", finishReason = FinishReason.NONE)
         val obj = JsonCodec.parseObject(json)
         val text = obj["text"]?.jsonPrimitive?.content ?: ""
-        val finishReason = when (obj["finish_reason"]?.jsonPrimitive?.content) {
-            "stop" -> FinishReason.STOP
-            "length" -> FinishReason.LENGTH
-            "tool_calls" -> FinishReason.TOOL_CALLS
-            "cancelled" -> FinishReason.CANCELLED
-            "error" -> FinishReason.ERROR
-            // "none" or anything else falls through: the model produced text
-            // but the runtime did not report a terminal reason.
-            else -> FinishReason.NONE
-        }
-        // Both `tool_calls` and `usage` are absent when there is nothing to
-        // report, per the ABI shape doc. Do not synthesise an empty Usage or
-        // treat an empty list as an error — a text-only turn is normal.
+        val finishReason = FinishReason.fromString(obj["finish_reason"]?.jsonPrimitive?.content)
+        // The ABI treats absent-vs-empty for `tool_calls` and `usage` as
+        // meaningful: absent = the runtime had nothing to report, empty =
+        // could not happen because the empty case is reported as absent.
+        // Preserve the distinction by using null for "absent" instead of
+        // collapsing to an empty list.
         val toolCalls = (obj["tool_calls"] as? JsonArray)?.mapNotNull { el ->
             (el as? JsonObject)?.let { tc ->
                 Delta.ToolCall(
                     callId = tc["call_id"]?.jsonPrimitive?.content ?: return@mapNotNull null,
                     name = tc["name"]?.jsonPrimitive?.content ?: return@mapNotNull null,
                     // Wire form: arguments is a JSON *string* (double-encoded)
-                    // because the model may emit something that doesn't match
+                    // because the model may emit something that does not match
                     // the tool schema, and it's the app's job to decide.
                     argumentsJson = tc["arguments"]?.jsonPrimitive?.content ?: "{}",
                 )
             }
-        } ?: emptyList()
+        }
         val usage = (obj["usage"] as? JsonObject)?.let { u ->
             Delta.Usage(
                 promptTokens = u["prompt_tokens"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
@@ -431,9 +424,15 @@ public sealed class TranscribeRequest {
 public data class CompleteResult(
     val text: String,
     val finishReason: FinishReason,
-    /** Tool calls the model wants executed. Empty when none. */
-    val toolCalls: List<Delta.ToolCall> = emptyList(),
-    /** Token accounting, or null if the runtime did not report it. */
+    /**
+     * Tool calls the model wants executed, or `null` when the model made no
+     * tool calls. Nullable — not defaulted to an empty list — to preserve the
+     * absent-vs-empty distinction the ABI carries. In practice the empty case
+     * does not appear on the wire, but a caller writing exhaustive tool
+     * dispatch logic should still handle `null` explicitly.
+     */
+    val toolCalls: List<Delta.ToolCall>? = null,
+    /** Token accounting, or `null` if the runtime did not report it. */
     val usage: Delta.Usage? = null,
     /** The raw completion JSON, exposed for callers who need unmodelled fields. */
     val rawJson: String? = null,

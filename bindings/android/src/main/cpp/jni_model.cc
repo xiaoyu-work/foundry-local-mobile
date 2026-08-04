@@ -71,22 +71,6 @@ Java_com_microsoft_ai_foundry_local_mobile_internal_NativeBridge_modelGetPath(JN
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_microsoft_ai_foundry_local_mobile_internal_NativeBridge_modelDownloadAsync(
-    JNIEnv* env, jclass, jlong model, jstring options_json, jlong correlation_id) {
-  JStringUtf opts(env, options_json);
-  auto* ctx = MakeCallbackContext(correlation_id);
-  flm_job job = FLM_INVALID_HANDLE;
-  flm_status s = flm_model_download_async(static_cast<flm_model>(model), opts.c_str_or_null(),
-                                          GetProgressCallback(), GetCompletionCallback(), ctx, &job);
-  if (s != FLM_OK) {
-    delete ctx;
-    ThrowIfError(env, s);
-    return 0;
-  }
-  return static_cast<jlong>(job);
-}
-
-JNIEXPORT jlong JNICALL
 Java_com_microsoft_ai_foundry_local_mobile_internal_NativeBridge_modelLoadAsync(JNIEnv* env, jclass,
                                                                                   jlong model,
                                                                                   jstring options_json,

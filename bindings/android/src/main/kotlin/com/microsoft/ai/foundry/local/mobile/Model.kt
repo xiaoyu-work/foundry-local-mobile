@@ -6,7 +6,6 @@ package com.microsoft.ai.foundry.local.mobile
 import com.microsoft.ai.foundry.local.mobile.internal.JobBridge
 import com.microsoft.ai.foundry.local.mobile.internal.JsonCodec
 import com.microsoft.ai.foundry.local.mobile.internal.NativeBridge
-import kotlinx.coroutines.flow.Flow
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -41,30 +40,12 @@ public open class Model internal constructor(
     public val isPackage: Boolean get() = NativeBridge.modelIsPackage(requireHandle())
 
     /**
-     * Download the model. Returns a hot [Flow] of progress; collecting side
-     * cancellation triggers `flm_job_cancel`.
-     *
-     * For a package handle this downloads the currently selected variant plus
-     * the shared assets it references — not the whole package.
-     *
-     * `resume` and checksum verification are set on the [ModelSource] itself,
-     * not on the download call.
-     */
-    public fun download(
-        allowMetered: Boolean? = null,
-    ): Flow<Progress> {
-        val opts = JsonCodec.encodeDownloadOptions(allowMetered)
-        return JobBridge.progressStream { corr ->
-            NativeBridge.modelDownloadAsync(requireHandle(), opts, corr)
-        }
-    }
-
-    /**
      * Load the model into memory.
      *
-     * The model must already be on the device — call [FoundryLocal.addModelSource]
-     * and, for a remote source, [download] first. Loading a model whose files are
-     * absent throws [NotImplementedException] pointing at the source API.
+     * The model's files must already be on the device — obtain the model with
+     * [FoundryLocal.addModelSource], which handles both the bundled and hosted
+     * URL cases. `load` never fetches on demand; loading a model whose files
+     * are absent throws [NotImplementedException] pointing at the source API.
      */
     public suspend fun load(
         executionProvider: String? = null,

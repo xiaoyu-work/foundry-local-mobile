@@ -25,8 +25,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ```kotlin
  * val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
  *
- * val model = foundry.catalog.getModel("qwen2.5-0.5b")
- * model.download().collect { println("${it.percent}%") }
+ * // Acquire a model: bundled inside the APK, or hosted at a URL the app controls.
+ * // The catalog does not fetch models; addModelSource is the only supply path.
+ * val model = foundry.addModelSource(
+ *     ModelSource.Remote(name = "qwen2.5-0.5b", url = "https://.../manifest.json"),
+ * ) { println("${it.percent}%") }
+ *
  * model.load()
  *
  * val chat = model.createChatSession()

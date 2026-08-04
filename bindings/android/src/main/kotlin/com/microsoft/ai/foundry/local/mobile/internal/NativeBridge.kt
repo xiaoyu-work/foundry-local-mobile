@@ -90,7 +90,6 @@ internal object NativeBridge {
     @JvmStatic external fun modelIsLoaded(model: Long): Boolean
     @JvmStatic external fun modelGetPath(model: Long): String
 
-    @JvmStatic external fun modelDownloadAsync(model: Long, optionsJson: String?, correlationId: Long): Long
     @JvmStatic external fun modelLoadAsync(model: Long, optionsJson: String?, correlationId: Long): Long
     @JvmStatic external fun modelUnloadAsync(model: Long, correlationId: Long): Long
     @JvmStatic external fun modelDeleteAsync(model: Long, correlationId: Long): Long
