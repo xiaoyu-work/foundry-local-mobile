@@ -1,0 +1,467 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+//
+// Codable models for the JSON payloads the ABI shuttles across `char**` out-params
+// and completion callbacks. The shapes here follow the schemas documented on
+// `flm_manager_get_device_profile_json`, `flm_model_get_info_json`,
+// `flm_package_get_variants_json`, `flm_package_estimate_download_json` and the job
+// result JSONs listed on `flm_job_take_result_json`.
+//
+// The ABI is uniformly snake_case, so the shared JSONDecoder is configured with
+// `keyDecodingStrategy = .convertFromSnakeCase` and the JSONEncoder with
+// `keyEncodingStrategy = .convertToSnakeCase`. Explicit `CodingKeys` enums are avoided
+// where a property name is a mechanical snake_case → camelCase conversion of the JSON
+// key, because Foundation's strategy transforms the JSON key at lookup time and any
+// hand-written CodingKey with a snake_case `stringValue` would then fail to match.
+
+import Foundation
+
+let flmJSONDecoder: JSONDecoder = {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    return decoder
+}()
+
+let flmJSONEncoder: JSONEncoder = {
+    let encoder = JSONEncoder()
+    encoder.keyEncodingStrategy = .convertToSnakeCase
+    return encoder
+}()
+
+// MARK: - Device profile
+
+/// SoC / accelerator / runtime-state snapshot, mirroring
+/// `flm_manager_get_device_profile_json`. Used by the SDK to score variants; apps that
+/// run their own download policy read the same profile.
+public struct DeviceProfile: Codable, Sendable {
+    public let platform: String
+    public let osVersion: String?
+    public let deviceModel: String?
+    public let soc: String?
+    public let abi: String?
+    public let cpuCores: Int
+    public let totalMemoryBytes: Int64
+    public let availableMemoryBytes: Int64
+    public let availableStorageBytes: Int64
+    public let hasNpu: Bool
+    public let hasGpu: Bool
+    public let executionProviders: [ExecutionProvider]
+    public let thermalState: ThermalState
+    public let lowPowerMode: Bool
+    public let network: NetworkState
+
+    public struct ExecutionProvider: Codable, Sendable {
+        public let name: String
+        public let device: Device
+        public let available: Bool
+        public let priority: Int
+    }
+
+    public enum ThermalState: String, Codable, Sendable {
+        case nominal, fair, serious, critical, unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? "unknown"
+            self = ThermalState(rawValue: raw) ?? .unknown
+        }
+    }
+
+    public enum NetworkState: String, Codable, Sendable {
+        case unmetered, metered, offline, unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? "unknown"
+            self = NetworkState(rawValue: raw) ?? .unknown
+        }
+    }
+}
+
+/// Compute device a model variant targets. Values match `flm_device` but this is the
+/// idiomatic Swift enum apps see on `ModelVariant.device`.
+public enum Device: String, Codable, Sendable {
+    case unknown, cpu, gpu, npu
+}
+
+// MARK: - Model info
+
+/// Full model metadata, mirroring `flm_model_get_info_json`. Some fields are optional
+/// because they only apply to particular task types (e.g. `contextLength` for chat).
+public struct ModelInfo: Codable, Sendable {
+    public let id: String
+    public let alias: String?
+    public let name: String
+    public let displayName: String?
+    public let version: Int?
+    public let publisher: String?
+    public let license: String?
+    public let task: String?
+    public let device: Device?
+    public let executionProvider: String?
+    public let fileSizeBytes: Int64?
+    public let contextLength: Int?
+    public let maxOutputTokens: Int?
+    public let supportsToolCalling: Bool?
+    public let supportsReasoning: Bool?
+    public let inputModalities: [String]?
+    public let outputModalities: [String]?
+    public let isPackage: Bool?
+    public let isCached: Bool?
+    public let isLoaded: Bool?
+    public let promptTemplates: [String: String]?
+}
+
+// MARK: - Model package variants
+
+/// Enumeration of the variants of a model package, plus device-scored metadata used
+/// for selection. Mirrors `flm_package_get_variants_json`.
+public struct PackageVariants: Codable, Sendable {
+    public let packageId: String
+    public let schemaVersion: String?
+    public let selectedVariantId: String?
+    public let sharedAssetsBytes: Int64?
+    public let variants: [ModelVariant]
+}
+
+/// One variant of a model package.
+public struct ModelVariant: Codable, Sendable, Identifiable, Equatable {
+    public let id: String
+    public let component: String?
+    public let executionProvider: String
+    public let device: Device
+    public let compatibilityString: String?
+    public let platform: String
+    public let downloadSizeBytes: Int64
+    public let diskSizeBytes: Int64
+    public let sharedAssetRefs: [String]
+    public let isCompatible: Bool
+    public let compatibilityScore: Int
+    public let isCached: Bool
+    public let incompatibilityReason: String?
+
+    public static func == (lhs: ModelVariant, rhs: ModelVariant) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+/// Estimate returned by `flm_package_estimate_download_json`.
+public struct DownloadEstimate: Codable, Sendable {
+    public let downloadBytes: Int64
+    public let diskBytes: Int64
+    public let alreadyCachedBytes: Int64
+    public let availableStorageBytes: Int64
+    public let fitsOnDevice: Bool
+}
+
+// MARK: - Job results
+
+/// Payload of `flm_catalog_list_models_async`.
+struct CatalogListResult: Decodable {
+    let models: [ModelInfo]
+}
+
+/// Payload of `flm_catalog_get_model_async`.
+struct CatalogGetResult: Decodable {
+    let modelHandle: UInt64
+}
+
+/// Payload of `flm_manager_add_model_source_async`.
+public struct AddModelSourceResult: Decodable, Sendable {
+    public let name: String
+    public let path: String
+    public let variantId: String?
+    public let bytesDownloaded: Int64
+    public let bytesReused: Int64
+    public let wasCached: Bool
+}
+
+/// Payload of `flm_model_download_async` / `flm_model_load_async`.
+public struct DownloadResult: Decodable, Sendable {
+    public let path: String
+    public let bytes: Int64
+}
+
+/// Payload of `flm_session_complete_async`.
+public struct ChatCompletion: Decodable, Sendable {
+    public let text: String?
+    public let finishReason: FinishReason
+    public let toolCalls: [ToolCall]?
+    public let usage: TokenUsage?
+}
+
+public enum FinishReason: String, Codable, Sendable {
+    case none
+    case stop
+    case length
+    case toolCalls = "tool_calls"
+    case cancelled
+    case error
+
+    public init(from decoder: Decoder) throws {
+        let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? "none"
+        self = FinishReason(rawValue: raw) ?? .none
+    }
+
+    init(cValue: flm_finish_reason) {
+        // Match against the imported C enumerators directly; comparing against raw
+        // integer values would depend on how the importer typed the storage.
+        switch cValue {
+        case FLM_FINISH_STOP: self = .stop
+        case FLM_FINISH_LENGTH: self = .length
+        case FLM_FINISH_TOOL_CALLS: self = .toolCalls
+        case FLM_FINISH_CANCELLED: self = .cancelled
+        case FLM_FINISH_ERROR: self = .error
+        default: self = .none
+        }
+    }
+}
+
+/// A tool call the model requested. The core delivers `call_id`, `name` and
+/// `arguments_json` (a JSON object encoded as a string); the snake_case JSON keys map
+/// to these Swift property names via the shared decoder's snake-case strategy.
+public struct ToolCall: Codable, Sendable, Equatable {
+    public let callId: String
+    public let name: String
+    /// Raw JSON object as a string, as delivered by the model. The SDK never parses
+    /// or validates it — the calling app knows its own tool schemas.
+    public let argumentsJson: String
+
+    public init(callId: String, name: String, argumentsJson: String) {
+        self.callId = callId
+        self.name = name
+        self.argumentsJson = argumentsJson
+    }
+}
+
+public struct TokenUsage: Codable, Sendable {
+    public let promptTokens: Int64?
+    public let completionTokens: Int64?
+    public let totalTokens: Int64?
+}
+
+/// Payload of `flm_session_transcribe_async`.
+public struct TranscriptionResult: Decodable, Sendable {
+    public let text: String
+    public let language: String?
+    public let segments: [TranscriptionSegment]?
+}
+
+public struct TranscriptionSegment: Codable, Sendable {
+    public let text: String
+    public let startTimeMs: Int64
+    public let endTimeMs: Int64
+    public let isFinal: Bool
+}
+
+/// Payload of `flm_session_embed_async`.
+public struct EmbeddingResult: Decodable, Sendable {
+    public let embeddings: [[Float]]
+    public let dimensions: Int
+}
+
+// MARK: - Chat request payload
+
+/// One turn in a chat conversation. Encodable so the SDK can serialise apps' typed
+/// values into the JSON shape `flm_session_complete_async` expects.
+public struct ChatMessage: Codable, Sendable {
+    public enum Role: String, Codable, Sendable {
+        case system, user, assistant, tool
+    }
+
+    public var role: Role
+    public var content: [ChatContent]
+    public var toolCallId: String?
+    public var name: String?
+
+    public init(role: Role, text: String) {
+        self.role = role
+        self.content = [.text(text)]
+        self.toolCallId = nil
+        self.name = nil
+    }
+
+    public init(role: Role, content: [ChatContent], toolCallId: String? = nil, name: String? = nil) {
+        self.role = role
+        self.content = content
+        self.toolCallId = toolCallId
+        self.name = name
+    }
+
+    /// Convenience for the common `role == .user, content == "hello"` case.
+    public static func user(_ text: String) -> ChatMessage { .init(role: .user, text: text) }
+    public static func system(_ text: String) -> ChatMessage { .init(role: .system, text: text) }
+    public static func assistant(_ text: String) -> ChatMessage { .init(role: .assistant, text: text) }
+}
+
+public enum ChatContent: Codable, Sendable {
+    case text(String)
+    case image(path: String? = nil, dataBase64: String? = nil)
+    case audio(path: String? = nil, dataBase64: String? = nil, format: String? = nil, sampleRate: Int? = nil)
+
+    enum CodingKeys: String, CodingKey {
+        // Bare property names — the encoder's `.convertToSnakeCase` strategy takes
+        // `dataBase64` and `sampleRate` to `data_base64` / `sample_rate` on the wire,
+        // and the decoder's `.convertFromSnakeCase` strategy round-trips them back
+        // for reads. Explicit snake_case string values here would defeat the strategy
+        // and produce mismatched JSON keys.
+        case type, text, path, dataBase64, format, sampleRate
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let value):
+            try container.encode("text", forKey: .type)
+            try container.encode(value, forKey: .text)
+        case .image(let path, let data):
+            try container.encode("image", forKey: .type)
+            try container.encodeIfPresent(path, forKey: .path)
+            try container.encodeIfPresent(data, forKey: .dataBase64)
+        case .audio(let path, let data, let format, let sampleRate):
+            try container.encode("audio", forKey: .type)
+            try container.encodeIfPresent(path, forKey: .path)
+            try container.encodeIfPresent(data, forKey: .dataBase64)
+            try container.encodeIfPresent(format, forKey: .format)
+            try container.encodeIfPresent(sampleRate, forKey: .sampleRate)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        switch type {
+        case "text":
+            self = .text(try container.decode(String.self, forKey: .text))
+        case "image":
+            self = .image(
+                path: try container.decodeIfPresent(String.self, forKey: .path),
+                dataBase64: try container.decodeIfPresent(String.self, forKey: .dataBase64)
+            )
+        case "audio":
+            self = .audio(
+                path: try container.decodeIfPresent(String.self, forKey: .path),
+                dataBase64: try container.decodeIfPresent(String.self, forKey: .dataBase64),
+                format: try container.decodeIfPresent(String.self, forKey: .format),
+                sampleRate: try container.decodeIfPresent(Int.self, forKey: .sampleRate)
+            )
+        default:
+            self = .text("")
+        }
+    }
+}
+
+public struct ChatTool: Codable, Sendable {
+    public var name: String
+    public var description: String?
+    /// Raw JSON schema string; kept opaque here because a strongly-typed JSON schema
+    /// representation is out of scope and apps usually already have their tool
+    /// definitions as strings.
+    public var parametersJSON: String
+
+    public init(name: String, description: String? = nil, parametersJSON: String) {
+        self.name = name
+        self.description = description
+        self.parametersJSON = parametersJSON
+    }
+}
+
+/// Full chat completion request. Assembled by ``ChatSession`` from either the current
+/// history or an ad-hoc set of messages, then encoded to JSON for the ABI.
+public struct ChatRequest: Encodable, Sendable {
+    public var messages: [ChatMessage]
+    public var tools: [ChatTool]?
+    public var toolChoice: String?
+    public var temperature: Double?
+    public var topP: Double?
+    public var topK: Int?
+    public var maxOutputTokens: Int?
+    public var seed: Int64?
+    public var stopSequences: [String]?
+
+    // Bare property names. The shared encoder's `.convertToSnakeCase` strategy turns
+    // `toolChoice` into `tool_choice`, `topP` into `top_p`, and so on. Custom
+    // stringValues here would either double-transform or bypass the strategy.
+    enum CodingKeys: String, CodingKey {
+        case messages, tools, toolChoice, temperature, topP, topK, maxOutputTokens, seed, stopSequences
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(messages, forKey: .messages)
+        if let tools {
+            var arr = container.nestedUnkeyedContainer(forKey: .tools)
+            for tool in tools {
+                var obj = arr.nestedContainer(keyedBy: ToolKeys.self)
+                try obj.encode(tool.name, forKey: .name)
+                try obj.encodeIfPresent(tool.description, forKey: .description)
+                if let data = tool.parametersJSON.data(using: .utf8),
+                   let parsed = try? JSONSerialization.jsonObject(with: data) {
+                    try obj.encode(AnyEncodable(parsed), forKey: .parameters)
+                }
+            }
+        }
+        try container.encodeIfPresent(toolChoice, forKey: .toolChoice)
+        try container.encodeIfPresent(temperature, forKey: .temperature)
+        try container.encodeIfPresent(topP, forKey: .topP)
+        try container.encodeIfPresent(topK, forKey: .topK)
+        try container.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
+        try container.encodeIfPresent(seed, forKey: .seed)
+        try container.encodeIfPresent(stopSequences, forKey: .stopSequences)
+    }
+
+    private enum ToolKeys: String, CodingKey {
+        case name, description, parameters
+    }
+
+    public init(
+        messages: [ChatMessage],
+        tools: [ChatTool]? = nil,
+        toolChoice: String? = nil,
+        temperature: Double? = nil,
+        topP: Double? = nil,
+        topK: Int? = nil,
+        maxOutputTokens: Int? = nil,
+        seed: Int64? = nil,
+        stopSequences: [String]? = nil
+    ) {
+        self.messages = messages
+        self.tools = tools
+        self.toolChoice = toolChoice
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+        self.maxOutputTokens = maxOutputTokens
+        self.seed = seed
+        self.stopSequences = stopSequences
+    }
+}
+
+/// Minimal `Encodable` shim that lets us push already-parsed JSON through
+/// `JSONEncoder`. Used by ``ChatRequest`` for tool parameter schemas the app supplies
+/// as a raw JSON string.
+struct AnyEncodable: Encodable {
+    let value: Any
+    init(_ value: Any) { self.value = value }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch value {
+        case is NSNull:
+            try container.encodeNil()
+        case let v as Bool:
+            try container.encode(v)
+        case let v as Int:
+            try container.encode(v)
+        case let v as Int64:
+            try container.encode(v)
+        case let v as Double:
+            try container.encode(v)
+        case let v as String:
+            try container.encode(v)
+        case let v as [Any]:
+            try container.encode(v.map(AnyEncodable.init))
+        case let v as [String: Any]:
+            try container.encode(v.mapValues(AnyEncodable.init))
+        default:
+            try container.encodeNil()
+        }
+    }
+}
