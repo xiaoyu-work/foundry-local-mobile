@@ -15,6 +15,32 @@ import 'native_strings.dart';
 ///
 /// Every session owns a `flm_session` handle; [release] frees it and, per the
 /// ABI docs, cancels any in-flight generation.
+///
+/// ## Disposing a session
+///
+/// The idiomatic Dart pattern for scoped ownership is `try` / `finally`
+/// around [release] — Dart has no `AutoCloseable`/`use { }` equivalent
+/// and no `async using` block, so wrapping the block yourself is the
+/// only honest way to guarantee cleanup on both success and error
+/// paths:
+///
+/// ```dart
+/// final session = model.createChatSession();
+/// try {
+///   await for (final delta in session.completeStreaming(request)) {
+///     // ...
+///   }
+/// } finally {
+///   session.release();
+/// }
+/// ```
+///
+/// [release] is idempotent, so a second call from a `dispose` method or a
+/// finaliser is safe. A session held for the lifetime of a widget can
+/// simply call [release] from that widget's `dispose`. There is no
+/// `use { }` helper on purpose: Dart callers expect scoped resources to
+/// be released with `try/finally`, and layering a closure-based
+/// alternative on top would double the API surface for no idiomatic gain.
 abstract class Session {
   Session({required Model model, required int handle})
       : _model = model,

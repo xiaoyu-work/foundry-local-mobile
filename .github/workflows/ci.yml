@@ -570,6 +570,15 @@ jobs:
         working-directory: bindings/flutter/example
         run: flutter analyze
 
+      - name: flutter test (plugin — pure-Dart API)
+        working-directory: bindings/flutter
+        # Anything that reaches FFI needs an on-device harness; the plugin's
+        # unit tests only cover the pure-Dart pieces of the public API
+        # (Progress.fraction, ModelSourceResult.requireModel, and so on)
+        # but that is still the closest thing we have to a public-API
+        # regression net short of running the example on an emulator.
+        run: flutter test
+
       - name: Build the example debug APK
         working-directory: bindings/flutter/example
         # --debug rather than --release: the example has no signing config

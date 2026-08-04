@@ -213,6 +213,13 @@ class VariantConstraints {
 /// or by working from [path] directly — the null case is **not** an error,
 /// so it is deliberately surfaced here rather than turned into a thrown
 /// exception.
+///
+/// Callers that only ever add package sources — the common case, because
+/// that is the whole point of the two-source design — should prefer
+/// [requireModel] so they do not pay null-handling ceremony for an
+/// outcome that only arises when the catalog scan misses a completed
+/// download. Callers that want to handle the null case explicitly should
+/// read [model] directly.
 @immutable
 class ModelSourceResult {
   const ModelSourceResult({
@@ -250,4 +257,28 @@ class ModelSourceResult {
   /// catalog scan missed the files. See the class-level Dartdoc for the
   /// recovery pattern.
   final Model? model;
+
+  /// Return [model] when the core surfaced a handle, and throw a
+  /// [StateError] otherwise.
+  ///
+  /// The throw message names both [name] and [path] and states plainly
+  /// that this is a catalog-side bug, not a download failure — a caller
+  /// staring at the stack trace can then either look the model up by
+  /// [name] through `foundry.catalog.getModel(...)` or work from [path]
+  /// directly, without having to first work out whether the download
+  /// itself failed.
+  ///
+  /// Prefer reading [model] directly when the caller wants to handle the
+  /// null case (falling back to a catalog lookup, showing a different
+  /// UI, or reporting telemetry).
+  Model requireModel() {
+    final m = model;
+    if (m != null) return m;
+    throw StateError(
+      'Model source "$name" was added successfully — files are on disk at '
+      '"$path" — but the SDK\'s catalog scan did not surface a handle. This '
+      'is a catalog-side bug, not a download failure. Look the model up by '
+      'name through FoundryLocal.catalog or work from the path directly.',
+    );
+  }
 }
