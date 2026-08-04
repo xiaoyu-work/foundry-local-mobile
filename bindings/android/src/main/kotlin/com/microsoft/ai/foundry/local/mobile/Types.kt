@@ -143,13 +143,30 @@ public data class ModelVariant(
 )
 
 /**
- * Constraints for [ModelPackage.selectBestVariant]. Values map to the JSON
- * schema on `flm_package_select_best_variant`.
+ * Constraints for variant selection. Applied by `flm_package_select_best_variant`
+ * and, more importantly for cross-platform apps, honoured by
+ * [FoundryLocal.addModelSource] when set on the [ModelSource] itself — the
+ * scoring runs against the manifest before any weights transfer, so a phone
+ * never spends bytes on a variant it cannot run.
  */
 public data class VariantConstraints(
+    /** Skip variants whose selected files exceed this many bytes. */
     val maxDownloadBytes: Long? = null,
+    /**
+     * Restrict placement to these devices. `null` and empty set both mean
+     * "any device" — set only when the app needs to force, e.g., NPU-only.
+     */
     val allowedDevices: Set<FlmDevice>? = null,
+    /**
+     * Break ties on download size rather than the compatibility score. Off
+     * by default; the score already rewards native placements.
+     */
     val preferSmallest: Boolean = false,
+    /**
+     * Only consider variants whose files are already on disk. Useful for an
+     * offline path or a "no more downloads" preference.
+     */
+    val requireCached: Boolean = false,
 )
 
 @Serializable
@@ -189,6 +206,15 @@ public sealed class ModelSource {
     public abstract val verifyChecksums: Boolean
 
     /**
+     * Variant selection policy applied when the source resolves to an ONNX
+     * Runtime model package. The scoring runs against the manifest before any
+     * weights transfer, so declaring `constraints` is the cheapest way to
+     * express a cross-platform preference like "NPU if available, else CPU,
+     * cap at 800 MB". Ignored for a flat model.
+     */
+    public abstract val constraints: VariantConstraints?
+
+    /**
      * A model already present on the device. The default is to load it in
      * place; set [copyIntoCache] when the source path is temporary.
      */
@@ -198,6 +224,12 @@ public sealed class ModelSource {
         val copyIntoCache: Boolean = false,
         override val resume: Boolean = true,
         override val verifyChecksums: Boolean = true,
+        /**
+         * Variant policy for a bundled package. Applied before any files are
+         * touched; a variant not permitted by [constraints] is discarded from
+         * the manifest even if its files were shipped inside the APK.
+         */
+        override val constraints: VariantConstraints? = null,
     ) : ModelSource()
 
     /**
@@ -210,6 +242,14 @@ public sealed class ModelSource {
         val headers: Map<String, String> = emptyMap(),
         override val resume: Boolean = true,
         override val verifyChecksums: Boolean = true,
+        /**
+         * Variant policy applied against the manifest **before** any bytes
+         * transfer. This is the cross-platform way to express "use the NPU
+         * build if you can, up to 800 MB, else fall back to CPU" — the SDK
+         * scores every variant and only fetches the winner plus the shared
+         * assets it references.
+         */
+        override val constraints: VariantConstraints? = null,
     ) : ModelSource()
 }
 

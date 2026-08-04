@@ -127,6 +127,42 @@ this device can run and the shared assets it references are downloaded —
 never the variants a phone cannot run, which are routinely larger than the
 one it can.
 
+### Choosing a package variant
+
+When the source resolves to a model package, express the cross-platform
+policy declaratively on the source. The scoring runs against the manifest
+before any bytes transfer, so a phone never pays for a QNN build it has no
+NPU for:
+
+```kotlin
+val model = foundry.addModelSource(
+    ModelSource.Remote(
+        name = "qwen2.5-0.5b",
+        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
+        constraints = VariantConstraints(
+            maxDownloadBytes = 800 * 1024 * 1024,
+            allowedDevices = setOf(FlmDevice.NPU, FlmDevice.GPU, FlmDevice.CPU),
+        ),
+    ),
+) { progress -> println("${progress.percent}%") }
+
+// What was actually chosen, and what else the package offered.
+val pkg = model.asPackage()
+if (pkg != null) {
+    for (v in pkg.variants.variants) {
+        println("${v.id}  ep=${v.executionProvider}  device=${v.device}  " +
+                "size=${v.downloadSizeBytes}  compatible=${v.isCompatible}  " +
+                "reason=${v.incompatibilityReason}")
+    }
+}
+```
+
+`VariantConstraints` has exactly four fields: `maxDownloadBytes`,
+`allowedDevices`, `preferSmallest` (tie-break on size instead of the
+compatibility score), and `requireCached` (only consider variants already on
+disk — useful for an offline path). Anything else is silently ignored by
+the core.
+
 **On acquisition.** `addModelSource` is the only supply path — the SDK does
 not fetch from a catalog. The Foundry Local catalog publishes desktop builds
 (CUDA, DirectML, OpenVINO, x64), which are gigabytes of weights a phone

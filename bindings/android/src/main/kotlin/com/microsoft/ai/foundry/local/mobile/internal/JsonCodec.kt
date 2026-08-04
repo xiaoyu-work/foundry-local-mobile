@@ -69,6 +69,7 @@ internal object JsonCodec {
             put("copy_into_cache", source.copyIntoCache)
             put("resume", source.resume)
             put("verify_checksums", source.verifyChecksums)
+            source.constraints?.let { put("constraints", constraintsElement(it)) }
         }.toString()
         is ModelSource.Remote -> buildJsonObject {
             put("kind", "remote")
@@ -81,6 +82,7 @@ internal object JsonCodec {
             }
             put("resume", source.resume)
             put("verify_checksums", source.verifyChecksums)
+            source.constraints?.let { put("constraints", constraintsElement(it)) }
         }.toString()
     }
 
@@ -97,15 +99,18 @@ internal object JsonCodec {
 
     fun encodeVariantConstraints(constraints: VariantConstraints?): String? {
         if (constraints == null) return null
-        return buildJsonObject {
-            constraints.maxDownloadBytes?.let { put("max_download_bytes", it) }
-            constraints.allowedDevices?.let {
-                put("allowed_devices", buildJsonArray {
-                    it.forEach { d -> add(deviceName(d)) }
-                })
-            }
-            put("prefer_smallest", constraints.preferSmallest)
-        }.toString()
+        return constraintsElement(constraints).toString()
+    }
+
+    private fun constraintsElement(constraints: VariantConstraints): JsonObject = buildJsonObject {
+        constraints.maxDownloadBytes?.let { put("max_download_bytes", it) }
+        constraints.allowedDevices?.let {
+            put("allowed_devices", buildJsonArray {
+                it.forEach { d -> add(deviceName(d)) }
+            })
+        }
+        put("prefer_smallest", constraints.preferSmallest)
+        put("require_cached", constraints.requireCached)
     }
 
     fun encodeLoadOptions(executionProvider: String?, device: FlmDevice?): String? {

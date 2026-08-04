@@ -114,9 +114,16 @@ public open class Model internal constructor(
 }
 
 /**
- * A model package handle. Extends [Model] with variant enumeration, selection
- * and pre-download estimation. Instances are returned by [Catalog.getModel] or
- * [Catalog.getModelById] whenever the underlying entry is a package.
+ * A model package handle. Extends [Model] with variant enumeration, imperative
+ * selection and pre-download estimation. Instances are returned by
+ * [Catalog.getModel] or [Catalog.getModelById] whenever the underlying entry
+ * is a package.
+ *
+ * Prefer expressing variant policy declaratively on the source: pass
+ * [VariantConstraints] to [ModelSource.Remote] or [ModelSource.Bundled] and
+ * the SDK scores the manifest before any weights transfer. The imperative
+ * methods on this class are for apps that need to inspect the manifest, run a
+ * post-download re-selection, or manage multiple variants in parallel.
  */
 public class ModelPackage internal constructor(handle: Long) : Model(handle) {
 
@@ -133,8 +140,8 @@ public class ModelPackage internal constructor(handle: Long) : Model(handle) {
         )
 
     /**
-     * Pin the package to a specific variant. Subsequent download/load calls on
-     * this package handle act on it.
+     * Pin the package to a specific variant. Subsequent load calls on this
+     * package handle act on it.
      */
     public fun selectVariant(variantId: String) {
         NativeBridge.packageSelectVariant(requireHandle(), variantId)
@@ -142,7 +149,12 @@ public class ModelPackage internal constructor(handle: Long) : Model(handle) {
 
     /**
      * Let the SDK pick the best variant for this device using the device
-     * profile and the variants' compatibility scores.
+     * profile, the variants' compatibility scores and any [constraints].
+     * Returns the id of the winning variant.
+     *
+     * When a [ModelSource]'s own `constraints` were set this has already run
+     * once as part of `addModelSource`; call it again only when the app needs
+     * to override that decision at runtime.
      */
     public fun selectBestVariant(constraints: VariantConstraints? = null): String {
         return NativeBridge.packageSelectBestVariant(

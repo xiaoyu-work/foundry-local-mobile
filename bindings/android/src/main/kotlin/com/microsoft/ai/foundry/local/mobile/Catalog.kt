@@ -12,17 +12,25 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 
 /**
- * The catalog of models known to the SDK — remote entries advertised by the
- * Foundry Local catalog service plus anything the app has registered through
- * [FoundryLocal.addModelSource].
+ * The catalog of models known to the SDK — models the app has registered
+ * through [FoundryLocal.addModelSource] plus anything the manifest server
+ * advertises.
+ *
+ * **The catalog is for inspection, not acquisition.** Use
+ * [FoundryLocal.addModelSource] to supply a model, then query the catalog to
+ * enumerate what is on the device, look up metadata, or get a handle to a
+ * model that was registered earlier. Downloading through the catalog is not
+ * a supported flow on mobile — the Foundry Local catalog publishes desktop
+ * builds that a phone cannot execute.
  *
  * Borrowed from [FoundryLocal.catalog]; do not close directly.
  */
 public class Catalog internal constructor(private val handle: Long) {
 
     /**
-     * List catalog models, optionally filtered. Serves from the network the
-     * first time and from an in-memory cache thereafter.
+     * List catalog models, optionally filtered. Reads the currently known
+     * catalog — the app's own registered sources plus anything advertised by
+     * a configured manifest server.
      */
     public suspend fun listModels(filter: CatalogFilter? = null): List<ModelInfo> {
         val json = JobBridge.awaitResult { corr ->
