@@ -406,9 +406,25 @@ nlohmann::json ModelSourceResolver::ResolveRemote(const ModelSource& source, Job
   // Already downloaded and committed: nothing to do. The sentinel check inside
   // IsCompleteModelDirectory is what makes an interrupted download not count.
   if (Downloader::IsCompleteModelDirectory(destination)) {
+    // The manifest left behind was pruned to the variant that was actually fetched, so a
+    // cache hit can name it. Reporting "" here instead would make the same call answer
+    // differently depending on whether it happened to be cached — an app that records
+    // which variant it holds would silently lose it on the second run.
+    std::string variant_id;
+    if (ModelPackage::IsPackageDirectory(destination)) {
+      try {
+        const ModelPackage package = ModelPackage::FromDirectory(destination, source.name);
+        if (package.variants().size() == 1) {
+          variant_id = package.variants().front().id;
+        }
+      } catch (const Error&) {
+        // A model that is on disk and usable is not worth failing over an unreadable
+        // manifest; the caller loses the variant id, not the model.
+      }
+    }
     return nlohmann::json{{"name", source.name},
                           {"path", destination},
-                          {"variant_id", ""},
+                          {"variant_id", variant_id},
                           {"bytes_downloaded", 0},
                           {"bytes_reused", 0},
                           {"was_cached", true}};

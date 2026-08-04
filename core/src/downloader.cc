@@ -25,6 +25,14 @@ namespace fs = std::filesystem;
 constexpr const char* kDownloadSentinel = "download.tmp";
 constexpr const char* kGenAiConfigFile = "genai_config.json";
 constexpr const char* kInferenceModelFile = "inference_model.json";
+constexpr const char* kManifestFile = "manifest.json";
+
+/// The pairing that makes a directory a model to the runtime: the config it loads and
+/// the file its catalog scan reads the model's id out of. Either alone is not a model.
+bool HoldsModelPair(const fs::path& dir) {
+  std::error_code ec;
+  return fs::exists(dir / kGenAiConfigFile, ec) && fs::exists(dir / kInferenceModelFile, ec);
+}
 
 /// A digest mismatch is retried once: the overwhelmingly common cause is a truncated or
 /// corrupted resume, which a clean re-fetch fixes. A second failure means the bytes on
@@ -136,11 +144,30 @@ bool Downloader::IsCompleteModelDirectory(const std::string& dir) {
   if (!fs::is_directory(path, ec)) {
     return false;
   }
-  return fs::exists(path / kGenAiConfigFile, ec) && fs::exists(path / kInferenceModelFile, ec) &&
-         !fs::exists(path / kDownloadSentinel, ec);
+  if (fs::exists(path / kDownloadSentinel, ec)) {
+    return false;  // Interrupted part-way; the bytes present cannot be trusted as final.
+  }
+  if (HoldsModelPair(path)) {
+    return true;
+  }
+
+  // A package keeps the pair inside the variant directory that was downloaded and carries
+  // manifest.json at the top, so looking only at the top level would report every
+  // completed package as missing and re-download it in full — the exact cost this check
+  // exists to avoid, and worst on the metered connection it is most likely to happen on.
+  if (!fs::exists(path / kManifestFile, ec)) {
+    return false;
+  }
+  for (fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec), end;
+       it != end && !ec; it.increment(ec)) {
+    if (it->is_directory(ec) && HoldsModelPair(it->path())) {
+      return true;
+    }
+  }
+  return false;
 }
 
-void Downloader::WriteInferenceModelJson(const DownloadPlan& plan) {
+void Downloader::WriteInferenceModelJson(const DownloadPlan& plan, const fs::path& model_dir) {
   // Shape must match what Foundry Local's local model scanner reads: a "Name" string and
   // a "PromptTemplate" object or null.
   nlohmann::json document;
@@ -151,7 +178,7 @@ void Downloader::WriteInferenceModelJson(const DownloadPlan& plan) {
     document["PromptTemplate"] = nullptr;
   }
 
-  const fs::path path = fs::path(plan.destination_dir) / kInferenceModelFile;
+  const fs::path path = model_dir / kInferenceModelFile;
   std::ofstream out(path);
   if (!out) {
     throw Error(FLM_ERROR_STORAGE, "cannot write " + path.string(), {{"path", path.string()}});
@@ -306,11 +333,18 @@ nlohmann::json Downloader::Execute(const DownloadPlan& plan, JobContext& context
 
   context.ThrowIfCancelled();
 
+  // Where the model actually is. For a flat model that is the destination; for a package
+  // it is the downloaded variant's own directory, since that is what holds
+  // genai_config.json and the runtime only recognises a model by that file paired with
+  // inference_model.json. Writing the pair at the package root instead would leave the
+  // download complete, correct and permanently invisible.
+  fs::path model_dir = destination;
+
   if (plan.layout == DownloadPlan::Layout::kPackage) {
     // Prune the manifest to the variant that was actually fetched, so the directory
     // describes itself accurately instead of advertising variants whose files are absent.
     if (!plan.manifest_override.is_null()) {
-      const fs::path manifest_path = destination / "manifest.json";
+      const fs::path manifest_path = destination / kManifestFile;
       std::ofstream out(manifest_path);
       if (!out) {
         throw Error(FLM_ERROR_STORAGE, "cannot write " + manifest_path.string(),
@@ -323,8 +357,23 @@ nlohmann::json Downloader::Execute(const DownloadPlan& plan, JobContext& context
                     {{"path", manifest_path.string()}});
       }
     }
-    if (!fs::exists(destination / "manifest.json", ec)) {
+    if (!fs::exists(destination / kManifestFile, ec)) {
       throw Error(FLM_ERROR_INVALID_ARGUMENT, "the downloaded package has no manifest.json",
+                  {{"path", destination.string()}});
+    }
+
+    // Only one variant's files were fetched, so exactly one genai_config.json landed.
+    model_dir.clear();
+    for (const RemoteFile& file : plan.files) {
+      const fs::path relative(file.relative_path);
+      if (relative.filename() == kGenAiConfigFile) {
+        model_dir = destination / relative.parent_path();
+        break;
+      }
+    }
+    if (model_dir.empty()) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                  "the downloaded variant has no genai_config.json, so the runtime cannot load it",
                   {{"path", destination.string()}});
     }
   } else if (!fs::exists(destination / kGenAiConfigFile, ec)) {
@@ -333,7 +382,7 @@ nlohmann::json Downloader::Execute(const DownloadPlan& plan, JobContext& context
                 {{"path", destination.string()}});
   }
 
-  WriteInferenceModelJson(plan);
+  WriteInferenceModelJson(plan, model_dir);
 
   // Committing. Once the sentinel is gone the catalog's scan will adopt this directory.
   fs::remove(sentinel, ec);

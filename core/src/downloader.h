@@ -26,6 +26,7 @@
 #define FOUNDRY_LOCAL_MOBILE_DOWNLOADER_H_
 
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <string>
 #include <vector>
@@ -97,7 +98,12 @@ class Downloader {
   static void ValidateRelativePath(const std::string& path);
 
  private:
-  static void WriteInferenceModelJson(const DownloadPlan& plan);
+  /// Write the file that makes a finished download discoverable, into `model_dir`.
+  ///
+  /// It has to land beside genai_config.json, because the runtime's scan only counts a
+  /// directory holding *both*. For a flat model that is the destination itself; for a
+  /// package it is the downloaded variant's directory, not the package root.
+  static void WriteInferenceModelJson(const DownloadPlan& plan, const std::filesystem::path& model_dir);
 };
 
 }  // namespace flm
