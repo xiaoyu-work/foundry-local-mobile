@@ -94,9 +94,31 @@ public data class DeviceProfile(
 
 @Serializable
 public data class ExecutionProviderInfo(
+    /** Provider name, e.g. `QNN`, `CoreML`, `XNNPACK`, `CPU`. */
     val name: String,
+    /** Placement device this provider targets. */
     val device: FlmDevice,
+    /**
+     * `true` if the provider is registered with the runtime and can be
+     * selected. Providers reported by the runtime but not built or otherwise
+     * disabled for this device are still listed with `available = false` so
+     * a debug UI can render them.
+     */
     val available: Boolean,
+    /**
+     * Scheduling priority the SDK uses when picking a placement for a
+     * variant. **Lower wins** — the ordering encodes "fastest acceptable
+     * placement first" — so `0` is the most-preferred provider and higher
+     * values are progressively worse fallbacks.
+     *
+     * Concrete values from the platform detectors:
+     * `0` for accelerator providers (QNN, NNAPI, CoreML, OpenVINO,
+     * VitisAI), `10` for GPU providers (CUDA, DirectML, Metal, WebGPU,
+     * ROCm), `20` for XNNPACK (the fast ARM CPU path), `30` for the generic
+     * CPU provider, and `100` for providers the SDK does not otherwise
+     * classify. Sort ascending in a debug UI to see the SDK's own preference
+     * order.
+     */
     val priority: Int,
 )
 
@@ -326,6 +348,17 @@ public data class Progress(
     val stage: String?,
     val detail: String?,
 ) {
+    /**
+     * The same value as [percent] expressed as a fraction in `[0f, 1f]`,
+     * pre-clamped so it can be passed directly to `LinearProgressIndicator`
+     * or an equivalent widget without further validation. The ABI reports
+     * `0..100` and [percent] preserves that; this is a UI helper, not a
+     * wire field, and is deliberately excluded from `equals`, `hashCode`,
+     * `toString` and `copy`.
+     */
+    public val fraction: Float
+        get() = (percent / 100f).coerceIn(0f, 1f)
+
     public companion object {
         internal fun from(n: com.microsoft.ai.foundry.local.mobile.internal.NativeProgress): Progress = Progress(
             percent = n.percent,

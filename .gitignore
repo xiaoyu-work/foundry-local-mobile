@@ -29,6 +29,7 @@ third_party/foundry-local/
 local.properties
 *.iml
 .cxx/
+.kotlin/
 captures/
 bindings/android/**/build/
 
