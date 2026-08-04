@@ -46,6 +46,14 @@ std::string Model::GetId() const {
   return id != nullptr ? std::string(id) : std::string();
 }
 
+std::string Model::GetTask() const {
+  const Runtime& runtime = Runtime::Instance();
+  const flModelInfo* info = nullptr;
+  runtime.Check(runtime.model_api().GetInfo(upstream_, &info), "get model info");
+  const char* task = runtime.model_api().Info_GetTask(info);
+  return task != nullptr ? std::string(task) : std::string();
+}
+
 std::string Model::GetPath() const {
   const Runtime& runtime = Runtime::Instance();
   const char* path = nullptr;

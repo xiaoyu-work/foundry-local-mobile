@@ -32,6 +32,10 @@ class Model {
 
   nlohmann::json GetInfo() const;
   std::string GetId() const;
+
+  /// The model's task, e.g. "chat-completion". Empty for a model the catalog has never
+  /// heard of, which is every model an app supplies itself — see Session's constructor.
+  std::string GetTask() const;
   std::string GetPath() const;
   bool IsCached() const;
   bool IsLoaded() const;

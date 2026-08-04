@@ -34,7 +34,7 @@ were. What each one has actually been through:
 
 | Target | Compiled | Verified on device |
 |---|---|---|
-| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | Not on a phone, but both model sources exercised end to end against the real Foundry Local runtime. Bundled: a package is scored against the host's execution providers, the matching variant published into the cache and resolved back to a live model handle. Remote: the same over HTTP from a credential-gated server — only the winning variant's bytes are requested, digests verified, the app's `Authorization` header on every request, and a second run transfers nothing. Interrupt it and it resumes from the byte it stopped at; cancel it and the job ends cancelled with the partial file kept |
+| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | Not on a phone, but both model sources exercised end to end against the real Foundry Local runtime. Bundled: a package is scored against the host's execution providers, the matching variant published into the cache and resolved back to a live model handle. Remote: the same over HTTP from a credential-gated server — only the winning variant's bytes are requested, digests verified, the app's `Authorization` header on every request, and a second run transfers nothing. Interrupt it and it resumes from the byte it stopped at; cancel it and the job ends cancelled with the partial file kept. A real ONNX GenAI model loads; it cannot yet infer, for the reason below |
 | **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
 | **iOS** | Partly — the Foundation subset type-checks against the real C ABI headers under strict concurrency; the UIKit/Network parts need a Mac | No |
 | **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
@@ -51,8 +51,29 @@ model-package paths work against the genuine runtime, on a desktop Linux host, w
 fixture package rather than real weights. Resume was checked both against a server that
 honours `Range` and one that ignores it — the second is common on plain object storage,
 and the SDK notices the oversized file, discards it and refetches rather than committing
-a corrupt model. Inference itself has never been run, and no binding has executed on phone
-hardware.
+a corrupt model. No binding has executed on phone hardware.
+
+### The blocker: inference on an app-supplied model
+
+A real ONNX GenAI model loads — that much is verified, with `flm_model_is_loaded`
+returning true against genuine weights. Opening a session on it does not, and the reason
+is upstream's, not this SDK's.
+
+Foundry Local picks a session implementation from the model's *task*
+(`chat-completion`, `automatic-speech-recognition`, `embeddings`, …), and it learns tasks
+from the Azure catalog. A model the app supplies — bundled in the APK or downloaded from
+the app's own URL, which is every model this SDK is built for — is what upstream's own
+code calls a "BYO model": it synthesises a catalog entry with an empty task, and
+`Session::Create` rejects an empty task. Nothing in the ABI can set it; the model info is
+read-only, and the on-disk catalog snapshot is consulted only in a mode where sessions are
+refused outright. Verified by injecting a task into the snapshot and watching it be
+ignored.
+
+So the whole chain works up to the last step, which is exactly what makes this easy to
+miss: the model downloads, verifies, installs, appears in the catalog and loads into
+memory. `flm_session_create` names the cause rather than passing along upstream's blank
+`unsupported model task: `. Lifting it needs a change upstream — a way to declare a task
+for a model the catalog has never heard of.
 
 ## Why a separate mobile SDK?
 

@@ -145,6 +145,24 @@ Session::Session(std::shared_ptr<Model> model, const nlohmann::json& options) : 
   keep_history_ = options.value("keep_history", true);
 
   const Runtime& runtime = Runtime::Instance();
+
+  // The runtime picks a session implementation from the model's task, and it learns the
+  // task from the Azure catalog. A model the app supplied itself is never in that
+  // catalog, so it arrives with an empty task and the runtime rejects it with a message
+  // that names no cause -- "unsupported model task: " and nothing after the colon. Say
+  // what is actually wrong, because the app cannot fix it and should not spend a day
+  // discovering that.
+  if (const std::string task = model_->GetTask(); task.empty()) {
+    throw Error(FLM_ERROR_NOT_IMPLEMENTED,
+                "the runtime will not open a session on '" + model_->GetId() +
+                    "' because it does not know what kind of model it is",
+                {{"model", model_->GetId()},
+                 {"cause",
+                  "a model's task comes from the Foundry Local catalog, and a model the app "
+                  "supplied -- bundled or downloaded from its own URL -- is not in it"},
+                 {"consequence", "the model downloads, installs and loads, but cannot infer"}});
+  }
+
   runtime.Check(runtime.inference_api().Session_Create(model_->upstream(), &upstream_), "create session");
 
   ApplyOptions(options);
