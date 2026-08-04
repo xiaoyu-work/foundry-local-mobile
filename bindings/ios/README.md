@@ -106,20 +106,19 @@ import FoundryLocal
 let sdk = try FoundryLocal(config: FoundryLocalConfig(appName: "Notes"))
 
 // 1. Acquire the model. Ship it in the app bundle (a folder reference) or point at
-//    a URL you host. `flm_model_download_async` no longer reaches the Foundry Local
-//    desktop catalogue — mobile devices can't run the desktop CUDA / DirectML /
-//    OpenVINO builds it publishes — so acquisition is always a model source. See
-//    [Model sources](#model-sources) below.
-let added = try await sdk.addModelSource(
+//    a URL you host. `addModelSource` returns a usable model handle when the files
+//    are on disk — either immediately for a bundled source, or after the download
+//    completes for a remote one.
+let model = try await sdk.addModelSource(
     .remote(
         name: "qwen2.5-0.5b",
-        url: URL(string: "https://models.example.com/qwen2.5-0.5b/model.json")!
-    ),
-    progress: { p in print("\(p.percent)% — \(p.stage)") }
-)
+        url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!
+    )
+) { p in
+    print("\(p.percent)% — \(p.stage)")
+}
 
-// 2. Get a handle for it and load into memory (best EP chosen by default).
-let model = try await sdk.catalog.model(alias: added.name)
+// 2. Load into memory (best EP chosen by default). No network work happens here.
 try await model.load()
 
 // 3. Chat.
@@ -129,15 +128,30 @@ for try await delta in chat.completeStreaming("Explain vector databases in one l
 }
 ```
 
-For a model package (a manifest with several device-specific variants) pick the
-variant before loading; the catalogue query returns a package handle whose currently
-selected variant is what `load()` operates on:
+For a model package (a manifest with several device-specific variants) attach the
+policy to the source itself — the runtime picks the winning variant against the
+manifest and only fetches that one:
 
 ```swift
-let package = try await sdk.catalog.model(alias: added.name)
-let bestVariantId = try package.selectBestVariant()
-print("selected \(bestVariantId)")
-try await package.load()
+let model = try await sdk.addModelSource(
+    .remote(
+        name: "phi-4-mini",
+        url: URL(string: "https://models.example.com/phi-4-mini/manifest.json")!,
+        constraints: VariantConstraints(
+            maxDownloadBytes: 800 * 1024 * 1024,
+            allowedDevices: [.npu, .gpu, .cpu]
+        )
+    )
+)
+try await model.load()
+
+// After the fact, inspect what was picked or reselect against fresh constraints:
+let variants = try model.variants()
+print("selected \(variants.selectedVariantId ?? "?") from \(variants.variants.count) options")
+
+let alternate = try model.selectBestVariant(
+    VariantConstraints(preferSmallest: true)
+)
 ```
 
 Non-streaming call:
@@ -147,6 +161,10 @@ let reply = try await chat.complete("Summarise this note in three words: \(note)
 print(reply.text ?? "")
 ```
 
+The `sdk.catalog` surface (list, filter, look up by alias, cache stats) is still
+there — it just describes what's already on the device. Acquisition is
+`addModelSource` only; see [Model sources](#model-sources) for both flavours.
+
 ## Model sources
 
 Two shapes, both resolving to a directory the runtime can load. See
@@ -155,15 +173,15 @@ Two shapes, both resolving to a directory the runtime can load. See
 ### Remote
 
 ```swift
-let result = try await sdk.addModelSource(
+let model = try await sdk.addModelSource(
     .remote(
         name: "my-fine-tune",
-        url: URL(string: "https://models.example.com/my-fine-tune/model.json")!,
+        url: URL(string: "https://models.example.com/my-fine-tune/manifest.json")!,
         headers: ["Authorization": "Bearer \(token)"]
-    ),
-    progress: { p in print("[\(p.stage)] \(p.percent)%") }
-)
-let model = try await sdk.catalog.model(alias: result.name)
+    )
+) { p in
+    print("[\(p.stage)] \(p.percent)%")
+}
 ```
 
 The URL must point at a manifest — a Foundry model package `manifest.json` or a flat
@@ -184,6 +202,24 @@ to enforce integrity another way (`verifyChecksums: false`):
 )
 ```
 
+### Variant constraints
+
+`VariantConstraints` is the cross-platform, declarative way to pick a package
+variant **before** any weights are transferred. Only these four fields
+round-trip through the ABI:
+
+| Field              | Meaning                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| `maxDownloadBytes` | Skip variants whose transfer would exceed this many bytes. `nil` = no limit.                |
+| `allowedDevices`   | Consider only variants for these devices. Empty = any device.                               |
+| `preferSmallest`   | Break ties on smallest transfer instead of highest compatibility score.                     |
+| `requireCached`    | Consider only variants already on disk. Useful for an offline reselect that must not fetch. |
+
+`ModelSource.remote` and `.bundled` both accept a `constraints:` argument. The same
+type feeds `Model.selectBestVariant` for after-the-fact reselection over an
+already-installed package (say the device situation changed and the app wants to
+switch tiers without redownloading).
+
 ### Bundled
 
 For a model shipped inside the app bundle as a folder reference (see
@@ -196,7 +232,7 @@ let source = try ModelSource.bundled(
     in: .main,
     subdirectory: "models"
 )
-_ = try await sdk.addModelSource(source)
+let model = try await sdk.addModelSource(source)
 ```
 
 ## Background downloads and AppDelegate wiring
