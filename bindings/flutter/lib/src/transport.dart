@@ -77,8 +77,15 @@ class FlmHttpRequest {
   /// memory via [FlmTransportReporter.reportBody].
   final String? destinationPath;
 
-  /// When > 0, a resume offset. Send `Range: bytes=<offset>-` and **append**
-  /// to the destination file rather than truncating it.
+  /// Resume offset in bytes; 0 for a fresh request.
+  ///
+  /// When `> 0` the transport MUST:
+  ///   1. send `Range: bytes=<offset>-` with the request, AND
+  ///   2. append to [destinationPath] rather than truncating it.
+  ///
+  /// Skipping step 2 corrupts the file silently: the download appears to
+  /// succeed, the leading bytes are gone, and the core's SHA-256 check
+  /// fails much later.
   final int offset;
 
   /// Expected body size, or `-1` when unknown.
@@ -96,6 +103,11 @@ abstract final class FlmTransportReporter {
     );
   }
 
+  /// Deliver body bytes for an in-memory request — one whose
+  /// [FlmHttpRequest.destinationPath] is `null`. Requests that name a
+  /// destination path are written to that file by the transport itself;
+  /// calling [reportBody] for those leaves the file empty and the core sees
+  /// a size mismatch.
   static void reportBody(int requestId, Uint8List data) {
     if (data.isEmpty) return;
     final ptr = calloc<Uint8>(data.length);
@@ -392,9 +404,13 @@ class DartHttpTransport implements FlmTransport {
       if (request.destinationPath != null) {
         final file = File(request.destinationPath!);
         await file.parent.create(recursive: true);
-        // Append for resumed downloads (offset > 0), truncate otherwise. This
-        // matters — a Range-based resume that then truncates the file would
-        // start over from scratch.
+        // When offset > 0 the server is streaming us bytes at position
+        // `offset` onwards (via the Range header above); those bytes MUST
+        // be appended to whatever is already on disk. Opening the file with
+        // FileMode.write would truncate the leading bytes to zero, silently
+        // producing a file whose SHA-256 fails and forcing the core to
+        // refetch the whole thing. The core's contract on flm_http_request
+        // is explicit about this — see the doc comment on `offset`.
         final mode = request.offset > 0 ? FileMode.append : FileMode.write;
         sink = file.openWrite(mode: mode);
         completed = request.offset;
@@ -422,8 +438,13 @@ class DartHttpTransport implements FlmTransport {
           await sink.close();
         }
       } else {
-        // In-memory delivery. Stream chunks so we never build a giant
-        // Uint8List for a manifest that turns out to be a package binary.
+        // In-memory delivery — used for JSON manifests, catalog documents
+        // and similar. Stream chunks so we never build a giant Uint8List for
+        // a manifest that turns out to be a package binary.
+        //
+        // Note: reportBody is ONLY for in-memory requests (destinationPath
+        // == null). Calling it for a file-destination request would leave
+        // the file empty and confuse the core with a size mismatch.
         final completer = Completer<void>();
         inFlight.subscription = response.listen(
           (chunk) {

@@ -12,7 +12,12 @@ import 'device_profile.dart';
 /// documented on `flm_manager_add_model_source_async`.
 @immutable
 sealed class ModelSource {
-  const ModelSource({required this.name, this.constraints});
+  const ModelSource({
+    required this.name,
+    this.constraints,
+    this.resume = true,
+    this.verifyChecksums = true,
+  });
 
   /// Name the model is registered under. Used later as an alias for lookup.
   final String name;
@@ -20,20 +25,47 @@ sealed class ModelSource {
   /// Optional per-source constraints applied when the source is a package.
   final ModelSourceConstraints? constraints;
 
+  /// Whether an interrupted download resumes from the last written byte or
+  /// starts over. Defaults to true. Turn it off when the origin server is
+  /// known to mishandle `Range` requests — that is fatal on a multi-GB
+  /// download that keeps hitting network transitions.
+  final bool resume;
+
+  /// Whether each downloaded file is verified against the SHA-256 in the
+  /// manifest. Defaults to true and should stay on: a model from a remote
+  /// URL is untrusted input the runtime will `mmap` and execute operators
+  /// from. Turning this off is only ever right for local development
+  /// against an unstable manifest.
+  final bool verifyChecksums;
+
   Map<String, Object?> toJson();
   String toJsonString() => jsonEncode(toJson());
+
+  /// Common fields shared by every source kind. Subclasses spread this into
+  /// their JSON before adding their own keys.
+  @protected
+  Map<String, Object?> commonJson() => <String, Object?>{
+        'name': name,
+        if (constraints != null) 'constraints': constraints!.toJson(),
+        if (!resume) 'resume': false,
+        if (!verifyChecksums) 'verify_checksums': false,
+      };
 
   factory ModelSource.bundled({
     required String name,
     required String path,
     bool copyIntoCache = false,
     ModelSourceConstraints? constraints,
+    bool resume = true,
+    bool verifyChecksums = true,
   }) =>
       BundledModelSource(
         name: name,
         path: path,
         copyIntoCache: copyIntoCache,
         constraints: constraints,
+        resume: resume,
+        verifyChecksums: verifyChecksums,
       );
 
   factory ModelSource.remote({
@@ -41,12 +73,16 @@ sealed class ModelSource {
     required String url,
     Map<String, String> headers = const <String, String>{},
     ModelSourceConstraints? constraints,
+    bool resume = true,
+    bool verifyChecksums = true,
   }) =>
       RemoteModelSource(
         name: name,
         url: url,
         headers: headers,
         constraints: constraints,
+        resume: resume,
+        verifyChecksums: verifyChecksums,
       );
 }
 
@@ -59,6 +95,8 @@ class BundledModelSource extends ModelSource {
     required this.path,
     this.copyIntoCache = false,
     super.constraints,
+    super.resume,
+    super.verifyChecksums,
   });
 
   final String path;
@@ -71,10 +109,9 @@ class BundledModelSource extends ModelSource {
   @override
   Map<String, Object?> toJson() => <String, Object?>{
         'kind': 'bundled',
-        'name': name,
+        ...commonJson(),
         'path': path,
         if (copyIntoCache) 'copy_into_cache': true,
-        if (constraints != null) 'constraints': constraints!.toJson(),
       };
 }
 
@@ -87,6 +124,8 @@ class RemoteModelSource extends ModelSource {
     required this.url,
     this.headers = const <String, String>{},
     super.constraints,
+    super.resume,
+    super.verifyChecksums,
   });
 
   final String url;
@@ -101,10 +140,9 @@ class RemoteModelSource extends ModelSource {
   @override
   Map<String, Object?> toJson() => <String, Object?>{
         'kind': 'remote',
-        'name': name,
+        ...commonJson(),
         'url': url,
         if (headers.isNotEmpty) 'headers': headers,
-        if (constraints != null) 'constraints': constraints!.toJson(),
       };
 }
 
