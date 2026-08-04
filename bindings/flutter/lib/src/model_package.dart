@@ -69,11 +69,18 @@ class ModelPackage {
   }
 
   /// Drop the cached manifest and decode it again from the ABI on the next
-  /// read. Call this when the caller has reason to expect the on-device
-  /// state has changed underneath — for example a background acquisition
-  /// task that finished after this [ModelPackage] was constructed. The
-  /// selection methods on this class already invalidate the cache; you do
-  /// not need to call [refresh] after them.
+  /// read. The selection methods on this class already invalidate the
+  /// cache, so you do not need to call [refresh] after them.
+  ///
+  /// Note what this does **not** do. The core scans the package directory
+  /// once, when the model handle first resolves a package, and keeps that
+  /// snapshot until the model is deleted; `flm_package_get_variants_json`
+  /// re-serialises it rather than re-reading the disk. So [refresh] gives
+  /// you a fresh decode of the *same* snapshot — it cannot observe files
+  /// that appeared underneath, and [ModelVariant.isCached] and
+  /// [ModelVariant.downloadSizeBytes] will not move because a download
+  /// finished elsewhere. To see acquisition that happened outside this
+  /// object, get a new model handle from the manager.
   void refresh() {
     _cachedManifest = null;
   }
