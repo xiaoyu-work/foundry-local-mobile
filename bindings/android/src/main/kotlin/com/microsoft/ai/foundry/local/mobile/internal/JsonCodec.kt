@@ -6,15 +6,21 @@ package com.microsoft.ai.foundry.local.mobile.internal
 import com.microsoft.ai.foundry.local.mobile.CatalogFilter
 import com.microsoft.ai.foundry.local.mobile.FlmDevice
 import com.microsoft.ai.foundry.local.mobile.FoundryLocalConfig
+import com.microsoft.ai.foundry.local.mobile.Model
 import com.microsoft.ai.foundry.local.mobile.ModelSource
+import com.microsoft.ai.foundry.local.mobile.ModelSourceResult
 import com.microsoft.ai.foundry.local.mobile.VariantConstraints
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -133,6 +139,30 @@ internal object JsonCodec {
     }
 
     fun parseElement(json: String): JsonElement = lenient.parseToJsonElement(json)
+
+    fun parseModelSourceResult(json: String?, fallbackName: String): ModelSourceResult {
+        val obj = if (json.isNullOrBlank()) JsonObject(emptyMap()) else parseObject(json)
+        val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: fallbackName
+        val path = obj["path"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val variantId = obj["variant_id"]?.jsonPrimitive?.contentOrNull?.ifEmpty { null }
+        val bytesDownloaded = obj["bytes_downloaded"]?.jsonPrimitive?.longOrNull ?: 0L
+        val bytesReused = obj["bytes_reused"]?.jsonPrimitive?.longOrNull ?: 0L
+        val wasCached = obj["was_cached"]?.jsonPrimitive?.booleanOrNull ?: false
+        // model_handle is a flm_handle (uint64). Signed Long is a safe carrier
+        // for every practical value the core mints; 0 means the catalog scan
+        // did not find the freshly installed files, which is not a failure.
+        val handle = obj["model_handle"]?.jsonPrimitive?.longOrNull ?: 0L
+        val model = if (handle != 0L) Model.wrap(handle) else null
+        return ModelSourceResult(
+            name = name,
+            path = path,
+            variantId = variantId,
+            bytesDownloaded = bytesDownloaded,
+            bytesReused = bytesReused,
+            wasCached = wasCached,
+            model = model,
+        )
+    }
 
     private fun deviceName(device: FlmDevice): String = when (device) {
         FlmDevice.CPU -> "cpu"

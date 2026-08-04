@@ -11,7 +11,6 @@ import com.microsoft.ai.foundry.local.mobile.lifecycle.LifecycleBridge
 import com.microsoft.ai.foundry.local.mobile.transport.OkHttpTransport
 import com.microsoft.ai.foundry.local.mobile.transport.TransportDispatcher
 import com.microsoft.ai.foundry.local.mobile.transport.HttpTransport
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -27,10 +26,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * // Acquire a model: bundled inside the APK, or hosted at a URL the app controls.
  * // The catalog does not fetch models; addModelSource is the only supply path.
- * val model = foundry.addModelSource(
+ * val result = foundry.addModelSource(
  *     ModelSource.Remote(name = "qwen2.5-0.5b", url = "https://.../manifest.json"),
  * ) { println("${it.percent}%") }
  *
+ * val model = result.model ?: foundry.catalog.getModel(result.name)
  * model.load()
  *
  * val chat = model.createChatSession()
@@ -82,23 +82,26 @@ public class FoundryLocal internal constructor(
      * plus its shared assets; when it is a [ModelSource.Bundled] the files are
      * loaded in place, or copied into the cache if the app requests it.
      *
+     * The result carries the resolved [ModelSourceResult.name],
+     * [ModelSourceResult.path] and, in the common case, a ready-to-use
+     * [ModelSourceResult.model] the core minted inside the same job. `model`
+     * is `null` only when the download succeeded but the catalog's local scan
+     * did not find the files afterwards; the caller can then look the model
+     * up by name through [catalog] or work from [ModelSourceResult.path]
+     * directly.
+     *
      * Progress is optional; typical UI code uses it to show a "download in
      * progress" spinner.
      */
     public suspend fun addModelSource(
         source: ModelSource,
         onProgress: ((Progress) -> Unit)? = null,
-    ): Model {
+    ): ModelSourceResult {
         val json = JsonCodec.encodeSource(source)
         val result = JobBridge.awaitResult(onProgress = onProgress) { corr ->
             NativeBridge.managerAddModelSourceAsync(requireHandle(), json, corr)
         }
-        // The core reports the resolved on-disk path; we re-resolve to the
-        // catalog handle by name to obtain a manageable model.
-        val name = result?.let {
-            JsonCodec.parseObject(it)["name"]?.jsonPrimitive?.content
-        } ?: source.name
-        return catalog.getModel(name)
+        return JsonCodec.parseModelSourceResult(result, source.name)
     }
 
     /**
