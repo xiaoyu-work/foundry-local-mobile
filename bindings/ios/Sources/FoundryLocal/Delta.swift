@@ -44,7 +44,7 @@ public enum ChatDelta: Sendable, Equatable {
             let id = value.tool_call_id.map { String(cString: $0) } ?? ""
             let name = value.tool_name.map { String(cString: $0) } ?? ""
             let args = value.tool_arguments_json.map { String(cString: $0) } ?? "{}"
-            return .toolCall(ToolCall(callId: id, name: name, argumentsJson: args))
+            return .toolCall(ToolCall(callId: id, name: name, arguments: args))
         case FLM_DELTA_USAGE:
             return .usage(TokenCounts(promptTokens: value.prompt_tokens, completionTokens: value.completion_tokens))
         case FLM_DELTA_COMPLETED:

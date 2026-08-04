@@ -174,13 +174,19 @@ public struct AddModelSourceResult: Decodable, Sendable {
     public let wasCached: Bool
 }
 
-/// Payload of `flm_model_download_async` / `flm_model_load_async`.
-public struct DownloadResult: Decodable, Sendable {
+/// Payload of `flm_model_load_async`. `flm_model_download_async` returns the same
+/// shape, but the idiomatic Swift API no longer surfaces the download call — see
+/// ``Model/load`` and the README's model-sources section.
+public struct LoadResult: Decodable, Sendable {
     public let path: String
     public let bytes: Int64
 }
 
 /// Payload of `flm_session_complete_async`.
+///
+/// The core omits `toolCalls` and `usage` entirely (rather than encoding empty
+/// values) when there is nothing to report, so both are optional. Callers should
+/// treat `nil` as "not reported" rather than "reported empty".
 public struct ChatCompletion: Decodable, Sendable {
     public let text: String?
     public let finishReason: FinishReason
@@ -188,17 +194,62 @@ public struct ChatCompletion: Decodable, Sendable {
     public let usage: TokenUsage?
 }
 
-public enum FinishReason: String, Codable, Sendable {
+/// Why the model stopped generating.
+///
+/// The known cases mirror the ABI's `flm_finish_reason` and the JSON strings
+/// documented on `flm_job_take_result_json`. Unknown strings decode to
+/// ``FinishReason/unknown(_:)`` rather than throwing so that a runtime that adds a
+/// new reason keeps working with older builds of this SDK.
+public enum FinishReason: Codable, Sendable, Equatable {
+    /// Model stopped without a specific reason (e.g. before generation started).
     case none
+    /// End-of-turn / stop-sequence reached.
     case stop
+    /// `max_tokens` reached.
     case length
-    case toolCalls = "tool_calls"
+    /// The model requested one or more tool calls; the app should execute them and
+    /// resubmit via ``ChatSession/submitToolResults``.
+    case toolCalls
+    /// Cancelled by ``ChatSession/cancel`` or Swift task cancellation.
     case cancelled
+    /// The runtime raised an error mid-generation.
     case error
+    /// A reason the runtime emitted that this SDK does not recognise. The raw JSON
+    /// string is preserved so apps can still inspect it.
+    case unknown(String)
 
-    public init(from decoder: Decoder) throws {
-        let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? "none"
-        self = FinishReason(rawValue: raw) ?? .none
+    public var rawValue: String {
+        switch self {
+        case .none: return "none"
+        case .stop: return "stop"
+        case .length: return "length"
+        case .toolCalls: return "tool_calls"
+        case .cancelled: return "cancelled"
+        case .error: return "error"
+        case .unknown(let raw): return raw
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = FinishReason(rawValue: raw)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "none": self = .none
+        case "stop": self = .stop
+        case "length": self = .length
+        case "tool_calls": self = .toolCalls
+        case "cancelled": self = .cancelled
+        case "error": self = .error
+        default: self = .unknown(rawValue)
+        }
     }
 
     init(cValue: flm_finish_reason) {
@@ -215,27 +266,35 @@ public enum FinishReason: String, Codable, Sendable {
     }
 }
 
-/// A tool call the model requested. The core delivers `call_id`, `name` and
-/// `arguments_json` (a JSON object encoded as a string); the snake_case JSON keys map
-/// to these Swift property names via the shared decoder's snake-case strategy.
+/// A tool call the model requested.
+///
+/// ``arguments`` is the model's raw JSON string, exactly as delivered. The SDK
+/// deliberately never parses or validates it: models can and do emit arguments that
+/// don't match the declared tool schema, and whether that's fatal is the app's call.
+/// Parse it yourself (with your own tolerant decoder) when you're ready to invoke
+/// the tool.
 public struct ToolCall: Codable, Sendable, Equatable {
     public let callId: String
     public let name: String
-    /// Raw JSON object as a string, as delivered by the model. The SDK never parses
-    /// or validates it — the calling app knows its own tool schemas.
-    public let argumentsJson: String
+    /// Raw JSON string, as delivered by the model. May not match the tool's declared
+    /// argument schema — do your own validation before invoking the tool.
+    public let arguments: String
 
-    public init(callId: String, name: String, argumentsJson: String) {
+    public init(callId: String, name: String, arguments: String) {
         self.callId = callId
         self.name = name
-        self.argumentsJson = argumentsJson
+        self.arguments = arguments
     }
 }
 
+/// Token counts for a completion. All three fields are populated when ``usage`` is
+/// present on a ``ChatCompletion`` — if the runtime cannot report the numbers, it
+/// omits the ``ChatCompletion/usage`` key entirely rather than emitting partial
+/// counts.
 public struct TokenUsage: Codable, Sendable {
-    public let promptTokens: Int64?
-    public let completionTokens: Int64?
-    public let totalTokens: Int64?
+    public let promptTokens: Int64
+    public let completionTokens: Int64
+    public let totalTokens: Int64
 }
 
 /// Payload of `flm_session_transcribe_async`.
@@ -249,7 +308,8 @@ public struct TranscriptionSegment: Codable, Sendable {
     public let text: String
     public let startTimeMs: Int64
     public let endTimeMs: Int64
-    public let isFinal: Bool
+    /// Per-segment language when the model detected one; `nil` otherwise.
+    public let language: String?
 }
 
 /// Payload of `flm_session_embed_async`.
