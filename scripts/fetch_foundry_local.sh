@@ -150,12 +150,40 @@ write_stamp() {
     local header="${DEST_DIR}/${HEADER_REL}"
     local hash
     hash="$(sha256_of "${header}")"
-    cat >"${STAMP_FILE}" <<EOF
-# Written by ${SCRIPT_NAME}; do not edit.
-source=${source_desc}
-sha256=${hash}
-fetched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-EOF
+    {
+        printf '# Written by %s; do not edit.\n' "${SCRIPT_NAME}"
+        printf 'source=%s\n' "${source_desc}"
+        # Explicit fields are re-read on the next run to decide whether the
+        # staged copy matches what the caller wants. Extracted from source_desc
+        # rather than duplicating a parser here.
+        if [[ "${source_desc}" == git:* ]]; then
+            printf 'url=%s\n' "${UPSTREAM_URL}"
+            printf 'ref=%s\n' "${REF}"
+        elif [[ "${source_desc}" == local:* ]]; then
+            printf 'local_path=%s\n' "${LOCAL_SDK_ROOT}"
+        fi
+        printf 'sha256=%s\n' "${hash}"
+        printf 'fetched_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "${STAMP_FILE}"
+}
+
+# Return true if the on-disk staging matches what the caller is asking for.
+# Older stamps written before this check existed do not have `url=`/`ref=`, so
+# they are always treated as a mismatch — a one-off re-fetch that upgrades the
+# stamp is the safe default.
+stamp_matches_request() {
+    [[ -f "${STAMP_FILE}" ]] || return 1
+
+    local recorded_url recorded_ref recorded_local
+    recorded_url=$(awk -F= '$1=="url"{print $2}' "${STAMP_FILE}")
+    recorded_ref=$(awk -F= '$1=="ref"{print $2}' "${STAMP_FILE}")
+    recorded_local=$(awk -F= '$1=="local_path"{print $2}' "${STAMP_FILE}")
+
+    if [[ -n "${LOCAL_SDK_ROOT}" ]]; then
+        [[ "${recorded_local}" == "${LOCAL_SDK_ROOT}" ]]
+    else
+        [[ "${recorded_url}" == "${UPSTREAM_URL}" && "${recorded_ref}" == "${REF}" ]]
+    fi
 }
 
 stage_from_directory() {
@@ -217,12 +245,30 @@ if [[ ${VERIFY_ONLY} -eq 1 ]]; then
     die "verification failed for ${DEST_DIR}"
 fi
 
-if [[ ${FORCE} -ne 1 ]] && verify_dest; then
+if [[ ${FORCE} -ne 1 ]] && verify_dest && stamp_matches_request; then
     log "already staged at ${DEST_DIR}; use --force to re-fetch"
     exit 0
 fi
 
+# Emit an explicit reason for re-fetching when the caller might have expected
+# a no-op, so a developer who forgot they last fetched a different ref does
+# not have to inspect the stamp to understand why the network hit happened.
+if [[ ${FORCE} -ne 1 ]] && [[ -f "${STAMP_FILE}" ]] && verify_dest; then
+    if [[ -n "${LOCAL_SDK_ROOT}" ]]; then
+        log "re-staging: --local ${LOCAL_SDK_ROOT} differs from the last fetch"
+    else
+        log "re-fetching: requested ${UPSTREAM_URL}@${REF} differs from the last fetch"
+    fi
+fi
+
 mkdir -p "${DEST_DIR}"
+
+# Blank the stamp before staging. verify_dest below cross-checks the header
+# against the stamp's SHA-256; the freshly staged header will not match the
+# stamp we wrote for the *previous* fetch, and we would fail with a bogus
+# "recorded SHA-256 does not match" message. write_stamp restages this after
+# a successful post-fetch verify_dest.
+rm -f "${STAMP_FILE}"
 
 source_desc=""
 if [[ -n "${LOCAL_SDK_ROOT}" ]]; then
