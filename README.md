@@ -38,7 +38,7 @@ were. What each one has actually been through:
 | **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
 | **iOS** | Partly — the Foundation subset type-checks against the real C ABI headers under strict concurrency; the UIKit/Network parts need a Mac | No |
 | **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
-| **React Native** | In progress | No |
+| **React Native** | Yes on Android — the TurboModule compiles against the Kotlin binding in CI, and every method in the codegen'd spec is checked for an implementation. The iOS half is unbuilt: it needs CocoaPods and Xcode | No |
 
 "Compiled" is a real guarantee and a narrow one: the Android binding's native symbols are
 checked against its Kotlin `external fun` declarations at build time, which turns what

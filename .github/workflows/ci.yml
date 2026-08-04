@@ -609,6 +609,192 @@ jobs:
           path: bindings/flutter/example/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
 
+
+  # ---------------------------------------------------------------------------
+  # React Native binding. Two signals, both reachable without a Mac or a device:
+  #
+  #   1. `tsc --noEmit` over the public TypeScript surface.
+  #   2. A real Kotlin compile of the Android TurboModule against the Kotlin
+  #      binding it wraps.
+  #
+  # (2) is the one that matters. The module extends the codegen'd abstract
+  # class `NativeFoundryLocalSpec`, so compiling it proves every method in the
+  # TurboModule spec is implemented -- an unimplemented one is a compile error
+  # rather than a runtime "undefined is not a function". It also pins the
+  # module to the Kotlin binding's public API: when `FoundryLocal.create`
+  # became a `suspend fun`, this is the job that would have caught a stale
+  # caller.
+  #
+  # The module's own build.gradle applies the React Native Gradle plugin, which
+  # expects to be resolved from a host app's node_modules. Rather than fake an
+  # app, generate the spec with RN's codegen directly and compile the sources
+  # in a scratch Gradle project that substitutes a project dependency for the
+  # published Maven coordinate.
+  #
+  # What this cannot catch: the iOS half. RNFoundryLocalCore.swift imports
+  # React, so it needs CocoaPods and Xcode. It stays uncompiled, and the
+  # README maturity table says so.
+  # ---------------------------------------------------------------------------
+  react-native-binding:
+    name: bindings / react native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licences
+        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+
+      - name: Cache Gradle wrapper and dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-rn-${{ hashFiles('bindings/react-native/android/build.gradle', 'bindings/android/build.gradle.kts') }}
+          restore-keys: gradle-rn-
+
+      - name: Cache upstream SDK headers
+        uses: actions/cache@v4
+        with:
+          path: third_party/foundry-local
+          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Install npm dependencies
+        working-directory: bindings/react-native
+        run: npm ci
+
+      - name: Type-check the TypeScript surface
+        working-directory: bindings/react-native
+        run: npx tsc --noEmit
+
+      - name: Generate the TurboModule spec
+        working-directory: bindings/react-native
+        # Two steps, mirroring what the RN Gradle plugin does internally: parse
+        # the TS spec into a schema, then emit the Java abstract class that the
+        # Kotlin module extends.
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/rncodegen"
+          node node_modules/@react-native/codegen/lib/cli/combine/combine-js-to-schema-cli.js \
+            "${RUNNER_TEMP}/rncodegen/schema.json" src/
+          node -e "
+            const {generate} = require('./node_modules/@react-native/codegen/lib/generators/RNCodegen.js');
+            const schema = require(process.env.RUNNER_TEMP + '/rncodegen/schema.json');
+            generate(
+              {
+                libraryName: 'RNFoundryLocalSpec',
+                schema,
+                outputDirectory: process.env.RUNNER_TEMP + '/rncodegen/out',
+                packageName: 'com.foundrylocal.reactnative',
+              },
+              {generators: ['modulesAndroid']},
+            );
+          "
+          find "${RUNNER_TEMP}/rncodegen/out" -name '*.java'
+
+      - name: Compile the Android TurboModule against the Kotlin binding
+        run: |
+          set -euo pipefail
+          harness="${RUNNER_TEMP}/rn-harness"
+          rm -rf "${harness}"
+          mkdir -p "${harness}/rnmodule"
+          repo="$(pwd)"
+          rn_version="$(node -p "require('${repo}/bindings/react-native/node_modules/react-native/package.json').version")"
+
+          cat > "${harness}/settings.gradle.kts" <<EOF
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "rncheck"
+          include(":binding")
+          project(":binding").projectDir = file("${repo}/bindings/android")
+          include(":rnmodule")
+          EOF
+
+          cat > "${harness}/build.gradle.kts" <<'EOF'
+          plugins {
+              id("com.android.library") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+              id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20" apply false
+          }
+          EOF
+
+          cat > "${harness}/rnmodule/AndroidManifest.xml" <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+          EOF
+
+          cat > "${harness}/rnmodule/build.gradle.kts" <<EOF
+          plugins {
+              id("com.android.library")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.serialization")
+          }
+          android {
+              namespace = "com.foundrylocal.reactnative"
+              compileSdk = 35
+              defaultConfig { minSdk = 26 }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              sourceSets["main"].java.srcDirs(
+                  "${repo}/bindings/react-native/android/src/main/java",
+                  "${RUNNER_TEMP}/rncodegen/out/java",
+              )
+              sourceSets["main"].manifest.srcFile("${harness}/rnmodule/AndroidManifest.xml")
+          }
+          dependencies {
+              implementation("com.facebook.react:react-android:${rn_version}")
+              implementation(project(":binding"))
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+          }
+          EOF
+
+          cp "${repo}/bindings/android/gradle.properties" "${harness}/"
+          cp -r "${repo}/bindings/android/gradle" "${harness}/"
+          cp "${repo}/bindings/android/gradlew" "${harness}/"
+
+          cd "${harness}"
+          ./gradlew --no-daemon :rnmodule:compileReleaseKotlin :rnmodule:compileReleaseJavaWithJavac
+
+      - name: Reconcile the spec against the implementation
+        # compileReleaseKotlin already fails on a missing override, because the
+        # codegen'd spec is abstract. This puts the count in the log and fails
+        # loudly if codegen ever emits a method the module does not implement.
+        run: |
+          set -euo pipefail
+          spec="$(find "${RUNNER_TEMP}/rncodegen/out" -name 'NativeFoundryLocalSpec.java')"
+          grep -oE 'public abstract [A-Za-z<>@ .]+ ([a-zA-Z]+)\(' "${spec}" \
+            | grep -oE '[a-zA-Z]+\($' | tr -d '(' | sort > "${RUNNER_TEMP}/spec.txt"
+          grep -oE 'override fun ([a-zA-Z]+)' \
+            bindings/react-native/android/src/main/java/com/foundrylocal/reactnative/FoundryLocalModule.kt \
+            | awk '{print $3}' | sort > "${RUNNER_TEMP}/impl.txt"
+          missing="$(comm -23 "${RUNNER_TEMP}/spec.txt" "${RUNNER_TEMP}/impl.txt" || true)"
+          if [ -n "${missing}" ]; then
+            echo "::error::TurboModule spec methods with no Kotlin override:"
+            printf '  %s\n' ${missing}
+            exit 1
+          fi
+          echo "OK: $(wc -l < "${RUNNER_TEMP}/spec.txt") spec methods, all implemented."
+
   # ---------------------------------------------------------------------------
   # Linux type-check of the Swift binding's Foundation subset. Runs against
   # the real C ABI headers under core/include via a hand-written module map.
