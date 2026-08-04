@@ -420,12 +420,22 @@ public enum class FinishReason(public val nativeValue: Int) {
 // Model source result
 // -----------------------------------------------------------------------------
 
-@Serializable
+/**
+ * Outcome of a successful [FoundryLocal.addModelSource]. The model's files are
+ * on disk at [path] regardless of whether [model] is populated.
+ *
+ * [model] is the ready-to-use handle the core minted inside the same job. It is
+ * `null` in the unexpected case where the download succeeded but the catalog's
+ * local scan did not pick the files up — the caller can then look the model up
+ * by [name] through [FoundryLocal.catalog] or work from [path] directly. The
+ * download itself succeeded either way; the null case is not an error.
+ */
 public data class ModelSourceResult(
     val name: String,
     val path: String,
-    @SerialName("variant_id") val variantId: String? = null,
-    @SerialName("bytes_downloaded") val bytesDownloaded: Long = 0,
-    @SerialName("bytes_reused") val bytesReused: Long = 0,
-    @SerialName("was_cached") val wasCached: Boolean = false,
+    val variantId: String? = null,
+    val bytesDownloaded: Long = 0,
+    val bytesReused: Long = 0,
+    val wasCached: Boolean = false,
+    val model: Model? = null,
 )

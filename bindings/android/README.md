@@ -48,13 +48,14 @@ your first `FoundryLocal.create`.
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
-val model = foundry.addModelSource(
+val result = foundry.addModelSource(
     ModelSource.Remote(
         name = "qwen2.5-0.5b",
         url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
     )
 ) { progress -> println("${progress.percent}%") }
 
+val model = result.model ?: foundry.catalog.getModel(result.name)
 model.load()
 
 val chat = model.createChatSession()
@@ -62,6 +63,12 @@ chat.completeStreaming("What is the golden ratio?").collect { delta ->
     print(delta.text)
 }
 ```
+
+`addModelSource` returns a [`ModelSourceResult`](src/main/kotlin/com/microsoft/ai/foundry/local/mobile/Types.kt)
+with the resolved `name`, `path`, download counters and — in the common case
+— a ready-to-use `model`. `result.model` is `null` only when the download
+succeeded but the catalog's local scan did not pick the files up; the
+`?: foundry.catalog.getModel(result.name)` above is the recommended fallback.
 
 Every long-running operation returns a `Flow<Progress>` or a `Flow<Delta>`.
 Both propagate collector-side cancellation into the core — cancelling the
@@ -81,9 +88,10 @@ The SDK supports two ways of supplying a model in addition to the catalog. See
 // subsequent calls are no-ops until the assets change.
 val modelDir = BundledAssets.extractToFilesDir(context, "models/phi-4-mini", "phi-4-mini")
 
-val model = foundry.addModelSource(
+val result = foundry.addModelSource(
     ModelSource.Bundled(name = "phi-4-mini", path = modelDir.absolutePath),
 )
+val model = result.model ?: foundry.catalog.getModel(result.name)
 ```
 
 Make sure large model files are left uncompressed inside the APK, or
@@ -105,7 +113,7 @@ filesystem path — so the SDK ships `BundledAssets` to copy them to
 ### Downloaded from storage you control
 
 ```kotlin
-val model = foundry.addModelSource(
+val result = foundry.addModelSource(
     ModelSource.Remote(
         name = "phi-4-mini",
         url = "https://models.example.com/phi-4-mini/manifest.json",
@@ -119,6 +127,7 @@ val model = foundry.addModelSource(
 ) { progress ->
     println("Downloading ${progress.stage}: ${progress.percent}%")
 }
+val model = result.model ?: foundry.catalog.getModel(result.name)
 ```
 
 The SDK sniffs the document, so both an ONNX Runtime **model package**
@@ -135,7 +144,7 @@ before any bytes transfer, so a phone never pays for a QNN build it has no
 NPU for:
 
 ```kotlin
-val model = foundry.addModelSource(
+val result = foundry.addModelSource(
     ModelSource.Remote(
         name = "qwen2.5-0.5b",
         url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
@@ -145,6 +154,7 @@ val model = foundry.addModelSource(
         ),
     ),
 ) { progress -> println("${progress.percent}%") }
+val model = result.model ?: foundry.catalog.getModel(result.name)
 
 // What was actually chosen, and what else the package offered.
 val pkg = model.asPackage()
