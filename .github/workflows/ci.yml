@@ -610,6 +610,86 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # Linux type-check of the Swift binding's Foundation subset. Runs against
+  # the real C ABI headers under core/include via a hand-written module map.
+  # No Mac needed, no XCFramework, no simulator.
+  #
+  # What this catches: Codable / Sendable / @convention(c) mismatches; missing
+  # imports; the same class of latent bug that showed up the first time this
+  # code was ever fed to a compiler (a `while let` on a flattened `Data?`, an
+  # enum used as an Encodable field without conforming to Codable, a whole
+  # file that referenced C symbols with no `import FoundryLocalMobile`).
+  #
+  # What this cannot catch: anything UIKit- or Network-framework-dependent.
+  # `LifecycleObserver.swift` and one stored property of `FoundryLocal` sit
+  # behind `#if canImport(Network)` and only get compiled by the macOS job.
+  # ---------------------------------------------------------------------------
+  ios-binding-linux:
+    name: bindings / ios linux type-check
+    runs-on: ubuntu-latest
+    env:
+      SWIFT_VERSION: 5.10.1
+      SWIFT_PLATFORM: ubuntu22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift toolchain
+        id: cache-swift
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/swift-sdk
+          key: swift-sdk-${{ env.SWIFT_VERSION }}-${{ env.SWIFT_PLATFORM }}
+
+      - name: Install Swift toolchain
+        # Direct tarball fetch from swift.org. The workflow policy is no
+        # third-party marketplace actions, so swift-actions/setup-swift is
+        # not an option; matching the flutter-example approach keeps every
+        # toolchain acquisition on this repo consistent.
+        if: steps.cache-swift.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/swift-sdk"
+          cd "${RUNNER_TEMP}/swift-sdk"
+          curl -fsSL -o swift.tar.gz \
+            "https://download.swift.org/swift-${SWIFT_VERSION}-release/${SWIFT_PLATFORM}/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-${SWIFT_PLATFORM}.tar.gz"
+          tar -xzf swift.tar.gz --strip-components=1
+          rm swift.tar.gz
+
+      - name: Put Swift on PATH and verify it runs
+        run: |
+          set -euo pipefail
+          echo "${RUNNER_TEMP}/swift-sdk/usr/bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/swift-sdk/usr/bin/swift" --version
+
+      - name: Type-check the Swift binding under strict concurrency
+        # `-strict-concurrency=complete` promotes every Swift 6 concurrency
+        # warning to today's compiler output. That is what surfaced the
+        # JSONDecoder-Sendability and four-static-NSLock findings the first
+        # time this check ran on the binding.
+        #
+        # The module map is written in RUNNER_TEMP so nothing lands under
+        # the working tree; it points at core/include with an absolute
+        # path (the same pattern used to develop the first pass locally).
+        run: |
+          set -euo pipefail
+          modmap="${RUNNER_TEMP}/foundry-local-mobile.modulemap"
+          headers="$(pwd)/core/include/foundry_local_mobile"
+          cat > "${modmap}" <<MMAP
+          module FoundryLocalMobile [system] {
+              header "${headers}/flm_api.h"
+              export *
+          }
+          MMAP
+          mapfile -t sources < <(find bindings/ios/Sources/FoundryLocal -name '*.swift' -print | sort)
+          printf 'checking %d source files:\n' "${#sources[@]}"
+          printf '  %s\n' "${sources[@]}"
+          swiftc -typecheck -parse-as-library -module-name FoundryLocal \
+            -strict-concurrency=complete \
+            -Xcc -I"${headers}" \
+            -Xcc -fmodule-map-file="${modmap}" \
+            "${sources[@]}"
+
+  # ---------------------------------------------------------------------------
   # Apple cross-build. macOS runners are slower and more expensive, so this
   # runs on push to main and on PRs that touch code affecting the Apple build.
   # ---------------------------------------------------------------------------

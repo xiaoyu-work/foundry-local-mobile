@@ -4,8 +4,6 @@
 import Foundation
 import FoundryLocalMobile
 
-#if canImport(Network)
-
 /// Root object of the Swift SDK. Wraps a single `flm_manager` handle.
 ///
 /// Owns:
@@ -24,7 +22,13 @@ public final class FoundryLocal: @unchecked Sendable {
     public let catalog: Catalog
 
     private let released = ManagedAtomicBool()
+    // The lifecycle observer wraps NWPathMonitor, which comes from the Network
+    // framework and only exists on Apple platforms. The guard is confined to this
+    // stored property and its two use sites so the rest of the class stays checkable
+    // by the Linux CI job.
+    #if canImport(Network)
     private let lifecycle: LifecycleObserver
+    #endif
     private let ownedTransport: URLSessionBackgroundTransport?
 
     // MARK: - Construction
@@ -71,7 +75,9 @@ public final class FoundryLocal: @unchecked Sendable {
         }
         self.handle = handle
         self.catalog = Catalog(handle: catalogHandle)
+        #if canImport(Network)
         self.lifecycle = LifecycleObserver(manager: handle)
+        #endif
         self.ownedTransport = transport
         if let transport {
             TransportRegistry.install(transport)
@@ -89,7 +95,9 @@ public final class FoundryLocal: @unchecked Sendable {
     /// the main queue when a large model is loaded.
     public func close() {
         if released.exchange(true) { return }
+        #if canImport(Network)
         lifecycle.stop()
+        #endif
         _ = flm_manager_shutdown(handle)
         _ = flm_manager_release(handle)
         // Do not call TransportRegistry.install(nil) here: the app may keep using
@@ -249,8 +257,6 @@ public final class FoundryLocal: @unchecked Sendable {
         return "\(bundle).foundrylocal.\(appName).downloads"
     }
 }
-
-#endif // canImport(Network)
 
 // MARK: - Lifecycle event mirror
 
