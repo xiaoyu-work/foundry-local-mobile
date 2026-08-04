@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT License. -->
+<resources>
+    <!--
+        Compose renders its own MaterialTheme, so all we need from the Android
+        theme is a bare, action-bar-less container. Inheriting from the
+        platform DeviceDefault theme avoids pulling in AppCompat or the
+        Material XML themes package.
+    -->
+    <style name="Theme.Sample" parent="android:Theme.DeviceDefault.NoActionBar" />
+</resources>
