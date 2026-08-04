@@ -200,11 +200,70 @@ jobs:
       - name: Build
         run: ./scripts/build_android.sh --abi ${{ matrix.abi }} --build-type Release
 
+      - name: Verify the Android artifact
+        # Three invariants land on every ABI, and each has a specific way it
+        # silently regresses:
+        #
+        #   1. Machine type matches the requested ABI. Guards against a
+        #      confused sysroot picking up the host toolchain by accident.
+        #   2. Every dynamic symbol on the .so is flm_*, and the count matches
+        #      the number of FLM_EXPORT declarations in the header. Same check
+        #      the Linux job runs — the version script (core/flm.map) can be
+        #      accepted by GCC's ld but ignored or partially applied by lld;
+        #      running it against the NDK-produced artifact catches that.
+        #   3. libc++_shared.so is present next to libfoundry_local_mobile.so
+        #      in the jniLibs output, because the .so lists it as NEEDED and
+        #      an AAR that ships the core without it crashes at first load.
+        #
+        # The 16 KB LOAD-segment alignment invariant (a shipping requirement
+        # on Android 15+ / 64-bit) is asserted by build_android.sh itself,
+        # inside build_one_abi, so it fails the build step above rather than
+        # the verify step.
+        run: |
+          set -euo pipefail
+          abi="${{ matrix.abi }}"
+          so="build/android/jniLibs/${abi}/libfoundry_local_mobile.so"
+          nm="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          readelf="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+
+          case "${abi}" in
+              arm64-v8a)   want_machine="AArch64" ;;
+              armeabi-v7a) want_machine="ARM" ;;
+              x86_64)      want_machine="Advanced Micro Devices X86-64" ;;
+              *)           echo "::error::unknown abi ${abi}"; exit 1 ;;
+          esac
+          got_machine=$("${readelf}" -h "${so}" | awk -F: '/Machine:/ { sub(/^ */, "", $2); print $2 }')
+          if [ "${got_machine}" != "${want_machine}" ]; then
+              echo "::error::${so} reports Machine='${got_machine}', expected '${want_machine}'"
+              exit 1
+          fi
+
+          expected=$(grep -c '^FLM_EXPORT' core/include/foundry_local_mobile/flm_api.h)
+          actual=$("${nm}" -D --defined-only "${so}" | awk '$NF ~ /^flm_/' | wc -l)
+          leaks=$("${nm}" -D --defined-only "${so}" | awk '{print $NF}' | grep -Ev '^flm_' || true)
+          echo "FLM_EXPORT declarations: ${expected}; flm_* symbols in ${abi}: ${actual}"
+          if [ -n "${leaks}" ]; then
+              echo "::error::${so} exports non-ABI symbols:"
+              printf '  %s\n' ${leaks}
+              echo "lld may be ignoring core/flm.map; check that -Wl,--version-script took effect."
+              exit 1
+          fi
+          if [ "${expected}" != "${actual}" ]; then
+              echo "::error::Exported flm_* count (${actual}) does not match header (${expected})."
+              exit 1
+          fi
+
+          stl="build/android/jniLibs/${abi}/libc++_shared.so"
+          if [ ! -f "${stl}" ]; then
+              echo "::error::${stl} is missing; the AAR would crash at first load"
+              exit 1
+          fi
+
       - name: Upload native library
         uses: actions/upload-artifact@v4
         with:
           name: android-${{ matrix.abi }}
-          path: build/android/jniLibs/${{ matrix.abi }}/libfoundry_local_mobile.so
+          path: build/android/jniLibs/${{ matrix.abi }}/
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
