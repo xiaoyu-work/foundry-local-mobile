@@ -143,6 +143,71 @@ is_release_type() {
     esac
 }
 
+# Map an Android ABI to its NDK sysroot triple. This is where the STL and the
+# various support libraries live inside the NDK.
+ndk_triple_for_abi() {
+    case "$1" in
+        arm64-v8a)   echo aarch64-linux-android ;;
+        armeabi-v7a) echo arm-linux-androideabi ;;
+        x86)         echo i686-linux-android ;;
+        x86_64)      echo x86_64-linux-android ;;
+        *)           echo "" ;;
+    esac
+}
+
+# Locate an ABI-specific NDK library, printing its absolute path on stdout or
+# an empty string if it is not present. Silent — the caller decides how loudly
+# a missing file is a problem.
+ndk_lib_for_abi() {
+    local abi="$1" name="$2"
+    local triple
+    triple="$(ndk_triple_for_abi "${abi}")"
+    [[ -z "${triple}" ]] && return 0
+    local candidate
+    for candidate in \
+            "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/sysroot/usr/lib/"${triple}"/"${name}"; do
+        if [[ -f "${candidate}" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+}
+
+# Assert the loadable segments of a 64-bit AAR-bound library are 16 KB aligned.
+# Android 15+ on 64-bit devices refuses to map a shared object with 4 KB LOAD
+# segments, so this catches a silent regression of `-Wl,-z,max-page-size=16384`
+# — a linker flag that the linker itself will never complain about if it is
+# dropped or misspelled. armeabi-v7a is 32-bit and exempt.
+assert_16k_aligned_load_segments() {
+    local abi="$1" so="$2"
+    case "${abi}" in
+        arm64-v8a|x86_64) ;;
+        *) return 0 ;;
+    esac
+    local readelf=""
+    for candidate in "${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf; do
+        if [[ -x "${candidate}" ]]; then readelf="${candidate}"; break; fi
+    done
+    if [[ -z "${readelf}" ]] && command -v llvm-readelf >/dev/null 2>&1; then
+        readelf=llvm-readelf
+    elif [[ -z "${readelf}" ]] && command -v readelf >/dev/null 2>&1; then
+        readelf=readelf
+    fi
+    if [[ -z "${readelf}" ]]; then
+        warn "no readelf on PATH; skipping 16 KB alignment check on ${so}"
+        return 0
+    fi
+    local aligns
+    aligns=$("${readelf}" -lW "${so}" | awk '$1 == "LOAD" { print $NF }')
+    [[ -z "${aligns}" ]] && die "no LOAD segments found in ${so}; the artifact is malformed"
+    local align
+    for align in ${aligns}; do
+        if [[ "${align}" != "0x4000" ]]; then
+            die "${so} has LOAD segment with Align=${align}, expected 0x4000 (16 KB). Android 15+ 64-bit devices will refuse to load it. Check -Wl,-z,max-page-size=16384."
+        fi
+    done
+}
+
 build_one_abi() {
     local abi="$1"
     local build_dir="${OUTPUT_DIR}/cmake/${abi}"
@@ -184,6 +249,29 @@ build_one_abi() {
     if [[ -n "${STRIP_BIN}" ]] && is_release_type "${BUILD_TYPE}"; then
         "${STRIP_BIN}" --strip-unneeded "${lib_dst_dir}/libfoundry_local_mobile.so"
     fi
+
+    # Ship the STL alongside the library. libfoundry_local_mobile.so links
+    # dynamically against libc++_shared.so (see readelf -d), so any consumer
+    # AAR must include it in the same jniLibs/<abi>/ directory or the app
+    # crashes with `dlopen failed: cannot locate libc++_shared.so`. The
+    # Gradle native integration copies it automatically when it drives the
+    # build; this script does not go through Gradle, so it does the copy
+    # itself and keeps the output tree self-contained.
+    if [[ "${STL}" == "c++_shared" ]]; then
+        local stl_src
+        stl_src="$(ndk_lib_for_abi "${abi}" libc++_shared.so)"
+        if [[ -n "${stl_src}" ]]; then
+            cp "${stl_src}" "${lib_dst_dir}/libc++_shared.so"
+            if [[ -n "${STRIP_BIN}" ]] && is_release_type "${BUILD_TYPE}"; then
+                "${STRIP_BIN}" --strip-unneeded "${lib_dst_dir}/libc++_shared.so"
+            fi
+            log "wrote ${lib_dst_dir}/libc++_shared.so"
+        else
+            warn "libc++_shared.so not found in the NDK for ${abi}; consumers must supply it"
+        fi
+    fi
+
+    assert_16k_aligned_load_segments "${abi}" "${lib_dst_dir}/libfoundry_local_mobile.so"
 
     log "wrote ${lib_dst_dir}/libfoundry_local_mobile.so"
 }

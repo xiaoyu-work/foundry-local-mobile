@@ -17,7 +17,7 @@ If you only want to try the SDK from an app, use the published binary packages i
 | CMake | 3.22 | The core sets `cmake_minimum_required(3.22)`. |
 | A C++20 compiler | GCC 13 / Clang 15 / MSVC 19.36 | The core is C++20 and uses `<filesystem>`. |
 | Git | any recent version | The fetch step clones the upstream SDK. |
-| Android NDK | r26+ | Required only for the Android cross-build. `ANDROID_NDK_HOME` must point at it. |
+| Android NDK | r26+ (verified r27c) | Required only for the Android cross-build. `ANDROID_NDK_HOME` must point at it. |
 | Xcode | 15.0+ | Required only for the Apple cross-build. Full Xcode, not just the command-line tools. |
 | Ninja *(optional)* | any | Detected automatically; the build falls back to Unix Makefiles / Xcode. |
 | Dart / Flutter *(optional)* | Flutter 3.19+ (Dart 3.3+) | Only needed to build the Flutter binding. |
@@ -89,14 +89,40 @@ Layout:
 ```
 build/android/
 └── jniLibs/
-    ├── arm64-v8a/libfoundry_local_mobile.so
-    ├── armeabi-v7a/libfoundry_local_mobile.so
-    └── x86_64/libfoundry_local_mobile.so
+    ├── arm64-v8a/
+    │   ├── libc++_shared.so
+    │   └── libfoundry_local_mobile.so
+    ├── armeabi-v7a/
+    │   ├── libc++_shared.so
+    │   └── libfoundry_local_mobile.so
+    └── x86_64/
+        ├── libc++_shared.so
+        └── libfoundry_local_mobile.so
 ```
 
-which is exactly what an Android Gradle module consumes from `jniLibs.srcDirs`. Release
-binaries are stripped with the NDK's `llvm-strip` after copying, so the shipped `.so`s
-carry no debug symbols; pass `--no-strip` to keep them for local `addr2line`.
+which is exactly what an Android Gradle module consumes from `jniLibs.srcDirs`.
+`libc++_shared.so` is copied from the NDK because `libfoundry_local_mobile.so` links
+against it dynamically (see `readelf -d`); an AAR that ships the core `.so` without
+its STL crashes at first load with `dlopen failed: cannot locate libc++_shared.so`.
+If your Gradle module already provides `libc++_shared.so` from another native
+dependency, the duplicate is harmless — Gradle keeps one — but versions must match,
+so prefer the copy staged here.
+
+Release binaries are stripped with the NDK's `llvm-strip` after copying, so the
+shipped `.so`s carry no debug symbols; pass `--no-strip` to keep them for local
+`addr2line`.
+
+The 64-bit ABIs are linked with `-Wl,-z,max-page-size=16384`, which produces LOAD
+segments aligned to 16 KB. Android 15+ on 64-bit devices refuses to map a library
+whose LOAD segments are only 4 KB aligned, so this is a shipping requirement, not a
+recommendation. `scripts/build_android.sh` asserts the alignment on the artifact
+itself after each build and refuses to complete if it regresses. To check by hand
+after any manual rebuild:
+
+```bash
+llvm-readelf -lW build/android/jniLibs/arm64-v8a/libfoundry_local_mobile.so \
+  | awk '$1 == "LOAD" { print $NF }'   # expect 0x4000 on every row
+```
 
 `ANDROID_PLATFORM` defaults to `android-26`, matching the SDK's `minSdk 26`. Override
 with `--platform 28` if you need a newer sysroot for a specific test.
@@ -199,10 +225,23 @@ you are calling `xcodebuild -create-xcframework` yourself, do the same lipo step
 Almost always a stale build tree after switching architectures. `./scripts/build.sh
 clean` (or delete `build/`) and retry.
 
-**16 KB page-alignment warning at load time on Android 15.**
-The core's CMake already passes `-Wl,-z,max-page-size=16384` on Android, so this is
-only reported for binding-level libraries that forget the flag. If you write your own
-JNI library, add the same link option.
+**16 KB page-alignment failure on Android 15.**
+`libfoundry_local_mobile.so` for `arm64-v8a` and `x86_64` must have its LOAD
+segments aligned to 16 KB (0x4000), otherwise Android 15+ refuses to `dlopen`
+it on 64-bit devices. `scripts/build_android.sh` checks this and fails the
+build if it regresses; the flag delivering it is
+`-Wl,-z,max-page-size=16384`, set in `core/CMakeLists.txt` under `if(ANDROID)`.
+If your own JNI library links to the core, apply the same link option or its
+LOAD segments will fall back to 4 KB and the whole app fails to start on
+Android 15+.
+
+**`dlopen failed: cannot locate library "libc++_shared.so"`**
+The core's `.so` is built against `c++_shared` and lists `libc++_shared.so` in
+its dynamic NEEDED entries. If you inject the core into an AAR yourself
+(rather than using the produced `jniLibs/`), you must ship `libc++_shared.so`
+alongside it in the same ABI directory. `scripts/build_android.sh` does this
+copy automatically; anywhere else, copy it from
+`<ndk>/toolchains/llvm/prebuilt/<host>/sysroot/usr/lib/<triple>/libc++_shared.so`.
 
 **Flutter/RN builds fail with `libfoundry_local_mobile.so not found`.**
 The binding-level Gradle/Xcode integration expects the cross-build to have already run.
