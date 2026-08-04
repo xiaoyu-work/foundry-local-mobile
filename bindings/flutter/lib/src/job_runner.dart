@@ -10,6 +10,7 @@ import 'package:ffi/ffi.dart';
 import 'bindings/bindings.dart' as raw;
 import 'bindings/dart_bridge.dart';
 import 'bindings/native_library.dart';
+import 'cancel_token.dart';
 import 'error_capture.dart';
 import 'models/delta.dart';
 import 'models/errors.dart';
@@ -332,6 +333,13 @@ class JobRunner {
 /// completion Future; progress events (if requested) are emitted on [onProgress].
 ///
 /// The Future may complete with a [FoundryLocalException].
+///
+/// Pass [cancelToken] to make the call cancellable from outside — once the
+/// token fires the runner calls `flm_job_cancel` on the freshly-started job
+/// and the Future then resolves with a [CancelledException]. The wiring is
+/// safe to arm before or after the job has started: if the token was already
+/// cancelled by the time the caller reaches `await`, cancel fires as soon as
+/// the job handle is known.
 Future<Map<String, Object?>> runProgressJob({
   required int Function(
     Pointer<NativeFunction<Int32 Function(Uint64, Pointer<raw.flm_progress>, Pointer<Void>)>> onProgress,
@@ -340,12 +348,14 @@ Future<Map<String, Object?>> runProgressJob({
     Pointer<Uint64> outJob,
   ) abiCall,
   Sink<Progress>? onProgress,
+  CancelToken? cancelToken,
 }) async {
   final runner = JobRunner._(
     streamProgress: onProgress != null,
     streamDeltas: false,
   );
   StreamSubscription<Progress>? sub;
+  StreamSubscription<void>? cancelSub;
   if (onProgress != null) {
     sub = runner.progressStream.listen(onProgress.add, onError: (_) {});
   }
@@ -358,9 +368,14 @@ Future<Map<String, Object?>> runProgressJob({
       required outJob,
     }) =>
         abiCall(onProgress, onComplete, userData, outJob));
+    if (cancelToken != null) {
+      cancelSub =
+          cancelToken.whenCancelled.asStream().listen((_) => runner._cancelJob());
+    }
     return await runner.result;
   } finally {
     await sub?.cancel();
+    await cancelSub?.cancel();
   }
 }
 
@@ -397,15 +412,18 @@ JobHandles<Progress> runProgressStreamJob(
 }
 
 /// Run an async ABI call with only a completion callback (no progress, no
-/// deltas).
+/// deltas). Pass [cancelToken] to make the call cancellable — see
+/// [runProgressJob] for the semantics.
 Future<Map<String, Object?>> runSimpleJob(
   int Function(
     Pointer<NativeFunction<raw.flm_completion_callback_native>> onComplete,
     Pointer<Void> userData,
     Pointer<Uint64> outJob,
-  ) abiCall,
-) {
+  ) abiCall, {
+  CancelToken? cancelToken,
+}) async {
   final runner = JobRunner._(streamProgress: false, streamDeltas: false);
+  StreamSubscription<void>? cancelSub;
   runner.start(({
     required onProgress,
     required onDelta,
@@ -414,7 +432,15 @@ Future<Map<String, Object?>> runSimpleJob(
     required outJob,
   }) =>
       abiCall(onComplete, userData, outJob));
-  return runner.result;
+  if (cancelToken != null) {
+    cancelSub =
+        cancelToken.whenCancelled.asStream().listen((_) => runner._cancelJob());
+  }
+  try {
+    return await runner.result;
+  } finally {
+    await cancelSub?.cancel();
+  }
 }
 
 /// Run an async ABI call that streams deltas.
