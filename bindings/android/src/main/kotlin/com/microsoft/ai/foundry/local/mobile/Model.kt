@@ -22,9 +22,49 @@ public open class Model internal constructor(
 
     private val closed = AtomicBoolean(false)
 
-    /** Full metadata for the model, freshly loaded from the ABI. */
+    @Volatile
+    private var cachedInfo: ModelInfo? = null
+
+    /**
+     * Full metadata for the model.
+     *
+     * Cached after the first read: repeated access returns the same snapshot
+     * without another native round-trip and JSON decode, so treating this as
+     * a cheap property is safe. Fields that reflect mutable runtime state
+     * ([ModelInfo.isLoaded], [ModelInfo.isCached]) are pinned to the moment
+     * the snapshot was taken — use the dedicated [isLoaded] / [isCached]
+     * properties for a live read, or call [refresh] to invalidate the
+     * snapshot.
+     *
+     * The cache is invalidated automatically after [load], [unload] and
+     * [delete]. Explicit [refresh] is only needed when an out-of-band change
+     * — a manual filesystem edit, another process — has made the cache
+     * stale.
+     */
     public val info: ModelInfo
-        get() = JsonCodec.decode(ModelInfo.serializer(), NativeBridge.modelGetInfoJson(requireHandle()))
+        get() {
+            requireHandle()
+            return cachedInfo ?: synchronized(this) {
+                cachedInfo ?: JsonCodec.decode(
+                    ModelInfo.serializer(),
+                    NativeBridge.modelGetInfoJson(requireHandle()),
+                ).also { cachedInfo = it }
+            }
+        }
+
+    /**
+     * Drop cached ABI reads and force a re-decode on the next access. On
+     * [Model] this clears [info]; [ModelPackage] overrides it to also clear
+     * [ModelPackage.variants].
+     *
+     * Called automatically after [load], [unload], [delete],
+     * [ModelPackage.selectVariant] and [ModelPackage.selectBestVariant]; an
+     * explicit call is only useful when something outside the SDK's control
+     * has invalidated the cache.
+     */
+    public open fun refresh() {
+        cachedInfo = null
+    }
 
     /** Whether the model's files are fully present in the local cache. */
     public val isCached: Boolean get() = NativeBridge.modelIsCached(requireHandle())
@@ -56,6 +96,7 @@ public open class Model internal constructor(
         JobBridge.awaitResult(onProgress = onProgress) { corr ->
             NativeBridge.modelLoadAsync(requireHandle(), opts, corr)
         }
+        refresh()
     }
 
     /** Unload the model, releasing its memory. Active sessions are stopped first. */
@@ -63,6 +104,7 @@ public open class Model internal constructor(
         JobBridge.awaitResult { corr ->
             NativeBridge.modelUnloadAsync(requireHandle(), corr)
         }
+        refresh()
     }
 
     /** Delete the model's files from the local cache. Unloads first if loaded. */
@@ -70,20 +112,34 @@ public open class Model internal constructor(
         JobBridge.awaitResult { corr ->
             NativeBridge.modelDeleteAsync(requireHandle(), corr)
         }
+        refresh()
     }
 
     /** Cast to [ModelPackage] if this is a package handle; returns `null` otherwise. */
     public fun asPackage(): ModelPackage? = if (isPackage) ModelPackage(requireHandle()) else null
 
-    /** Create a chat session bound to this loaded model. */
+    /**
+     * Create a chat session bound to this loaded model. The caller owns the
+     * result and must [ChatSession.close] it — either explicitly, via
+     * `use { }`, or via the scoped helper [withChatSession], which is the
+     * shortest leak-free spelling for the one-shot case.
+     */
     public fun createChatSession(options: ChatOptions = ChatOptions()): ChatSession =
         ChatSession(this, options)
 
-    /** Create a speech-to-text session bound to this loaded model. */
+    /**
+     * Create a speech-to-text session bound to this loaded model. See
+     * [createChatSession] for lifetime management notes; the scoped
+     * one-shot helper is [withAudioSession].
+     */
     public fun createAudioSession(options: AudioOptions = AudioOptions()): AudioSession =
         AudioSession(this, options)
 
-    /** Create an embedding session bound to this loaded model. */
+    /**
+     * Create an embedding session bound to this loaded model. See
+     * [createChatSession] for lifetime management notes; the scoped
+     * one-shot helper is [withEmbeddingSession].
+     */
     public fun createEmbeddingSession(options: EmbeddingOptions = EmbeddingOptions()): EmbeddingSession =
         EmbeddingSession(this, options)
 
@@ -127,17 +183,35 @@ public open class Model internal constructor(
  */
 public class ModelPackage internal constructor(handle: Long) : Model(handle) {
 
+    @Volatile
+    private var cachedVariants: PackageVariants? = null
+
     /**
      * Snapshot of the package's variants, scored against this device.
+     *
+     * Cached after the first read to avoid a JSON decode on every access.
+     * The cache is invalidated automatically by [selectVariant] and
+     * [selectBestVariant] because those change [PackageVariants.selectedVariantId];
+     * call [refresh] for an unconditional re-read.
      *
      * `downloadSizeBytes` reflects the current cache state — shared assets
      * already on disk are excluded, so the value shrinks as the cache fills.
      */
     public val variants: PackageVariants
-        get() = JsonCodec.decode(
-            PackageVariants.serializer(),
-            NativeBridge.packageGetVariantsJson(requireHandle()),
-        )
+        get() {
+            requireHandle()
+            return cachedVariants ?: synchronized(this) {
+                cachedVariants ?: JsonCodec.decode(
+                    PackageVariants.serializer(),
+                    NativeBridge.packageGetVariantsJson(requireHandle()),
+                ).also { cachedVariants = it }
+            }
+        }
+
+    override fun refresh() {
+        super.refresh()
+        cachedVariants = null
+    }
 
     /**
      * Pin the package to a specific variant. Subsequent load calls on this
@@ -145,6 +219,7 @@ public class ModelPackage internal constructor(handle: Long) : Model(handle) {
      */
     public fun selectVariant(variantId: String) {
         NativeBridge.packageSelectVariant(requireHandle(), variantId)
+        refresh()
     }
 
     /**
@@ -157,10 +232,12 @@ public class ModelPackage internal constructor(handle: Long) : Model(handle) {
      * to override that decision at runtime.
      */
     public fun selectBestVariant(constraints: VariantConstraints? = null): String {
-        return NativeBridge.packageSelectBestVariant(
+        val id = NativeBridge.packageSelectBestVariant(
             requireHandle(),
             JsonCodec.encodeVariantConstraints(constraints),
         )
+        refresh()
+        return id
     }
 
     /**
