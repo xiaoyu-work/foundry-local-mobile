@@ -224,7 +224,7 @@ final class ProgressStreamContext: @unchecked Sendable, ProgressForwarding, Comp
 private let _flm_progress_stream_bridge: flm_progress_callback = { _, progressPtr, userData in
     guard let userData, let progressPtr else { return 0 }
     let context = Unmanaged<AnyObject>.fromOpaque(userData).takeUnretainedValue()
-    if let carrier = context as? ProgressForwarding {
+    if let carrier = context as? any ProgressForwarding {
         carrier.forwardProgress(DownloadProgress(cValue: progressPtr.pointee))
     }
     return 0
@@ -233,7 +233,7 @@ private let _flm_progress_stream_bridge: flm_progress_callback = { _, progressPt
 private let _flm_progress_stream_completion_bridge: flm_completion_callback = { job, status, errorJSON, userData in
     guard let userData else { return }
     let context = Unmanaged<AnyObject>.fromOpaque(userData).takeRetainedValue()
-    if let carrier = context as? CompletionCarrier {
+    if let carrier = context as? any CompletionCarrier {
         carrier.deliverCompletion(job: job, status: status, errorJSON: errorJSON)
     }
     _ = flm_job_release(job)

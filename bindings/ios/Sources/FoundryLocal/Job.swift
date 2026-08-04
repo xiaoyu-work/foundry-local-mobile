@@ -132,7 +132,7 @@ private let _flm_swift_progress_bridge: flm_progress_callback = { _, progressPtr
 
     // The context is one of the AsyncCallContext<T> generics. We keep the progress
     // forward abstract via a small protocol conformance to avoid a generic dance.
-    if let carrier = context as? ProgressForwarding {
+    if let carrier = context as? any ProgressForwarding {
         carrier.forwardProgress(progress)
     }
     return 0
@@ -221,7 +221,7 @@ private let _flm_swift_completion_bridge_generic: flm_completion_callback = { jo
     // We can only downcast to a concrete generic type here by falling back to the
     // erased `CompletionCarrier` protocol. Every AsyncCallContext conforms.
     let context = Unmanaged<AnyObject>.fromOpaque(userData).takeRetainedValue()
-    guard let carrier = context as? CompletionCarrier else {
+    guard let carrier = context as? any CompletionCarrier else {
         _ = flm_job_release(job)
         return
     }
@@ -311,7 +311,7 @@ extension StreamCallContext: DeltaCarrier {
 private let _flm_swift_delta_bridge: flm_delta_callback = { _, deltaPtr, userData in
     guard let userData, let deltaPtr else { return 0 }
     let context = Unmanaged<AnyObject>.fromOpaque(userData).takeUnretainedValue()
-    if let carrier = context as? DeltaCarrier {
+    if let carrier = context as? any DeltaCarrier {
         carrier.forwardDelta(deltaPtr)
     }
     return 0
@@ -322,7 +322,7 @@ private let _flm_swift_delta_bridge: flm_delta_callback = { _, deltaPtr, userDat
 private let _flm_swift_stream_completion_bridge: flm_completion_callback = { job, status, errorJSON, userData in
     guard let userData else { return }
     let context = Unmanaged<AnyObject>.fromOpaque(userData).takeRetainedValue()
-    if let carrier = context as? DeltaCarrier {
+    if let carrier = context as? any DeltaCarrier {
         carrier.finishStream(status: status, job: job, errorJSON: errorJSON)
     }
     _ = flm_job_release(job)
