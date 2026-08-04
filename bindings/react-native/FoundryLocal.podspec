@@ -10,8 +10,43 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.author       = "Microsoft Corporation"
   s.source       = { :git => "https://github.com/microsoft/foundry-local-mobile.git", :tag => "v#{s.version}" }
-  s.platforms    = { :ios => "14.0" }
-  s.source_files = "ios/**/*.{h,m,mm,swift}"
+
+  # Matches the Swift binding's minimum (see bindings/ios/Package.swift). The
+  # binding uses `AsyncThrowingStream` and `withTaskCancellationHandler`,
+  # both iOS 15+.
+  s.platforms    = { :ios => "15.0" }
+  s.swift_versions = ["5.9"]
+
+  # Two source trees are compiled into this single pod module:
+  #
+  #   1. `ios/**` — the React Native wrapper we own (this file's directory).
+  #   2. `../ios/Sources/FoundryLocal/**` — the Swift binding at
+  #      `bindings/ios/Sources/FoundryLocal/`. We vendor its sources rather
+  #      than depending on a separately published CocoaPod because none
+  #      exists today; the binding is distributed as a Swift Package for
+  #      direct iOS apps. When a `FoundryLocalKit.podspec` ships in
+  #      `bindings/ios/` we can switch to a `s.dependency` and drop the
+  #      vendored path.
+  s.source_files = [
+    "ios/**/*.{h,m,mm,swift}",
+    "../ios/Sources/FoundryLocal/**/*.swift",
+  ]
+
+  # The native core (flat C ABI + ONNX Runtime) is delivered as an
+  # XCFramework. Consumers must build it once with
+  # `scripts/build_apple.sh` and copy or symlink the result into
+  # `bindings/ios/Frameworks/`. Same expectation as the standalone Swift
+  # Package — see `bindings/ios/Frameworks/README.md`.
+  s.vendored_frameworks = "../ios/Frameworks/FoundryLocalMobile.xcframework"
+
+  # Match the Swift binding's compilation environment (`Package.swift`
+  # enables the same upcoming features). Keeps behaviour identical whether a
+  # consumer uses SwiftPM directly or reaches the binding through this pod.
+  s.pod_target_xcconfig = {
+    "DEFINES_MODULE" => "YES",
+    "SWIFT_ACTIVE_COMPILATION_CONDITIONS" => "$(inherited) FOUNDRY_LOCAL_MOBILE_RN",
+    "OTHER_SWIFT_FLAGS" => "$(inherited) -enable-upcoming-feature StrictConcurrency -enable-upcoming-feature ExistentialAny -enable-upcoming-feature InferSendableFromCaptures",
+  }
 
   # New Architecture / TurboModule wiring. `install_modules_dependencies` is
   # the RN 0.73+ helper that adds React-Core, ReactCommon/turbomodule/core
@@ -22,9 +57,4 @@ Pod::Spec.new do |s|
   else
     s.dependency "React-Core"
   end
-
-  # The iOS native implementation is intentionally not yet wired; every
-  # method rejects with a "notImplemented" error at runtime. The Swift
-  # binding this module will wrap is landing in a follow-up PR — see the
-  # package README's "iOS status" section.
 end

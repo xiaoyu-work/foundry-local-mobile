@@ -1,335 +1,496 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 //
-// iOS TurboModule scaffold for @foundry-local/react-native.
+// Objective-C++ shim for the React Native TurboModule. Extends
+// `RCTEventEmitter` so it can push the four `FoundryLocal:*` events onto the
+// JS thread, and forwards every JS-visible operation to `RNFoundryLocalCore`
+// (Swift), which owns the handle registries and calls into the Swift
+// binding.
 //
-// This file is deliberately a scaffold: the iOS native implementation is not
-// yet wired because it wraps the Swift binding at `bindings/ios/`, which is
-// still being written. Every method rejects with a `notImplemented` error at
-// runtime so an app that calls into the module fails fast and loudly, rather
-// than silently no-op'ing and hiding the missing native implementation. Do
-// not "fix" a method by returning `nil` or an empty JSON string — that would
-// obscure the fact that iOS is not yet wired.
+// The split into a thin Obj-C++ facade plus a Swift core keeps the RN
+// method-dispatch surface expressible with the RCT_EXPORT_* macros (which
+// only exist for Obj-C++), while the real work lives in Swift where
+// `async throws` and `AsyncThrowingStream` are idiomatic to consume.
 //
-// When the Swift binding lands the follow-up task is to:
-//   1. Replace the reject-only bodies with calls into `FoundryLocalKit`
-//      (the pod name of the Swift binding).
-//   2. Hook the `NativeEventEmitter` up to a Swift emitter shim so the
-//      four `FoundryLocal:*` events reach JS on the same shape as Android.
-//   3. Delete this comment.
+// Behavioural parity with the Android module (`FoundryLocalModule.kt`) is
+// deliberate — the JS side speaks one shape, and any divergence here would
+// show up as inconsistent behaviour between iOS and Android at runtime.
 
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
+#import <React/RCTLog.h>
 
-@interface RNFoundryLocal : RCTEventEmitter <RCTBridgeModule>
+// Swift-generated header. CocoaPods produces this at pod build time when the
+// pod contains Swift sources; the name matches the pod module name (which
+// this podspec sets to `FoundryLocal`). If a consumer app renames the pod
+// they must update this include.
+#if __has_include(<FoundryLocal/FoundryLocal-Swift.h>)
+#import <FoundryLocal/FoundryLocal-Swift.h>
+#else
+// SwiftPM / raw builds use an unprefixed import.
+#import "FoundryLocal-Swift.h"
+#endif
+
+@interface RNFoundryLocal : RCTEventEmitter <RCTBridgeModule, RNFoundryLocalEmitting>
+@property (nonatomic, strong) RNFoundryLocalCore *core;
 @end
 
 @implementation RNFoundryLocal
 
-RCT_EXPORT_MODULE(RNFoundryLocal);
+RCT_EXPORT_MODULE(RNFoundryLocal)
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _core = [[RNFoundryLocalCore alloc] init];
+        _core.host = self;
+    }
+    return self;
+}
 
 + (BOOL)requiresMainQueueSetup {
-  return NO;
+    return NO;
+}
+
+- (dispatch_queue_t)methodQueue {
+    // Serve promise methods off the main thread; heavy work happens in
+    // Swift's own Task { } contexts. A dedicated serial queue keeps
+    // handle-registry writes in a predictable order.
+    return dispatch_queue_create("com.foundrylocal.reactnative", DISPATCH_QUEUE_SERIAL);
 }
 
 - (NSArray<NSString *> *)supportedEvents {
-  return @[
-    @"FoundryLocal:delta",
-    @"FoundryLocal:progress",
-    @"FoundryLocal:end",
-    @"FoundryLocal:error",
-  ];
+    return @[
+        @"FoundryLocal:delta",
+        @"FoundryLocal:progress",
+        @"FoundryLocal:end",
+        @"FoundryLocal:error",
+    ];
 }
 
-#pragma mark - Reject helpers
-
-// Every reject here uses the same "notImplemented" code the TypeScript layer
-// maps to `FoundryLocalErrorCode.notImplemented`. The message points at the
-// tracking issue so a developer who hits it knows what to do next.
-static NSError *FLMNotImplementedError(void) {
-  return [NSError errorWithDomain:@"FoundryLocalError"
-                             code:6
-                         userInfo:@{
-                           NSLocalizedDescriptionKey:
-                               @"iOS native implementation is not yet wired. "
-                               @"See github.com/microsoft/foundry-local-mobile "
-                               @"tracking issue for status.",
-                           @"status": @6,
-                         }];
+- (void)invalidate {
+    [self.core invalidate];
+    [super invalidate];
 }
 
-static void FLMReject(RCTPromiseRejectBlock reject) {
-  NSError *error = FLMNotImplementedError();
-  reject(@"notImplemented", error.localizedDescription, error);
+- (void)emitEvent:(NSString *)name body:(NSDictionary *)body {
+    // RCTEventEmitter silently drops events emitted before any JS listener
+    // subscribes; the emit(name:, body:) helper on the Swift side is
+    // deliberately fire-and-forget with the same semantics.
+    [self sendEventWithName:name body:body];
 }
 
-#pragma mark - Manager
+// -----------------------------------------------------------------------------
+// Small NSError -> reject helpers
+// -----------------------------------------------------------------------------
 
-RCT_REMAP_METHOD(managerCreate,
-                 managerCreateWithConfig:(NSString *)configJson
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+static NSString *codeForStatus(NSInteger status) {
+    switch (status) {
+        case 2: return @"invalidArgument";
+        case 3: return @"invalidHandle";
+        case 4: return @"invalidState";
+        case 5: return @"notFound";
+        case 6: return @"notImplemented";
+        case 7: return @"cancelled";
+        case 8: return @"network";
+        case 9: return @"storage";
+        case 10: return @"outOfMemory";
+        case 11: return @"incompatible";
+        case 12: return @"timeout";
+        case 13: return @"unsupportedVersion";
+        case 14: return @"memoryPressure";
+        case 15: return @"shutdown";
+        default: return @"internal";
+    }
 }
 
-RCT_REMAP_METHOD(managerShutdown,
-                 managerShutdownWithId:(nonnull NSNumber *)managerId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+// Sync methods that throw a Swift error surface it to JS by raising an
+// NSException. RN's method dispatch translates that into a JS exception,
+// matching the Android side's behaviour where Kotlin throws propagate as
+// JS-side rejections/throws. Silently returning a fallback would let JS
+// consume a wrong-looking success value.
+static void RaiseFromNSError(NSError *error) {
+    if (!error) { return; }
+    NSInteger status = 1;
+    NSString *detail = nil;
+    id statusVal = error.userInfo[@"status"];
+    if ([statusVal isKindOfClass:[NSNumber class]]) { status = [statusVal integerValue]; }
+    id detailVal = error.userInfo[@"detail"];
+    if ([detailVal isKindOfClass:[NSString class]]) { detail = detailVal; }
+    NSDictionary *userInfo = @{
+        @"status": @(status),
+        @"detail": detail ?: [NSNull null],
+    };
+    @throw [NSException exceptionWithName:codeForStatus(status)
+                                   reason:error.localizedDescription ?: @"FoundryLocalError"
+                                 userInfo:userInfo];
+}
+
+// -----------------------------------------------------------------------------
+// Manager
+// -----------------------------------------------------------------------------
+
+RCT_EXPORT_METHOD(managerCreate:(NSString *)configJson
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core managerCreateWithConfigJson:configJson resolve:resolve reject:reject];
+}
+
+RCT_EXPORT_METHOD(managerShutdown:(nonnull NSNumber *)managerId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core managerShutdownWithManagerId:managerId resolve:resolve reject:reject];
 }
 
 RCT_EXPORT_METHOD(managerRelease:(nonnull NSNumber *)managerId) {
-  // Intentionally silent: releasing an unwired handle is a no-op that must
-  // not throw on the app-shutdown path.
+    [self.core managerReleaseWithManagerId:managerId];
 }
 
 RCT_EXPORT_METHOD(managerUpdateSettings:(nonnull NSNumber *)managerId
                   configJson:(NSString *)configJson) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    [self.core managerUpdateSettingsWithManagerId:managerId configJson:configJson error:&error];
+    if (error) { RCTLogError(@"managerUpdateSettings failed: %@", error); }
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerGetDeviceProfile:(nonnull NSNumber *)managerId) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    NSString *json = [self.core managerGetDeviceProfileWithManagerId:managerId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return json;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerGetCatalog:(nonnull NSNumber *)managerId) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    NSNumber *value = [self.core managerGetCatalogWithManagerId:managerId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerVersion:(nonnull NSNumber *)managerId) {
-  return @"";
+    NSError *error = nil;
+    NSString *value = [self.core managerVersionWithManagerId:managerId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerRuntimeVersion:(nonnull NSNumber *)managerId) {
-  return @"";
+    NSError *error = nil;
+    NSString *value = [self.core managerRuntimeVersionWithManagerId:managerId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerIsRuntimeAvailable:(nonnull NSNumber *)managerId) {
-  return @NO;
+    NSError *error = nil;
+    NSNumber *value = [self.core managerIsRuntimeAvailableWithManagerId:managerId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-RCT_EXPORT_METHOD(managerSetLogLevel:(nonnull NSNumber *)managerId level:(nonnull NSNumber *)level) {
-  // Log-level updates are silently dropped until the Swift binding lands;
-  // failing here would break apps that call setLogLevel defensively on
-  // startup, before they know whether they will actually use the SDK.
+RCT_EXPORT_METHOD(managerSetLogLevel:(nonnull NSNumber *)managerId
+                  level:(nonnull NSNumber *)level) {
+    NSError *error = nil;
+    [self.core managerSetLogLevelWithManagerId:managerId level:level error:&error];
+    if (error) { RCTLogError(@"managerSetLogLevel failed: %@", error); }
 }
 
-#pragma mark - addModelSource
+// -----------------------------------------------------------------------------
+// Add model source
+// -----------------------------------------------------------------------------
 
-RCT_REMAP_METHOD(addModelSource,
-                 addModelSourceWithManagerId:(nonnull NSNumber *)managerId
-                 sourceJson:(NSString *)sourceJson
-                 subscriptionId:(NSString *)subscriptionId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(addModelSource:(nonnull NSNumber *)managerId
+                  sourceJson:(NSString *)sourceJson
+                  subscriptionId:(NSString *)subscriptionId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core addModelSourceWithManagerId:managerId
+                                sourceJson:sourceJson
+                            subscriptionId:subscriptionId
+                                   resolve:resolve
+                                    reject:reject];
 }
 
-#pragma mark - Catalog
+// -----------------------------------------------------------------------------
+// Catalog
+// -----------------------------------------------------------------------------
 
-RCT_REMAP_METHOD(catalogListModels,
-                 catalogListModelsWithId:(nonnull NSNumber *)catalogId
-                 filterJson:(NSString *)filterJson
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(catalogListModels:(nonnull NSNumber *)catalogId
+                  filterJson:(NSString *)filterJson
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core catalogListModelsWithCatalogId:catalogId
+                                   filterJson:filterJson
+                                      resolve:resolve
+                                       reject:reject];
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(catalogListCachedModels:(nonnull NSNumber *)catalogId) {
-  return @"{\"models\":[]}";
+    NSError *error = nil;
+    NSString *json = [self.core catalogListCachedModelsWithCatalogId:catalogId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return json;
 }
 
-RCT_REMAP_METHOD(catalogGetModel,
-                 catalogGetModelWithId:(nonnull NSNumber *)catalogId
-                 alias:(NSString *)alias
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(catalogGetModel:(nonnull NSNumber *)catalogId
+                  alias:(NSString *)alias
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core catalogGetModelWithCatalogId:catalogId
+                                      alias:alias
+                                    resolve:resolve
+                                     reject:reject];
 }
 
-RCT_REMAP_METHOD(catalogGetModelById,
-                 catalogGetModelByIdWithId:(nonnull NSNumber *)catalogId
-                 modelId:(NSString *)modelId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(catalogGetModelById:(nonnull NSNumber *)catalogId
+                  modelId:(NSString *)modelId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core catalogGetModelByIdWithCatalogId:catalogId
+                                        modelId:modelId
+                                        resolve:resolve
+                                         reject:reject];
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(catalogGetCacheSizeBytes:(nonnull NSNumber *)catalogId) {
-  return @0;
+    NSError *error = nil;
+    NSNumber *value = [self.core catalogGetCacheSizeBytesWithCatalogId:catalogId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-#pragma mark - Model
+// -----------------------------------------------------------------------------
+// Model
+// -----------------------------------------------------------------------------
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelGetInfo:(nonnull NSNumber *)modelId) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    NSString *value = [self.core modelGetInfoWithModelId:modelId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelIsPackage:(nonnull NSNumber *)modelId) {
-  return @NO;
+    NSError *error = nil;
+    NSNumber *value = [self.core modelIsPackageWithModelId:modelId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelIsCached:(nonnull NSNumber *)modelId) {
-  return @NO;
+    NSError *error = nil;
+    NSNumber *value = [self.core modelIsCachedWithModelId:modelId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelIsLoaded:(nonnull NSNumber *)modelId) {
-  return @NO;
+    NSError *error = nil;
+    NSNumber *value = [self.core modelIsLoadedWithModelId:modelId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelGetPath:(nonnull NSNumber *)modelId) {
-  return @"";
+    NSError *error = nil;
+    NSString *value = [self.core modelGetPathWithModelId:modelId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-RCT_REMAP_METHOD(modelLoad,
-                 modelLoadWithId:(nonnull NSNumber *)modelId
-                 optionsJson:(NSString *)optionsJson
-                 subscriptionId:(NSString *)subscriptionId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(modelLoad:(nonnull NSNumber *)modelId
+                  optionsJson:(NSString *)optionsJson
+                  subscriptionId:(NSString *)subscriptionId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core modelLoadWithModelId:modelId
+                        optionsJson:optionsJson
+                     subscriptionId:subscriptionId
+                            resolve:resolve
+                             reject:reject];
 }
 
-RCT_REMAP_METHOD(modelUnload,
-                 modelUnloadWithId:(nonnull NSNumber *)modelId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(modelUnload:(nonnull NSNumber *)modelId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core modelUnloadWithModelId:modelId resolve:resolve reject:reject];
 }
 
-RCT_REMAP_METHOD(modelDelete,
-                 modelDeleteWithId:(nonnull NSNumber *)modelId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(modelDelete:(nonnull NSNumber *)modelId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core modelDeleteWithModelId:modelId resolve:resolve reject:reject];
 }
 
 RCT_EXPORT_METHOD(modelRelease:(nonnull NSNumber *)modelId) {
-  // Intentionally silent.
+    [self.core modelReleaseWithModelId:modelId];
 }
 
-#pragma mark - Package
+// -----------------------------------------------------------------------------
+// Package
+// -----------------------------------------------------------------------------
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageGetVariants:(nonnull NSNumber *)modelId) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    NSString *value = [self.core packageGetVariantsWithModelId:modelId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-RCT_EXPORT_METHOD(packageSelectVariant:(nonnull NSNumber *)modelId variantId:(NSString *)variantId) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+RCT_EXPORT_METHOD(packageSelectVariant:(nonnull NSNumber *)modelId
+                  variantId:(NSString *)variantId) {
+    NSError *error = nil;
+    [self.core packageSelectVariantWithModelId:modelId variantId:variantId error:&error];
+    if (error) { RCTLogError(@"packageSelectVariant failed: %@", error); }
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageSelectBestVariant:(nonnull NSNumber *)modelId
                                        constraintsJson:(NSString *)constraintsJson) {
-  return @"";
+    NSError *error = nil;
+    NSString *value = [self.core packageSelectBestVariantWithModelId:modelId
+                                                     constraintsJson:constraintsJson
+                                                               error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageGetVariant:(nonnull NSNumber *)modelId
                                        variantId:(NSString *)variantId) {
-  return @0;
+    NSError *error = nil;
+    NSNumber *value = [self.core packageGetVariantWithModelId:modelId
+                                                    variantId:variantId
+                                                        error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageEstimateDownload:(nonnull NSNumber *)modelId
                                        variantIdsJson:(NSString *)variantIdsJson) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    NSString *value = [self.core packageEstimateDownloadWithModelId:modelId
+                                                     variantIdsJson:variantIdsJson
+                                                              error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-#pragma mark - Session
+// -----------------------------------------------------------------------------
+// Sessions
+// -----------------------------------------------------------------------------
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(sessionCreate:(nonnull NSNumber *)modelId
                                        optionsJson:(NSString *)optionsJson) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    NSNumber *value = [self.core sessionCreateWithModelId:modelId
+                                              optionsJson:optionsJson
+                                                    error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
 RCT_EXPORT_METHOD(sessionRelease:(nonnull NSNumber *)sessionId) {
-  // Intentionally silent.
+    [self.core sessionReleaseWithSessionId:sessionId];
 }
 
-RCT_EXPORT_METHOD(sessionSetOptions:(nonnull NSNumber *)sessionId optionsJson:(NSString *)optionsJson) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+RCT_EXPORT_METHOD(sessionSetOptions:(nonnull NSNumber *)sessionId
+                  optionsJson:(NSString *)optionsJson) {
+    NSError *error = nil;
+    [self.core sessionSetOptionsWithSessionId:sessionId
+                                  optionsJson:optionsJson
+                                        error:&error];
+    if (error) { RCTLogError(@"sessionSetOptions failed: %@", error); }
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(sessionExportHistory:(nonnull NSNumber *)sessionId) {
-  return @"{}";
+    NSError *error = nil;
+    NSString *value = [self.core sessionExportHistoryWithSessionId:sessionId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-RCT_EXPORT_METHOD(sessionRestoreHistory:(nonnull NSNumber *)sessionId historyJson:(NSString *)historyJson) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+RCT_EXPORT_METHOD(sessionRestoreHistory:(nonnull NSNumber *)sessionId
+                  historyJson:(NSString *)historyJson) {
+    NSError *error = nil;
+    [self.core sessionRestoreHistoryWithSessionId:sessionId
+                                       historyJson:historyJson
+                                             error:&error];
+    if (error) { RCTLogError(@"sessionRestoreHistory failed: %@", error); }
 }
 
 RCT_EXPORT_METHOD(sessionClearHistory:(nonnull NSNumber *)sessionId) {
-  // Intentionally silent.
+    NSError *error = nil;
+    [self.core sessionClearHistoryWithSessionId:sessionId error:&error];
+    if (error) { RCTLogError(@"sessionClearHistory failed: %@", error); }
 }
 
-RCT_EXPORT_METHOD(sessionUndoTurns:(nonnull NSNumber *)sessionId count:(nonnull NSNumber *)count) {
-  // Intentionally silent.
+RCT_EXPORT_METHOD(sessionUndoTurns:(nonnull NSNumber *)sessionId
+                  count:(nonnull NSNumber *)count) {
+    NSError *error = nil;
+    [self.core sessionUndoTurnsWithSessionId:sessionId count:count error:&error];
+    if (error) { RCTLogError(@"sessionUndoTurns failed: %@", error); }
 }
 
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(sessionGetTurnCount:(nonnull NSNumber *)sessionId) {
-  return @0;
+    NSError *error = nil;
+    NSNumber *value = [self.core sessionGetTurnCountWithSessionId:sessionId error:&error];
+    if (error) { RaiseFromNSError(error); }
+    return value;
 }
 
-RCT_REMAP_METHOD(sessionComplete,
-                 sessionCompleteWithId:(nonnull NSNumber *)sessionId
-                 requestJson:(NSString *)requestJson
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(sessionComplete:(nonnull NSNumber *)sessionId
+                  requestJson:(NSString *)requestJson
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core sessionCompleteWithSessionId:sessionId
+                                requestJson:requestJson
+                                    resolve:resolve
+                                     reject:reject];
 }
 
-RCT_REMAP_METHOD(sessionCompleteStreaming,
-                 sessionCompleteStreamingWithId:(nonnull NSNumber *)sessionId
-                 requestJson:(NSString *)requestJson
-                 subscriptionId:(NSString *)subscriptionId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(sessionCompleteStreaming:(nonnull NSNumber *)sessionId
+                  requestJson:(NSString *)requestJson
+                  subscriptionId:(NSString *)subscriptionId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core sessionCompleteStreamingWithSessionId:sessionId
+                                         requestJson:requestJson
+                                      subscriptionId:subscriptionId
+                                             resolve:resolve
+                                              reject:reject];
 }
 
-RCT_REMAP_METHOD(sessionSubmitToolResultsStreaming,
-                 sessionSubmitToolResultsStreamingWithId:(nonnull NSNumber *)sessionId
-                 resultsJson:(NSString *)resultsJson
-                 subscriptionId:(NSString *)subscriptionId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(sessionSubmitToolResultsStreaming:(nonnull NSNumber *)sessionId
+                  resultsJson:(NSString *)resultsJson
+                  subscriptionId:(NSString *)subscriptionId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core sessionSubmitToolResultsStreamingWithSessionId:sessionId
+                                                  resultsJson:resultsJson
+                                               subscriptionId:subscriptionId
+                                                      resolve:resolve
+                                                       reject:reject];
 }
 
-RCT_REMAP_METHOD(sessionTranscribe,
-                 sessionTranscribeWithId:(nonnull NSNumber *)sessionId
-                 requestJson:(NSString *)requestJson
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(sessionTranscribe:(nonnull NSNumber *)sessionId
+                  requestJson:(NSString *)requestJson
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core sessionTranscribeWithSessionId:sessionId
+                                  requestJson:requestJson
+                                      resolve:resolve
+                                       reject:reject];
 }
 
-RCT_REMAP_METHOD(sessionTranscribeStreaming,
-                 sessionTranscribeStreamingWithId:(nonnull NSNumber *)sessionId
-                 requestJson:(NSString *)requestJson
-                 subscriptionId:(NSString *)subscriptionId
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(sessionTranscribeStreaming:(nonnull NSNumber *)sessionId
+                  requestJson:(NSString *)requestJson
+                  subscriptionId:(NSString *)subscriptionId
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core sessionTranscribeStreamingWithSessionId:sessionId
+                                           requestJson:requestJson
+                                        subscriptionId:subscriptionId
+                                               resolve:resolve
+                                                reject:reject];
 }
 
 RCT_EXPORT_METHOD(sessionPushAudio:(nonnull NSNumber *)sessionId
@@ -337,26 +498,36 @@ RCT_EXPORT_METHOD(sessionPushAudio:(nonnull NSNumber *)sessionId
                   sampleRate:(nonnull NSNumber *)sampleRate
                   channels:(nonnull NSNumber *)channels
                   isFinal:(BOOL)isFinal) {
-  @throw [NSException exceptionWithName:@"FoundryLocalNotImplemented"
-                                 reason:@"iOS native implementation not yet wired"
-                               userInfo:nil];
+    NSError *error = nil;
+    [self.core sessionPushAudioWithSessionId:sessionId
+                                    pcmBase64:pcmBase64
+                                   sampleRate:sampleRate
+                                     channels:channels
+                                      isFinal:@(isFinal)
+                                        error:&error];
+    if (error) { RCTLogError(@"sessionPushAudio failed: %@", error); }
 }
 
-RCT_REMAP_METHOD(sessionEmbed,
-                 sessionEmbedWithId:(nonnull NSNumber *)sessionId
-                 requestJson:(NSString *)requestJson
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject) {
-  FLMReject(reject);
+RCT_EXPORT_METHOD(sessionEmbed:(nonnull NSNumber *)sessionId
+                  requestJson:(NSString *)requestJson
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject) {
+    [self.core sessionEmbedWithSessionId:sessionId
+                             requestJson:requestJson
+                                 resolve:resolve
+                                  reject:reject];
 }
 
-#pragma mark - Subscription lifecycle
+// -----------------------------------------------------------------------------
+// Subscription lifecycle
+// -----------------------------------------------------------------------------
 
 RCT_EXPORT_METHOD(cancelSubscription:(NSString *)subscriptionId) {
-  // Intentionally silent: cancelling an unwired subscription is a no-op.
+    [self.core cancelSubscription:subscriptionId];
 }
 
-// NativeEventEmitter requires these on every module that emits events.
+// NativeEventEmitter requires these on every event-emitting module. No
+// per-listener bookkeeping is needed on this module.
 RCT_EXPORT_METHOD(addListener:(NSString *)eventName) {}
 RCT_EXPORT_METHOD(removeListeners:(nonnull NSNumber *)count) {}
 
