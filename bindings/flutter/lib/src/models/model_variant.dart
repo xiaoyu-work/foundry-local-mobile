@@ -133,26 +133,3 @@ class DownloadEstimate {
         fitsOnDevice: json['fits_on_device'] as bool? ?? false,
       );
 }
-
-/// Optional constraints passed to `flm_package_select_best_variant`.
-@immutable
-class VariantSelectionConstraints {
-  const VariantSelectionConstraints({
-    this.maxDownloadBytes,
-    this.allowedDevices,
-    this.preferSmallest = false,
-  });
-
-  final int? maxDownloadBytes;
-  final List<FlmDevice>? allowedDevices;
-  final bool preferSmallest;
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      if (maxDownloadBytes != null) 'max_download_bytes': maxDownloadBytes,
-      if (allowedDevices != null)
-        'allowed_devices': allowedDevices!.map((d) => d.name).toList(),
-      if (preferSmallest) 'prefer_smallest': preferSmallest,
-    };
-  }
-}

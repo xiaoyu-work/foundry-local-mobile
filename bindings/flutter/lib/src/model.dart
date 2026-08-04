@@ -152,8 +152,14 @@ class Model {
     }
   }
 
+  /// Nullable convenience getter: this handle's [ModelPackage] view when it
+  /// refers to a package, `null` otherwise. Prefer this over [asPackage] when
+  /// the caller wants to branch on package-ness rather than treat "flat
+  /// model" as an exception.
+  ModelPackage? get package => isPackage ? ModelPackage.internal(this) : null;
+
   /// [ModelPackage] view of this handle. Throws [StateError] if the model is
-  /// not a package.
+  /// not a package. See [package] for a nullable variant.
   ModelPackage asPackage() {
     if (!isPackage) {
       throw StateError('Model ${info.alias} is not a package.');

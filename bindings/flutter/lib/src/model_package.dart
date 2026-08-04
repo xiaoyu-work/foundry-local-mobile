@@ -9,14 +9,18 @@ import 'package:ffi/ffi.dart';
 import 'bindings/native_library.dart';
 import 'error_capture.dart';
 import 'model.dart';
+import 'models/model_source.dart' show VariantConstraints;
 import 'models/model_variant.dart';
 import 'native_strings.dart';
 
 /// A view of a [Model] that is known to be an ONNX Runtime model package.
 ///
-/// Package handles delegate download / load / session state to their
-/// **currently selected** variant. Call [selectBestVariant] first, or pin one
-/// explicitly with [selectVariant].
+/// Package handles delegate load / session state to their **currently
+/// selected** variant. Prefer setting [VariantConstraints] on the
+/// [ModelSource] so selection runs before any weights transfer; the
+/// imperative [selectBestVariant] / [selectVariant] methods here are for
+/// after-the-fact orchestration (offering the user a picker,
+/// pre-provisioning several variants, running estimates before committing).
 class ModelPackage {
   ModelPackage.internal(this._model);
 
@@ -65,7 +69,7 @@ class ModelPackage {
 
   /// Let the SDK pick the best variant for this device. Returns the id of the
   /// variant that was chosen.
-  String selectBestVariant({VariantSelectionConstraints? constraints}) {
+  String selectBestVariant({VariantConstraints? constraints}) {
     final bindings = NativeLibrary.instance.bindings;
     final constraintsJson = constraints == null
         ? null

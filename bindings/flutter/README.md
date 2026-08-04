@@ -11,8 +11,8 @@ network required for inference. The plugin ships:
 - streaming chat with tool calling,
 - speech-to-text (batch and streaming),
 - embeddings,
-- a catalog with per-device variant selection,
-- background-safe model download planning,
+- declarative per-device variant selection on model packages,
+- a device-local catalog for inspecting what is already on disk,
 - OS-level lifecycle bridging (memory pressure, thermal, connectivity).
 
 ## Requirements
@@ -141,6 +141,57 @@ bandwidth.
 See [`docs/model-sources.md`](../../docs/model-sources.md) at the repo root
 for the full contract.
 
+## Model packages (per-device variants)
+
+A **model package** is one alias in front of several execution-provider /
+device / precision variants of the same model (e.g. a CPU-int4 build for
+older phones, a QNN build for Snapdragon NPUs, a CoreML build for Apple
+Neural Engine). Point [`FoundryLocal.addModelSource`](lib/src/foundry_local.dart)
+at a package manifest and set [`VariantConstraints`](lib/src/models/model_source.dart)
+on the source — the core scores this device against every variant **before**
+any weights transfer, so a phone never spends bytes on a build it cannot run.
+
+```dart
+final model = await foundry.addModelSource(
+  const RemoteModelSource(
+    name: 'qwen2.5-0.5b',
+    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
+    constraints: VariantConstraints(
+      maxDownloadBytes: 800 * 1024 * 1024,
+      allowedDevices: [FlmDevice.npu, FlmDevice.gpu, FlmDevice.cpu],
+    ),
+  ),
+  onProgress: (p) => print('${p.percent}%'),
+);
+
+// What was actually chosen, and what else the package offered.
+final package = model.package;
+if (package != null) {
+  for (final v in package.variants) {
+    print('${v.id}  ep=${v.executionProvider} device=${v.device.name} '
+          'size=${v.downloadSizeBytes} compatible=${v.isCompatible} '
+          'reason=${v.incompatibilityReason}');
+  }
+}
+```
+
+`VariantConstraints` has exactly four fields; anything else the app tries to
+add is ignored by the core:
+
+| Field | Meaning |
+|-|-|
+| `maxDownloadBytes` | Skip variants whose selected files exceed this on the wire. |
+| `allowedDevices` | Restrict placement. `null` and empty both mean "any". |
+| `preferSmallest` | Tie-break on download size instead of the compatibility score. |
+| `requireCached` | Only consider variants already on disk. Combined with `maxDownloadBytes: 0` this gives an "offline / no more downloads" mode. |
+
+The declarative form above is the recommended path. For after-the-fact
+orchestration — offering a picker UI, pre-provisioning several variants,
+running an estimate before committing — the `ModelPackage` still exposes
+`selectBestVariant`, `selectVariant`, `getVariant` and `estimateDownload`.
+See [`docs/model-packages.md`](../../docs/model-packages.md) for the full
+model.
+
 ## Transport
 
 The C++ core never performs HTTP directly. It plans downloads and calls out
@@ -218,11 +269,16 @@ Highlights:
 - `FoundryLocal` — root object, one per process. Provides
   [`addModelSource`](lib/src/foundry_local.dart), the only supported way to
   hand the SDK a model on mobile.
-- `Catalog` — models already registered with the SDK (`listCachedModels`,
-  cache size). Not a fetcher — see [Model sources](#model-sources) above.
-- `Model` — one shipped model (`load`, `unload`, `delete`). Loading returns
-  a typed `LoadResult` with `path` and `bytes`.
-- `ModelPackage` — a model made of multiple per-device variants.
+- `Catalog` — inspect what is on the device (`listCachedModels`,
+  `listModels`, cache size). Not an acquisition path — see
+  [Model sources](#model-sources) above.
+- `Model` — one shipped model (`load`, `unload`, `delete`, `package` for a
+  nullable package view). Loading returns a typed `LoadResult` with `path`
+  and `bytes`.
+- `ModelPackage` — a model made of multiple per-device variants. Prefer
+  setting `VariantConstraints` on the `ModelSource` so selection runs
+  before any weights transfer; `selectBestVariant` / `selectVariant` /
+  `getVariant` / `estimateDownload` remain for after-the-fact orchestration.
 - `ChatSession` — `complete`, `completeStreaming`, `submitToolResults`,
   history export/restore.
   - `ChatCompletion.toolCalls` is `null` when the model asked for no tools,

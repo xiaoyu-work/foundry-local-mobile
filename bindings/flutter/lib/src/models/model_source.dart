@@ -22,8 +22,14 @@ sealed class ModelSource {
   /// Name the model is registered under. Used later as an alias for lookup.
   final String name;
 
-  /// Optional per-source constraints applied when the source is a package.
-  final ModelSourceConstraints? constraints;
+  /// Cross-platform variant policy for a package source (see
+  /// [VariantConstraints]). Applied by the core against the manifest
+  /// **before** any weights transfer, so a phone never spends bytes on a
+  /// variant it cannot run. Prefer this to the imperative
+  /// [ModelPackage.selectBestVariant] path — it saves the wrong download.
+  ///
+  /// Ignored on non-package models.
+  final VariantConstraints? constraints;
 
   /// Whether an interrupted download resumes from the last written byte or
   /// starts over. Defaults to true. Turn it off when the origin server is
@@ -55,7 +61,7 @@ sealed class ModelSource {
     required String name,
     required String path,
     bool copyIntoCache = false,
-    ModelSourceConstraints? constraints,
+    VariantConstraints? constraints,
     bool resume = true,
     bool verifyChecksums = true,
   }) =>
@@ -72,7 +78,7 @@ sealed class ModelSource {
     required String name,
     required String url,
     Map<String, String> headers = const <String, String>{},
-    ModelSourceConstraints? constraints,
+    VariantConstraints? constraints,
     bool resume = true,
     bool verifyChecksums = true,
   }) =>
@@ -146,30 +152,57 @@ class RemoteModelSource extends ModelSource {
       };
 }
 
-/// Cross-platform policy the SDK applies when selecting a variant of a package
-/// source.
+/// Cross-platform variant policy for a model package.
+///
+/// Applied by `flm_package_select_best_variant` when calling it explicitly
+/// on a [ModelPackage], and — more importantly for cross-platform apps —
+/// honoured by [FoundryLocal.addModelSource] when set on the [ModelSource]
+/// itself: the scoring runs against the manifest **before** any weights
+/// transfer, so a phone never spends bytes on a QNN build it has no NPU for
+/// or a CoreML variant it has no Apple Neural Engine for.
+///
+/// The four fields below are the entire declarative surface the core
+/// honours. Extra fields would be silently ignored, so this class does not
+/// carry any.
 @immutable
-class ModelSourceConstraints {
-  const ModelSourceConstraints({
+class VariantConstraints {
+  const VariantConstraints({
     this.maxDownloadBytes,
     this.allowedDevices,
     this.preferSmallest = false,
+    this.requireCached = false,
   });
 
+  /// Skip any variant whose selected files would exceed this many bytes on
+  /// the wire.
   final int? maxDownloadBytes;
+
+  /// Restrict placement to these devices. `null` and an empty list both
+  /// mean "any device"; set only when the app must force, e.g., NPU-only.
   final List<FlmDevice>? allowedDevices;
+
+  /// Break ties on download size rather than the compatibility score. Off
+  /// by default — the compatibility score already rewards native placements
+  /// (NPU over GPU over CPU) which is what most apps actually want.
   final bool preferSmallest;
+
+  /// Only consider variants whose files are already on disk. Useful for an
+  /// offline path or a "no more downloads" preference in a UI. Combined
+  /// with [maxDownloadBytes] you get "run something now, without paying".
+  final bool requireCached;
 
   Map<String, Object?> toJson() => <String, Object?>{
         if (maxDownloadBytes != null) 'max_download_bytes': maxDownloadBytes,
         if (allowedDevices != null)
           'allowed_devices': allowedDevices!.map((d) => d.name).toList(),
         if (preferSmallest) 'prefer_smallest': preferSmallest,
+        if (requireCached) 'require_cached': requireCached,
       };
 }
 
 /// Result reported when a model source has been resolved and any required
-/// download has finished.
+/// download has finished. Read from `flm_job_take_result_json` on the job
+/// returned by `flm_manager_add_model_source_async`.
 @immutable
 class ModelSourceResult {
   const ModelSourceResult({
@@ -179,22 +212,47 @@ class ModelSourceResult {
     required this.bytesDownloaded,
     required this.bytesReused,
     required this.wasCached,
+    required this.modelHandle,
   });
 
+  /// Alias the source registered under.
   final String name;
+
+  /// Absolute on-disk path of the resolved model.
   final String path;
+
+  /// For a package source, the id of the variant that was chosen; `null`
+  /// (an empty string in the wire schema) for a flat model.
   final String? variantId;
+
+  /// Bytes actually transferred by the transport.
   final int bytesDownloaded;
+
+  /// Bytes served from an already-on-disk copy or from another variant's
+  /// shared assets — never fetched over the wire.
   final int bytesReused;
+
+  /// Whether the whole source was resolved from cache, without any transfer.
   final bool wasCached;
 
-  factory ModelSourceResult.fromJson(Map<String, Object?> json) =>
-      ModelSourceResult(
-        name: json['name'] as String? ?? '',
-        path: json['path'] as String? ?? '',
-        variantId: json['variant_id'] as String?,
-        bytesDownloaded: (json['bytes_downloaded'] as num?)?.toInt() ?? 0,
-        bytesReused: (json['bytes_reused'] as num?)?.toInt() ?? 0,
-        wasCached: json['was_cached'] as bool? ?? false,
-      );
+  /// A ready-to-use `flm_model` handle. `null` in the unexpected case where
+  /// the core reports `FLM_INVALID_HANDLE` — the download itself still
+  /// succeeded (`path` and byte counters are set); the caller can recover by
+  /// looking the model up through [Catalog.getModel] using [name].
+  final int? modelHandle;
+
+  factory ModelSourceResult.fromJson(Map<String, Object?> json) {
+    final rawHandle = (json['model_handle'] as num?)?.toInt();
+    final handle = (rawHandle == null || rawHandle == 0) ? null : rawHandle;
+    final rawVariant = json['variant_id'] as String?;
+    return ModelSourceResult(
+      name: json['name'] as String? ?? '',
+      path: json['path'] as String? ?? '',
+      variantId: (rawVariant == null || rawVariant.isEmpty) ? null : rawVariant,
+      bytesDownloaded: (json['bytes_downloaded'] as num?)?.toInt() ?? 0,
+      bytesReused: (json['bytes_reused'] as num?)?.toInt() ?? 0,
+      wasCached: json['was_cached'] as bool? ?? false,
+      modelHandle: handle,
+    );
+  }
 }

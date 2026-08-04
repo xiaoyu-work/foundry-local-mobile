@@ -65,15 +65,14 @@ export 'src/models/model_source.dart'
     show
         BundledModelSource,
         ModelSource,
-        ModelSourceConstraints,
         ModelSourceResult,
-        RemoteModelSource;
+        RemoteModelSource,
+        VariantConstraints;
 export 'src/models/model_variant.dart'
     show
         DownloadEstimate,
         ModelPackageManifest,
-        ModelVariant,
-        VariantSelectionConstraints;
+        ModelVariant;
 export 'src/models/progress.dart' show Progress;
 export 'src/session_base.dart' show Session;
 export 'src/transport.dart'

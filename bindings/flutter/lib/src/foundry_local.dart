@@ -199,12 +199,14 @@ class FoundryLocal {
         .flm_manager_notify_lifecycle(_managerHandle, event.code);
   }
 
-  /// Register a bundled or remote model source with the manager. Downloads
-  /// (for remote sources) run through the installed transport.
+  /// Register a bundled or remote [ModelSource] with the manager and, for a
+  /// remote source, drive the download through the installed transport.
   ///
-  /// Returns the resolved [Model] handle for the source. Progress events for
-  /// the download (or the resolve, for a bundled source) are delivered via
-  /// [onProgress] if provided.
+  /// On mobile this is **the** model-acquisition call — there is no
+  /// "download from catalog" flow. Returns a ready-to-use [Model] handle
+  /// once the source has resolved; progress events during the download are
+  /// delivered to [onProgress]. See the plugin README for the model-source
+  /// contract.
   Future<Model> addModelSource(
     ModelSource source, {
     void Function(Progress)? onProgress,
@@ -237,9 +239,16 @@ class FoundryLocal {
         ),
       );
 
-      // The core writes the resolved alias back into the result; we then
-      // look up the handle via the catalog by that name.
+      // The completion payload carries a ready-to-use model_handle (added in
+      // core b263862 / aaa4838). Prefer it so we do not pay a second async
+      // round-trip through flm_catalog_get_model_async just to reach the
+      // model we already asked for. Fall back to the catalog lookup only for
+      // the documented edge case where the files landed but the catalog scan
+      // missed them.
       final resolved = ModelSourceResult.fromJson(result);
+      if (resolved.modelHandle != null) {
+        return Model.fromHandle(resolved.modelHandle!);
+      }
       return catalog.getModel(resolved.name);
     } finally {
       await controller?.close();
