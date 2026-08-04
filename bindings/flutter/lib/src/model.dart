@@ -10,6 +10,7 @@ import 'package:meta/meta.dart';
 
 import 'audio_session.dart';
 import 'bindings/native_library.dart';
+import 'cancel_token.dart';
 import 'chat_session.dart';
 import 'embedding_session.dart';
 import 'error_capture.dart';
@@ -181,6 +182,7 @@ class Model {
   Future<LoadResult> load({
     LoadOptions options = const LoadOptions(),
     void Function(Progress)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     _ensureAlive();
     final bindings = NativeLibrary.instance.bindings;
@@ -207,6 +209,7 @@ class Model {
             outJob,
           ),
           onProgress: sink,
+          cancelToken: cancelToken,
         ),
       );
       return LoadResult.fromJson(result);

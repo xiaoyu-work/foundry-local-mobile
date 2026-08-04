@@ -12,6 +12,7 @@
 library foundry_local_mobile;
 
 export 'src/audio_session.dart' show AudioSession, AudioSessionOptions;
+export 'src/cancel_token.dart' show CancelToken;
 export 'src/catalog.dart' show Catalog, CatalogFilter;
 export 'src/chat_session.dart' show ChatSession, ChatSessionOptions;
 export 'src/embedding_session.dart' show EmbeddingSession;

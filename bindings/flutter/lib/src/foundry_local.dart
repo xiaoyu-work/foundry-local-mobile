@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart' as pp;
 
 import 'bindings/bindings.dart' as raw;
 import 'bindings/native_library.dart';
+import 'cancel_token.dart';
 import 'catalog.dart';
 import 'error_capture.dart';
 import 'job_runner.dart';
@@ -216,9 +217,15 @@ class FoundryLocal {
   ///
   /// See the plugin README for the recommended `result.model ?? catalog
   /// lookup` pattern.
+  ///
+  /// Pass a [CancelToken] and call [CancelToken.cancel] later to abort a
+  /// long-running download — the returned Future then completes with a
+  /// [CancelledException]. This is the intended primitive for a UI "cancel"
+  /// button on the download screen.
   Future<ModelSourceResult> addModelSource(
     ModelSource source, {
     void Function(Progress)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     _ensureAlive();
     final bindings = NativeLibrary.instance.bindings;
@@ -245,6 +252,7 @@ class FoundryLocal {
             outJob,
           ),
           onProgress: sink,
+          cancelToken: cancelToken,
         ),
       );
       return _parseModelSourceResult(result);
