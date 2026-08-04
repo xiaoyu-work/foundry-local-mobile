@@ -53,18 +53,24 @@ jobs:
           cd build/android
           zip -r "${GITHUB_WORKSPACE}/foundry-local-mobile-android-jniLibs.zip" jniLibs
 
-      - name: Build AAR (if the Android binding is present)
+      - name: Set up JDK 17
         if: hashFiles('bindings/android/gradlew') != ''
-        env:
-          # Point the Android Gradle module at the freshly built native
-          # libraries. The binding's build.gradle is expected to honour this.
-          FLM_NATIVE_JNI_LIBS_DIR: ${{ github.workspace }}/build/android/jniLibs
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licences
+        if: hashFiles('bindings/android/gradlew') != ''
+        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+
+      - name: Build AAR
+        if: hashFiles('bindings/android/gradlew') != ''
         run: |
           cd bindings/android
-          chmod +x gradlew
-          ./gradlew --no-daemon :assembleRelease
-          find . -type f -name '*.aar' \
-            -exec cp {} "${GITHUB_WORKSPACE}/foundry-local-mobile-android.aar" \;
+          ./gradlew --no-daemon --console=plain assembleRelease
+          cp build/outputs/aar/foundry-local-mobile-release.aar \
+             "${GITHUB_WORKSPACE}/foundry-local-mobile-android.aar"
 
       - name: Upload
         uses: actions/upload-artifact@v4

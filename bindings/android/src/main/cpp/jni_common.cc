@@ -61,11 +61,12 @@ VmScope::VmScope() noexcept {
   }
   if (rc == JNI_EDETACHED) {
     // AttachCurrentThreadAsDaemon so a stuck attach never blocks JVM exit.
-    // The desktop OpenJDK header takes `void**`; the Android NDK takes
-    // `JNIEnv**`. Cast so the call type-checks on both.
+    // The Android NDK's C++ JavaVM binding takes JNIEnv** here; do not cast
+    // to void** — the previous reinterpret_cast tripped clang's strict
+    // parameter-type checks in the r27 toolchain.
     JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("flm-callback"), nullptr};
     JNIEnv* attached = nullptr;
-    if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&attached),
+    if (vm->AttachCurrentThreadAsDaemon(&attached,
                                         static_cast<void*>(&args)) == JNI_OK) {
       env_ = attached;
       detach_on_destroy_ = true;

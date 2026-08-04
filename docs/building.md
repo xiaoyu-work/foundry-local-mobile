@@ -22,7 +22,7 @@ If you only want to try the SDK from an app, use the published binary packages i
 | Ninja *(optional)* | any | Detected automatically; the build falls back to Unix Makefiles / Xcode. |
 | Dart / Flutter *(optional)* | Flutter 3.19+ (Dart 3.3+) | Only needed to build the Flutter binding. |
 | Node *(optional)* | 20 LTS | Only needed to build the React Native binding. |
-| Java + Android SDK *(optional)* | JDK 17 + Android SDK 34 | Only needed to build the Android AAR (Gradle). |
+| Java + Android SDK *(optional)* | JDK 17 + platforms;android-35, build-tools;35.0.0, ndk;27.0.12077973, cmake;3.22.1 | Only needed to build the Android AAR (Gradle). See [Build the Android AAR](#build-the-android-aar). |
 
 The upstream Foundry Local SDK headers are **not** vendored in this repository; they are
 staged by `scripts/fetch_foundry_local.sh` (see below).
@@ -150,6 +150,54 @@ build/apple/FoundryLocalMobile.xcframework/
 Each framework contains the public headers under `Headers/foundry_local_mobile/` and a
 `module.modulemap` so Swift can `import FoundryLocalMobile` without a shim header.
 
+## Build the Android AAR
+
+The Android binding under `bindings/android/` is a Gradle module that runs
+`externalNativeBuild` against the core's CMake, links a JNI wrapper, and packages
+everything as an AAR. **Prerequisites**: JDK 17 and an Android SDK with the exact
+components `bindings/android/build.gradle.kts` pins.
+
+Install the SDK components with `sdkmanager`:
+
+```bash
+export ANDROID_HOME=/path/to/android-sdk
+
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+    "platform-tools" \
+    "platforms;android-35" \
+    "build-tools;35.0.0" \
+    "ndk;27.0.12077973" \
+    "cmake;3.22.1"
+
+yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+```
+
+Then either run through the driver:
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/msopenjdk-17
+./scripts/build.sh android-binding
+```
+
+or invoke the module's wrapper directly:
+
+```bash
+cd bindings/android
+./gradlew assembleRelease
+```
+
+Output: `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar`
+(~2.3 MB). The AAR ships all three ABIs, each with `libfoundry_local_mobile.so`,
+`libfoundry_local_mobile_jni.so`, and `libc++_shared.so`.
+
+The Gradle wrapper (`bindings/android/gradlew` + `gradle/wrapper/`) pins the exact
+Gradle distribution AGP 8.5.2 needs; a system-wide Gradle install is not required.
+
+If you prefer to skip Gradle and consume `jniLibs/` directly from your own Android
+project — for example when the app already has native code and its own AAR pipeline —
+run `./scripts/build_android.sh` and point `sourceSets.main.jniLibs.srcDirs` at
+`build/android/jniLibs/` instead.
+
 ## Everything at once
 
 `scripts/build.sh` sequences the individual scripts:
@@ -178,7 +226,7 @@ README for the exact command.
 
 | Binding | Consumes | Build |
 |---|---|---|
-| `bindings/android` | `build/android/jniLibs/` | `./gradlew assembleRelease` |
+| `bindings/android` | `core/` sources (rebuilt inside AGP) | `./gradlew assembleRelease` from `bindings/android/`, or `./scripts/build.sh android-binding`. See [Build the Android AAR](#build-the-android-aar). |
 | `bindings/ios` | `build/apple/FoundryLocalMobile.xcframework` | `swift build` or Xcode |
 | `bindings/flutter` | Android + iOS cross-builds | `flutter build` (in the sample) or `dart pub publish --dry-run` |
 | `bindings/react-native` | Android + iOS cross-builds | `npm pack` |
@@ -189,6 +237,7 @@ README for the exact command.
 |---|---|
 | `./scripts/build.sh linux` | `build/linux/libfoundry_local_mobile.so` |
 | `./scripts/build_android.sh` | `build/android/jniLibs/<abi>/libfoundry_local_mobile.so` |
+| `./scripts/build.sh android-binding` | `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar` |
 | `./scripts/build_apple.sh` | `build/apple/FoundryLocalMobile.xcframework/` |
 | CI `Release` workflow | `foundry-local-mobile-{android-jniLibs.zip,android.aar,apple-xcframework.zip,flutter.tar.gz,react-native.tgz}` on the tagged GitHub Release. |
 
@@ -247,11 +296,38 @@ copy automatically; anywhere else, copy it from
 The binding-level Gradle/Xcode integration expects the cross-build to have already run.
 Run `./scripts/build_android.sh` (or `build_apple.sh`) first, then rebuild the binding.
 
+**`Multiple projects in this build have project directory 'bindings/android'`.**
+An out-of-date `bindings/android/settings.gradle.kts` that both hosts the root
+project and `include`-s the same directory. Update to the current file, which
+declares only `rootProject.name = "foundry-local-mobile"`.
+
+**`Failed to install the following Android SDK packages as some licences have not been accepted`.**
+The SDK components pinned in `bindings/android/build.gradle.kts` (see the
+[prerequisites table](#prerequisites)) need licence acceptance. Run
+`yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses` before
+invoking Gradle.
+
+**`UnsatisfiedLinkError: No implementation found for … NativeBridge.xxx`.**
+The JNI wrapper `.so` is present but does not export a `Java_*` symbol the
+Kotlin `external fun` calls. Reproduce the CI check locally:
+
+```bash
+python3 scripts/list_kotlin_native_symbols.py bindings/android/src/main/kotlin \
+  > /tmp/kt.txt
+llvm-nm -D --defined-only \
+  bindings/android/build/outputs/aar/foundry-local-mobile-release.aar/jni/arm64-v8a/libfoundry_local_mobile_jni.so \
+  | awk '$2 == "T" && $3 ~ /^Java_/ { print $3 }' | sort > /tmp/jni.txt
+diff /tmp/kt.txt /tmp/jni.txt
+```
+
+The two lists must be identical.
+
 ## Continuous integration
 
 The `CI` workflow (`.github/workflows/ci.yml`) runs the Linux core build with `-Werror`,
-`shellcheck` on every script, YAML parse on every workflow, and the Android and Apple
-cross-builds on their respective hosted runners. The `Release` workflow
+`shellcheck` on every script, YAML parse on every workflow, the Android core cross-build
+on every ABI, the Apple XCFramework build, and the Android binding's `assembleRelease`
+task with a JNI symbol reconciliation step that catches Kotlin ↔ JNI drift. The `Release` workflow
 (`.github/workflows/release.yml`) builds every platform artifact on a `v*.*.*` tag and
 attaches them to the GitHub Release.
 
