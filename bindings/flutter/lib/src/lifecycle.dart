@@ -98,6 +98,10 @@ class LifecycleBridge with WidgetsBindingObserver {
       case PlatformEventKind.networkUnmetered:
         _notify(raw.FlmLifecycleEvent.networkUnmetered);
         break;
+      case PlatformEventKind.unknown:
+        // Ignore — the native layer occasionally emits new event kinds; do
+        // not surface them to the core as a random FLM_LIFECYCLE_* value.
+        break;
     }
   }
 

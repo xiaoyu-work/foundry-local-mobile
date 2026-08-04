@@ -304,14 +304,14 @@ class DartHttpTransport implements FlmTransport {
 
   @override
   void cancel(int requestId) {
-    final in_flight = _requests[requestId];
-    in_flight?.cancelled = true;
-    in_flight?.subscription?.cancel();
+    final inFlight = _requests[requestId];
+    inFlight?.cancelled = true;
+    inFlight?.subscription?.cancel();
   }
 
   Future<void> _run(FlmHttpRequest request) async {
-    final in_flight = _InFlight();
-    _requests[request.requestId] = in_flight;
+    final inFlight = _InFlight();
+    _requests[request.requestId] = inFlight;
 
     HttpClientRequest? httpRequest;
     HttpClientResponse? response;
@@ -400,7 +400,7 @@ class DartHttpTransport implements FlmTransport {
         completed = request.offset;
 
         final completer = Completer<void>();
-        in_flight.subscription = response.listen(
+        inFlight.subscription = response.listen(
           (chunk) {
             sink!.add(chunk);
             completed += chunk.length;
@@ -425,7 +425,7 @@ class DartHttpTransport implements FlmTransport {
         // In-memory delivery. Stream chunks so we never build a giant
         // Uint8List for a manifest that turns out to be a package binary.
         final completer = Completer<void>();
-        in_flight.subscription = response.listen(
+        inFlight.subscription = response.listen(
           (chunk) {
             final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
             FlmTransportReporter.reportBody(request.requestId, bytes);
@@ -443,7 +443,7 @@ class DartHttpTransport implements FlmTransport {
         await completer.future;
       }
 
-      if (in_flight.cancelled) {
+      if (inFlight.cancelled) {
         reportOnce(
           statusCode: 499, // "client closed request" (nginx convention).
           headers: respHeaders,

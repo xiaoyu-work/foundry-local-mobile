@@ -8,6 +8,9 @@ analyzer:
   errors:
     # ffigen output would fail on strict-inference; keep the generated file exempt.
     always_use_package_imports: ignore
+    # FFI struct fields deliberately mirror C names (snake_case), so ignore the
+    # camelCase warning on external struct fields.
+    non_constant_identifier_names: ignore
   exclude:
     - lib/src/bindings/bindings.dart
 

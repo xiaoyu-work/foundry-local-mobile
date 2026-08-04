@@ -173,8 +173,7 @@ class CompletedDelta extends SessionDelta {
 String _readUtf8(Pointer<Char> ptr, int length) {
   if (ptr == nullptr || length == 0) return '';
   // `flm_delta.text_length` counts bytes and permits embedded NULs.
-  final bytes =
-      ptr.cast<Uint8>().asTypedList(length, finalizer: null);
+  final bytes = ptr.cast<Uint8>().asTypedList(length);
   // Copy because the underlying memory is borrowed.
   return utf8.decode(Uint8List.fromList(bytes));
 }

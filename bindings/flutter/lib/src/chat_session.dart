@@ -7,7 +7,6 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
-import 'bindings/bindings.dart' as raw;
 import 'bindings/native_library.dart';
 import 'error_capture.dart';
 import 'job_runner.dart';

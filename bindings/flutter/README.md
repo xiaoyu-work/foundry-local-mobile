@@ -72,20 +72,21 @@ Future<void> main() async {
 
 ## Model sources
 
-`Model` can come from a **bundled** on-device source or a **remote** catalog.
+`Model` can come from a **bundled** on-device source (a directory the app
+already ships) or a **remote** URL the transport fetches.
 
 ```dart
 await foundry.addModelSource(
   BundledModelSource(
-    id: 'my-bundled-model',
-    directory: '/path/to/model/dir',
+    name: 'my-bundled-model',
+    path: '/path/to/model/dir',
   ),
 );
 
 await foundry.addModelSource(
   RemoteModelSource(
-    id: 'my-remote-catalog',
-    manifestUrl: 'https://example.com/catalog.json',
+    name: 'my-remote-catalog',
+    url: 'https://example.com/catalog.json',
   ),
 );
 ```

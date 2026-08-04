@@ -41,7 +41,7 @@ class PlatformBridge {
         }
       }
       return const PlatformEvent(kind: PlatformEventKind.memoryWarning);
-    }).where((e) => e.kind != PlatformEventKind._unknown);
+    }).where((e) => e.kind != PlatformEventKind.unknown);
   }
 
   /// Kick the native side to emit the current network state as an initial
@@ -84,7 +84,7 @@ enum PlatformEventKind {
   thermalThrottling,
   networkMetered,
   networkUnmetered,
-  _unknown;
+  unknown;
 
   static PlatformEventKind fromString(String s) {
     switch (s) {
@@ -101,7 +101,7 @@ enum PlatformEventKind {
       case 'network_unmetered':
         return PlatformEventKind.networkUnmetered;
       default:
-        return PlatformEventKind._unknown;
+        return PlatformEventKind.unknown;
     }
   }
 }

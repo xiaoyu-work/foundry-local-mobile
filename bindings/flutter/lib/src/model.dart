@@ -16,7 +16,6 @@ import 'error_capture.dart';
 import 'job_runner.dart';
 import 'model_package.dart';
 import 'models/model_info.dart';
-import 'models/model_variant.dart';
 import 'models/progress.dart';
 import 'native_strings.dart';
 
