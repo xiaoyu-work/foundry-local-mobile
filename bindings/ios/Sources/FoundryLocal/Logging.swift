@@ -3,7 +3,9 @@
 
 import Foundation
 import FoundryLocalMobile
+#if canImport(os)
 import os
+#endif
 
 /// Route the core's internal log messages into `os_log`, or into a custom sink.
 ///
@@ -36,7 +38,7 @@ public enum FoundryLocalLog {
     }
 
     nonisolated(unsafe) private static var sink: Sink? = defaultOSLogSink
-    private static let lock = NSLock()
+    nonisolated(unsafe) private static let lock = NSLock()
 
     /// Install a sink to receive log messages. Passing `nil` reverts to the default
     /// `os_log` sink. To silence the ABI entirely, call ``uninstall()`` instead.
@@ -56,6 +58,7 @@ public enum FoundryLocalLog {
     // MARK: - Internal
 
     fileprivate static let defaultOSLogSink: Sink = { level, tag, message in
+        #if canImport(os)
         let type: OSLogType
         switch level {
         case .verbose, .debug: type = .debug
@@ -65,6 +68,10 @@ public enum FoundryLocalLog {
         case .fatal: type = .fault
         }
         os_log("%{public}s: %{public}s", log: OSLog(subsystem: tag, category: "FoundryLocal"), type: type, tag, message)
+        #else
+        // No os_log on non-Apple platforms; fall back to stderr so the callback still fires.
+        FileHandle.standardError.write(Data("[\(level)] \(tag): \(message)\n".utf8))
+        #endif
     }
 }
 

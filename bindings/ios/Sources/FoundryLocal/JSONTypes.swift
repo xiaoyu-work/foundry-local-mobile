@@ -17,13 +17,15 @@
 import Foundation
 import FoundryLocalMobile
 
-let flmJSONDecoder: JSONDecoder = {
+// Both instances are configured once at module load and are thread-safe to reuse per
+// Apple's Foundation documentation. Swift 6 can't see that, so mark them explicitly.
+nonisolated(unsafe) let flmJSONDecoder: JSONDecoder = {
     let decoder = JSONDecoder()
     decoder.keyDecodingStrategy = .convertFromSnakeCase
     return decoder
 }()
 
-let flmJSONEncoder: JSONEncoder = {
+nonisolated(unsafe) let flmJSONEncoder: JSONEncoder = {
     let encoder = JSONEncoder()
     encoder.keyEncodingStrategy = .convertToSnakeCase
     return encoder

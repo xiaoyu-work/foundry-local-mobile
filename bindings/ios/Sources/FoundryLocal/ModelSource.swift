@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import Foundation
+// URL isn't marked `Sendable` in corelibs Foundation on Linux, so `@preconcurrency`
+// silences the noise there. On Apple SDKs URL has been `Sendable` since Swift 5.7,
+// so the attribute is a no-op — real Sendable issues still surface.
+@preconcurrency import Foundation
 import FoundryLocalMobile
 
 /// Model source flavour, mirroring the JSON shapes documented on
