@@ -4,6 +4,8 @@
 import Foundation
 import FoundryLocalMobile
 
+#if canImport(Network)
+
 /// Root object of the Swift SDK. Wraps a single `flm_manager` handle.
 ///
 /// Owns:
@@ -247,6 +249,8 @@ public final class FoundryLocal: @unchecked Sendable {
         return "\(bundle).foundrylocal.\(appName).downloads"
     }
 }
+
+#endif // canImport(Network)
 
 // MARK: - Lifecycle event mirror
 

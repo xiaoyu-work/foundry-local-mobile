@@ -58,6 +58,10 @@
 import Foundation
 import FoundryLocalMobile
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -94,7 +98,7 @@ public final class URLSessionBackgroundTransport: NSObject, HTTPTransport, @unch
     }
 
     nonisolated(unsafe) private static var sharedCache: [String: URLSessionBackgroundTransport] = [:]
-    private static let sharedCacheLock = NSLock()
+    nonisolated(unsafe) private static let sharedCacheLock = NSLock()
 
     // MARK: - Public API
 
@@ -112,7 +116,14 @@ public final class URLSessionBackgroundTransport: NSObject, HTTPTransport, @unch
     }
 
     private func buildSession() -> URLSession {
+        #if canImport(Darwin)
         let config = URLSessionConfiguration.background(withIdentifier: identifier)
+        #else
+        // Background configurations are only supported on Darwin; falling back keeps
+        // the type checker happy on Linux Foundation. The transport is not meant to
+        // run there.
+        let config = URLSessionConfiguration.default
+        #endif
         config.allowsCellularAccess = allowsCellularAccess
         config.isDiscretionary = isDiscretionary
         #if canImport(UIKit)
@@ -169,7 +180,7 @@ public final class URLSessionBackgroundTransport: NSObject, HTTPTransport, @unch
     }
 
     nonisolated(unsafe) private static var backgroundCompletionHandlers: [String: @Sendable () -> Void] = [:]
-    private static let backgroundHandlersLock = NSLock()
+    nonisolated(unsafe) private static let backgroundHandlersLock = NSLock()
 
     // MARK: - HTTPTransport
 
@@ -405,8 +416,10 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, append:
         }
         try dst.seekToEnd()
         // Copy in reasonable chunks so a resumed multi-GB append doesn't spike RAM.
-        while let chunk = try? src.read(upToCount: 1 << 16), let data = chunk, !data.isEmpty {
-            try dst.write(contentsOf: data)
+        // `read(upToCount:)` returns nil at EOF on Darwin. `try` (not `try?`) so a
+        // read error propagates instead of being silently swallowed.
+        while let chunk = try src.read(upToCount: 1 << 16), !chunk.isEmpty {
+            try dst.write(contentsOf: chunk)
         }
         try? fm.removeItem(at: tempURL)
     } else {

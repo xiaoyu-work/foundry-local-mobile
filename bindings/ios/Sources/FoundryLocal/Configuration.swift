@@ -84,7 +84,7 @@ public struct FoundryLocalConfig: Sendable {
 }
 
 extension FoundryLocalConfig {
-    public enum LogLevel: String, Sendable {
+    public enum LogLevel: String, Sendable, Codable {
         case verbose, debug, info, warning, error, fatal, off
     }
 }

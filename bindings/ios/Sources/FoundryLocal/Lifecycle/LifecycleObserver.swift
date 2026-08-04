@@ -10,6 +10,8 @@
 
 import Foundation
 import FoundryLocalMobile
+
+#if canImport(Network)
 import Network
 
 #if canImport(UIKit)
@@ -141,3 +143,5 @@ final class LifecycleObserver: @unchecked Sendable {
         _ = flm_manager_notify_lifecycle(manager, event)
     }
 }
+
+#endif // canImport(Network)

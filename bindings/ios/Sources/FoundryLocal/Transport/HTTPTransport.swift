@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import Foundation
+// See ModelSource.swift for why `@preconcurrency` is on the Foundation import here.
+@preconcurrency import Foundation
 import FoundryLocalMobile
 
 /// One HTTP request the transport must perform, mirroring `flm_http_request` after the
@@ -96,7 +97,7 @@ public enum TransportReport {
 /// registry, and passes a stable `void*` to the ABI. The ABI copies the `flm_transport`
 /// struct on the way in.
 public enum TransportRegistry {
-    private static let lock = NSLock()
+    nonisolated(unsafe) private static let lock = NSLock()
 
     /// Currently installed transport, retained by the registry.
     nonisolated(unsafe) private static var current: (any HTTPTransport)?
