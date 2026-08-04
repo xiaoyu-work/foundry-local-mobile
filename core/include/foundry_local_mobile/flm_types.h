@@ -37,6 +37,17 @@ extern "C" {
  * FLM_INVALID_HANDLE (0) is never a valid handle. All handle types are the same
  * underlying integer type; distinct typedefs exist for documentation and for
  * bindings that generate typed wrappers.
+ *
+ * A handle is an opaque 64-bit value, not a pointer and not a small index. It
+ * encodes a kind tag in its high bits, so **every valid handle exceeds 2^56**.
+ *
+ * That matters for any binding whose host language lacks a 64-bit integer.
+ * JavaScript's `number` is an IEEE-754 double and is exact only to 2^53, where
+ * the spacing between representable values at handle magnitude is 16 — passing
+ * a handle through one silently rounds away the low bits of the slot index. It
+ * does not raise; it resolves to a different slot or to none, depending on what
+ * happens to be live. Bindings in that position must keep their own registry of
+ * small integer ids and never let a raw handle cross the boundary.
  * ------------------------------------------------------------------------- */
 
 typedef uint64_t flm_handle;
