@@ -84,10 +84,15 @@ jobs:
           key: fetchcontent-linux-${{ matrix.build_type }}-${{ hashFiles('core/CMakeLists.txt') }}
 
       - name: Configure
+        # FLM_BUILD_EXAMPLES=ON adds core/examples/hello_flm.c to the build. Compiling
+        # that file as C under -Werror is the whole point of the examples job below:
+        # if flm_api.h or flm_types.h grows a C++-only construct, this configure+build
+        # is what catches it before every FFI binding breaks at once.
         run: |
           cmake -S core -B build/linux -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DFLM_BUILD_SHARED=ON \
+            -DFLM_BUILD_EXAMPLES=ON \
             -DCMAKE_CXX_FLAGS="-Werror"
 
       - name: Build
@@ -134,6 +139,15 @@ jobs:
             echo "Update core/flm.map, or check that every ABI function is FLM_EXPORT-declared."
             exit 1
           fi
+
+      - name: Run the C ABI example
+        # The C-compat check is really the build step above — if flm_api.h stops
+        # compiling as C, hello_flm.c fails there and this step never runs.
+        # Running the binary is a small additional signal that the shared library
+        # actually loads and the version functions work end-to-end. The example is
+        # designed to exit 0 whether or not the upstream runtime is present on the
+        # runner (see the header comment in core/examples/hello_flm.c).
+        run: build/linux/examples/hello_flm
 
   # ---------------------------------------------------------------------------
   # Android cross-build via the NDK preinstalled on the GitHub-hosted runner.
