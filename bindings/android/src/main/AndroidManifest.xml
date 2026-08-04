@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT License. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        Network access is needed for the default OkHttp transport that downloads
+        model manifests and weights. Consumers that install their own transport
+        still need INTERNET because the SDK ships no offline-only mode; downloads
+        are the whole point of the remote model source.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+        Optional: apps that need multi-gigabyte downloads to survive being
+        backgrounded declare a foreground service in their own manifest. The
+        WorkManager variant of the transport works without any permission.
+    -->
+
+    <application>
+        <!--
+            Auto-register the lifecycle bridge on process start so ProcessLifecycleOwner
+            and ComponentCallbacks2 are wired before the app can call FoundryLocal.create.
+            Apps can disable this by adding a `tools:node="remove"` entry for the
+            provider in their manifest and calling FoundryLocal.attachLifecycle(context)
+            themselves.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="com.microsoft.ai.foundry.local.mobile.lifecycle.LifecycleInitializer"
+                android:value="androidx.startup" />
+        </provider>
+    </application>
+
+</manifest>
