@@ -43,6 +43,16 @@ import FoundryLocalMobile
 
 /// Slot-id registry mirroring the Kotlin binding's `HandleRegistry`.
 /// Ids start at 1 so the JS side can treat `0` as "invalid handle".
+///
+/// **Do not replace this indirection with a raw `flm_handle`.** A core handle
+/// packs a kind tag in its high bits and always exceeds `2^56`; JavaScript's
+/// `number` is exact only to `2^53`, so passing one across the RN bridge
+/// silently rounds away the low bits of the slot index and resolves to the
+/// wrong slot rather than raising. Anything crossing to JS as an `NSNumber`
+/// (see the `@objc` methods on `RNFoundryLocalCore`) must be a small
+/// sequential id minted here. See `core/include/foundry_local_mobile/flm_types.h`
+/// and the "Handles" section of `NativeFoundryLocal.ts` for the underlying
+/// invariant.
 private final class HandleRegistry<T: AnyObject>: @unchecked Sendable {
     private let lock = NSLock()
     private var nextId: Int = 1

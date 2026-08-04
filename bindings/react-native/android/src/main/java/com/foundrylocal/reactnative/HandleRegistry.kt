@@ -14,6 +14,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * module down releases every native handle without leaving zombie entries in
  * a process-wide table. Slot ids start at 1 so `0` remains reserved as an
  * "invalid handle" sentinel, matching `FLM_INVALID_HANDLE`.
+ *
+ * **Do not replace this indirection with a raw `flm_handle`.** A core handle
+ * packs a kind tag in its high bits and always exceeds `2^56`; JavaScript's
+ * `number` is exact only to `2^53`, so passing one across the RN bridge
+ * silently rounds away the low bits of the slot index and resolves to the
+ * wrong slot rather than raising. Anything crossing to JS as a `Double`
+ * (see [FoundryLocalModule]'s signatures) must be a small sequential id
+ * minted here. See `core/include/foundry_local_mobile/flm_types.h` and the
+ * "Handles" section of `NativeFoundryLocal.ts` for the underlying invariant.
  */
 internal class HandleRegistry<T : Any> {
     private val slots = ConcurrentHashMap<Int, T>()

@@ -10,10 +10,27 @@ import { TurboModuleRegistry } from 'react-native';
  *
  * ## Handles
  *
- * All native handles are opaque `number`s — slot ids into a handle table on
- * the native side, not raw pointers. They are always in the safe integer
- * range (`< 2^53`) so passing them through JavaScript's `number` type does
- * not lose precision.
+ * Every `number` returned from a `*Create` / `*GetCatalog` / `catalogGetModel`
+ * / `sessionCreate` call is **this binding's own registry slot id**, not the
+ * underlying `flm_handle` from the C ABI. The native side (Kotlin on Android,
+ * Swift on iOS) keeps a `HandleRegistry` that mints small sequential ids
+ * starting at 1; the id going across the bridge is that slot number and
+ * nothing more. The slot `0` is reserved as the invalid-handle sentinel so
+ * `nullable` returns can share the same `double` type in the codegen'd spec
+ * without an out-of-band signal.
+ *
+ * **`flm_handle` values must never cross this bridge.** A core handle packs
+ * a kind tag into its high bits and every valid one exceeds `2^56` — see
+ * `core/include/foundry_local_mobile/flm_types.h`. JavaScript's `number` is
+ * an IEEE-754 double and is exact only to `2^53`; at handle magnitude the
+ * spacing between representable values is 16, so passing a raw handle
+ * through silently rounds away the low four bits of the slot index. It does
+ * not raise — it resolves to a different slot or to nothing at all,
+ * depending on which ids happen to be live, and surfaces as the wrong model
+ * loading rather than as an error. The registry indirection is deliberate
+ * and load-bearing. Do not "simplify" it by returning `flm_handle` values
+ * to JS from a new method, and do not accept `flm_handle`-shaped ids from
+ * JS in a new one.
  *
  * ## JSON payloads
  *
