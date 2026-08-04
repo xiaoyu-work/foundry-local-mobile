@@ -345,11 +345,29 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, offset:
     let destinationURL = URL(fileURLWithPath: destinationPath)
     try fm.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-    // Resume path: append the temp file to whatever is already at destinationPath.
-    // The server should have responded with 206 Partial Content when we sent
-    // `Range: bytes=<offset>-`, so tempURL's contents are the bytes from offset
-    // onward.
-    if offset > 0, fm.fileExists(atPath: destinationPath) {
+    if offset > 0 {
+        // Resume path. Per the ABI contract on `flm_http_request.offset > 0` we sent
+        // `Range: bytes=<offset>-`, so `tempURL` contains bytes at logical position
+        // `offset` onward. We MUST append them to the existing destination — moving
+        // the temp file over an existing file (or into place when there is none)
+        // would produce a same-length file whose first `offset` bytes are the
+        // resumed tail, which passes any length check and only fails at the
+        // core's SHA-256 verification step. That in turn triggers a second full
+        // refetch, doubling the user's bandwidth for a corrupt outcome.
+        guard fm.fileExists(atPath: destinationPath) else {
+            // The core planned a resume against a file that is no longer on disk.
+            // Fail loud so the core can re-plan from offset 0 rather than write
+            // garbage.
+            try? fm.removeItem(at: tempURL)
+            throw NSError(
+                domain: "FoundryLocal.URLSessionBackgroundTransport",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "resume requested (offset=\(offset)) but destination \(destinationPath) is missing",
+                ]
+            )
+        }
         let src = try FileHandle(forReadingFrom: tempURL)
         let dst = try FileHandle(forWritingTo: destinationURL)
         defer {
@@ -363,9 +381,9 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, offset:
         }
         try? fm.removeItem(at: tempURL)
     } else {
-        // Fresh download (or resume with no prior file): remove any partial and move
-        // the temp file into place. Move is atomic within the same filesystem, which
-        // is what the temp dir and the app sandbox both are.
+        // Fresh download: remove any stale partial and move the temp file into
+        // place. Move is atomic within the same filesystem, which is what the
+        // temp dir and the app sandbox both are.
         if fm.fileExists(atPath: destinationPath) {
             try fm.removeItem(at: destinationURL)
         }
