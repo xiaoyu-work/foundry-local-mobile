@@ -98,11 +98,11 @@ public final class FoundryLocal: @unchecked Sendable {
 
     // MARK: - Model sources
 
-    /// Register an app-supplied model with the manager and return a usable handle.
+    /// Register an app-supplied model with the manager and hand back the result.
     ///
     /// **This is the model acquisition call on iOS.** The desktop Foundry Local
-    /// catalog isn't reachable from mobile, so `catalog.model(alias:)` only surfaces
-    /// what a source has already committed to disk. A model source is either a
+    /// catalog isn't reachable from mobile, so ``Catalog`` only surfaces what a
+    /// source has already committed to disk. A model source is either a
     /// directory already on disk (``ModelSource/bundled(name:folder:in:subdirectory:constraints:verifyChecksums:)``)
     /// or a URL the app hosts (``ModelSource/remote(name:url:headers:constraints:resume:verifyChecksums:)``).
     ///
@@ -114,16 +114,23 @@ public final class FoundryLocal: @unchecked Sendable {
     /// the source itself — the runtime picks the best variant against the manifest
     /// before any weights transfer, so the phone never spends bytes on the wrong
     /// build.
+    ///
+    /// The core mints a ready-to-use model handle inside the same job when the
+    /// scan of the freshly-installed files succeeds, which is the common case.
+    /// Read ``AddModelSourceResult/model`` and use it directly. When that field
+    /// is `nil` the transfer still succeeded — the files are at
+    /// ``AddModelSourceResult/path`` — and you can recover with a normal catalog
+    /// lookup by name if you want a handle.
     public func addModelSource(
         _ source: ModelSource,
         progress: (@Sendable (DownloadProgress) -> Void)? = nil
-    ) async throws -> Model {
+    ) async throws -> AddModelSourceResult {
         let json = try source.encodeAsJSON()
-        let result: AddModelSourceResult = try await runAsyncJob(
+        let payload: AddModelSourcePayload = try await runAsyncJob(
             progress: progress,
             decode: { job in
                 let text = try takeJobResultJSON(job)
-                return try flmJSONDecoder.decode(AddModelSourceResult.self, from: Data(text.utf8))
+                return try flmJSONDecoder.decode(AddModelSourcePayload.self, from: Data(text.utf8))
             },
             submit: { [handle] userData, onProgress, onComplete, outJob in
                 json.withCString { jsonPtr in
@@ -131,12 +138,21 @@ public final class FoundryLocal: @unchecked Sendable {
                 }
             }
         )
-        if result.modelHandle != 0 {
-            return Model(handle: flm_model(result.modelHandle))
-        }
-        // Files landed but the catalog scan missed them. The transfer succeeded —
-        // fall back to a normal catalog lookup rather than failing the caller.
-        return try await catalog.model(alias: result.name)
+        let model: Model? = payload.modelHandle != 0
+            ? Model(handle: flm_model(payload.modelHandle))
+            : nil
+        // ABI reports `""` for a non-package source. Normalise to `nil` so
+        // callers can just `if let variantId`.
+        let variantId = payload.variantId.flatMap { $0.isEmpty ? nil : $0 }
+        return AddModelSourceResult(
+            name: payload.name,
+            path: payload.path,
+            variantId: variantId,
+            bytesDownloaded: payload.bytesDownloaded,
+            bytesReused: payload.bytesReused,
+            wasCached: payload.wasCached,
+            model: model
+        )
     }
 
     // MARK: - Introspection

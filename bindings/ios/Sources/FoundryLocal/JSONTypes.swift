@@ -164,10 +164,10 @@ struct CatalogGetResult: Decodable {
     let modelHandle: UInt64
 }
 
-/// Payload of `flm_manager_add_model_source_async`. Internal — the public API
-/// returns the ``Model`` handle carried in ``modelHandle`` directly. The other
-/// fields are informational and not currently surfaced beyond decoding.
-struct AddModelSourceResult: Decodable {
+/// JSON DTO for `flm_manager_add_model_source_async`. The public
+/// ``AddModelSourceResult`` wraps this and swaps the raw handle for a
+/// ready-to-use ``Model``.
+struct AddModelSourcePayload: Decodable {
     let name: String
     let path: String
     let variantId: String?
@@ -175,9 +175,48 @@ struct AddModelSourceResult: Decodable {
     let bytesReused: Int64
     let wasCached: Bool
     /// Ready-to-use model handle, or `0` (`FLM_INVALID_HANDLE`) when the catalog
-    /// scan missed the freshly-committed files. `0` still means the transfer
-    /// succeeded — fall back to `flm_catalog_get_model_async` in that case.
+    /// scan did not pick up the freshly-committed files. `0` still means the
+    /// transfer succeeded; the caller can look the model up via the catalog by
+    /// ``name`` or work from ``path`` directly.
     let modelHandle: UInt64
+}
+
+/// Result of ``FoundryLocal/addModelSource(_:progress:)``. The download itself
+/// has completed by the time this is returned — the files are on disk at
+/// ``path`` — but variant selection, checksum verification and the local
+/// catalog scan all ran inside the same job.
+///
+/// In the common case ``model`` is a ready-to-use handle minted inside that
+/// same job, so acquisition is one round trip: no follow-up
+/// `flm_catalog_get_model_async` is needed. ``model`` is `nil` only in the
+/// rare case where the transfer succeeded but the catalog scan did not pick
+/// up the freshly-installed files. That is not an error — the model *is* on
+/// disk — so recover by looking the model up via ``FoundryLocal/catalog``
+/// by ``name``, or work from ``path`` directly:
+///
+/// ```swift
+/// let added = try await sdk.addModelSource(source)
+/// let model = try await added.model ?? sdk.catalog.model(alias: added.name)
+/// ```
+public struct AddModelSourceResult: Sendable {
+    /// Resolved model name (the `name` field from the ``ModelSource``).
+    public let name: String
+    /// Directory the model's files landed at.
+    public let path: String
+    /// Selected variant id when the source was a package, `nil` otherwise.
+    /// (The ABI reports `""` for the non-package case; we normalise that
+    /// to `nil` so a caller can just check `if let variantId`.)
+    public let variantId: String?
+    /// Bytes newly transferred during this call.
+    public let bytesDownloaded: Int64
+    /// Bytes reused from previously-cached shared assets.
+    public let bytesReused: Int64
+    /// `true` when every file was already on disk before this call and no
+    /// transfer was needed.
+    public let wasCached: Bool
+    /// Ready-to-use model handle, or `nil` in the handle-less case documented
+    /// on this type.
+    public let model: Model?
 }
 
 /// Payload of `flm_model_load_async`. `flm_model_download_async` returns the same

@@ -10,9 +10,14 @@ import FoundryLocalMobile
 /// Sessions are created against a loaded model, so the typical lifecycle is:
 ///
 /// ```swift
-/// let model = try await sdk.addModelSource(
+/// let added = try await sdk.addModelSource(
 ///     .remote(name: "qwen2.5-0.5b", url: myURL)
 /// ) { p in print("\(p.percent)%") }
+///
+/// // `added.model` is the freshly-minted handle in the common case, nil only
+/// // when the local catalog scan missed the fresh files; in that case fall
+/// // back to the catalog by name.
+/// let model = try await added.model ?? sdk.catalog.model(alias: added.name)
 /// try await model.load()
 /// let chat = try model.createChatSession()
 /// ```

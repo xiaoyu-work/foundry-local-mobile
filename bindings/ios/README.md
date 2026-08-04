@@ -106,10 +106,9 @@ import FoundryLocal
 let sdk = try FoundryLocal(config: FoundryLocalConfig(appName: "Notes"))
 
 // 1. Acquire the model. Ship it in the app bundle (a folder reference) or point at
-//    a URL you host. `addModelSource` returns a usable model handle when the files
-//    are on disk — either immediately for a bundled source, or after the download
-//    completes for a remote one.
-let model = try await sdk.addModelSource(
+//    a URL you host. `addModelSource` returns a result carrying — in the common
+//    case — a ready-to-use `model` handle minted inside the same job.
+let added = try await sdk.addModelSource(
     .remote(
         name: "qwen2.5-0.5b",
         url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!
@@ -117,6 +116,12 @@ let model = try await sdk.addModelSource(
 ) { p in
     print("\(p.percent)% — \(p.stage)")
 }
+
+// `added.model` is `nil` only in the rare case where the transfer succeeded but
+// the local catalog scan did not pick up the freshly-installed files — the model
+// *is* on disk at `added.path`, so recover with a catalog lookup by name rather
+// than treating it as an error.
+let model = try await added.model ?? sdk.catalog.model(alias: added.name)
 
 // 2. Load into memory (best EP chosen by default). No network work happens here.
 try await model.load()
@@ -138,7 +143,7 @@ policy to the source itself — the runtime picks the winning variant against th
 manifest and only fetches that one:
 
 ```swift
-let model = try await sdk.addModelSource(
+let added = try await sdk.addModelSource(
     .remote(
         name: "phi-4-mini",
         url: URL(string: "https://models.example.com/phi-4-mini/manifest.json")!,
@@ -148,6 +153,8 @@ let model = try await sdk.addModelSource(
         )
     )
 )
+let model = try await added.model ?? sdk.catalog.model(alias: added.name)
+print("picked variant \(added.variantId ?? "n/a")")
 try await model.load()
 
 // After the fact, inspect what was picked or reselect against fresh constraints:
@@ -178,7 +185,7 @@ Two shapes, both resolving to a directory the runtime can load. See
 ### Remote
 
 ```swift
-let model = try await sdk.addModelSource(
+let added = try await sdk.addModelSource(
     .remote(
         name: "my-fine-tune",
         url: URL(string: "https://models.example.com/my-fine-tune/manifest.json")!,
@@ -187,7 +194,12 @@ let model = try await sdk.addModelSource(
 ) { p in
     print("[\(p.stage)] \(p.percent)%")
 }
+let model = try await added.model ?? sdk.catalog.model(alias: added.name)
 ```
+
+`added` also carries `variantId`, `bytesDownloaded`, `bytesReused`, `wasCached`
+and `path` — surface `bytesDownloaded + bytesReused` in a "downloaded X MB"
+UI, or hand `path` to your own file inspector.
 
 The URL must point at a manifest — a Foundry model package `manifest.json` or a flat
 `model.json` file index. The SDK follows relative asset URLs against the manifest's
@@ -237,7 +249,8 @@ let source = try ModelSource.bundled(
     in: .main,
     subdirectory: "models"
 )
-let model = try await sdk.addModelSource(source)
+let added = try await sdk.addModelSource(source)
+let model = try await added.model ?? sdk.catalog.model(alias: added.name)
 ```
 
 ## Background downloads and AppDelegate wiring
