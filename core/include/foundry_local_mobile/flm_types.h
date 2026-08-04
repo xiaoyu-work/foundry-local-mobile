@@ -196,19 +196,38 @@ typedef enum flm_lifecycle_event {
  * They must not block for long and must not re-enter the ABI with the same job handle
  * (other handles are fine). Bindings are responsible for hopping to the appropriate
  * dispatch queue / coroutine context / isolate.
+ *
+ * LIFETIME, and the most common way to get this wrong: every struct and string handed
+ * to a callback is borrowed and valid ONLY for the duration of that call. The core
+ * builds them on the stack of the calling thread and destroys them the moment the
+ * callback returns. A binding that hands the raw pointer to another thread, queue or
+ * isolate and reads it there is reading freed memory. Copy everything you need out
+ * before returning — which, on the streaming delta path, means copying per token.
+ *
+ * The one exception is flm_http_request: the core blocks until the request completes,
+ * so that struct and its strings stay valid until you report completion for it.
  * ------------------------------------------------------------------------- */
 
-/** Progress notification. Return non-zero to request cancellation of the job. */
+/**
+ * Progress notification. Return non-zero to request cancellation of the job.
+ *
+ * `progress` and its strings are borrowed for the duration of the call only.
+ */
 typedef int32_t(FLM_CALLBACK* flm_progress_callback)(flm_job job, const flm_progress* progress, void* user_data);
 
-/** Streaming event. Return non-zero to request cancellation of the job. */
+/**
+ * Streaming event. Return non-zero to request cancellation of the job.
+ *
+ * `delta` and its strings are borrowed for the duration of the call only.
+ */
 typedef int32_t(FLM_CALLBACK* flm_delta_callback)(flm_job job, const flm_delta* delta, void* user_data);
 
 /**
  * Terminal notification for a job. Invoked exactly once per job, even on cancellation.
  *
  * `error_json` is NULL when `status` is FLM_OK; otherwise it is a borrowed UTF-8 JSON
- * object of the shape produced by flm_last_error_detail_json().
+ * object of the shape produced by flm_last_error_detail_json(), valid for the duration
+ * of the call only.
  *
  * After this returns, the job's result (if any) can still be read with
  * flm_job_take_result_json until flm_job_release is called.
