@@ -231,6 +231,26 @@ README for the exact command.
 | `bindings/flutter` | Android + iOS cross-builds | `flutter build` (in the sample) or `dart pub publish --dry-run` |
 | `bindings/react-native` | Android + iOS cross-builds | `npm pack` |
 
+## Build a sample app
+
+`samples/android/` is a Compose app that consumes the Android binding through
+the same Maven coordinate a released customer app would use. It exercises the
+full public API end to end: initialise the SDK, add a remote model source,
+show the selected variant and the alternatives, download with progress and a
+working cancel, load, and stream a chat completion.
+
+```bash
+cd samples/android
+./gradlew :app:assembleDebug
+```
+
+Output: `samples/android/app/build/outputs/apk/debug/app-debug.apk`.
+
+The sample reads `flm.sample.modelName`, `flm.sample.modelUrl` and
+`flm.sample.authHeader` from the sample's `local.properties` (git-ignored)
+so a developer can point it at a private manifest and credential without
+touching source. See `samples/android/README.md` for the full flow.
+
 ## Where artifacts land
 
 | Command | Artifact |

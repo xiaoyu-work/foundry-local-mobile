@@ -381,6 +381,89 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # Sample app. Consumes the AAR through the same Maven coordinate a real
+  # customer would, via a composite include of bindings/android/. This is the
+  # only compile signal we have on the public API surface: if the sample stops
+  # building, either the API changed shape or the sample used a symbol that
+  # never existed.
+  # ---------------------------------------------------------------------------
+  android-sample:
+    name: samples / android debug APK
+    runs-on: ubuntu-latest
+    needs: android-binding
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licences
+        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+
+      - name: Cache Gradle wrapper and dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-android-sample-${{ hashFiles('samples/android/gradle/wrapper/gradle-wrapper.properties', 'samples/android/**/build.gradle.kts', 'samples/android/settings.gradle.kts', 'bindings/android/build.gradle.kts') }}
+          restore-keys: |
+            gradle-android-sample-
+            gradle-android-
+
+      - name: Cache upstream SDK headers
+        uses: actions/cache@v4
+        with:
+          path: third_party/foundry-local
+          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+
+      - name: Fetch Foundry Local headers
+        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+
+      - name: Cache the nested core CMake FetchContent
+        uses: actions/cache@v4
+        with:
+          path: bindings/android/.cxx/**/_deps
+          key: fetchcontent-android-binding-${{ hashFiles('core/CMakeLists.txt') }}
+
+      - name: Assemble debug APK
+        working-directory: samples/android
+        # assembleDebug rather than Release: the sample has no signing config
+        # and the CI signal we want is the compile, not a shippable artifact.
+        run: ./gradlew --no-daemon --console=plain :app:assembleDebug
+
+      - name: Verify the APK carries all three target ABIs with the shipped libs
+        run: |
+          set -euo pipefail
+          apk=samples/android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "${apk}" || { echo "::error::sample APK missing at ${apk}"; exit 1; }
+          libs=$(unzip -l "${apk}" | awk '/lib\/.*\.so$/ {print $4}' | sort -u)
+          echo "${libs}"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            for so in libfoundry_local_mobile.so libfoundry_local_mobile_jni.so libc++_shared.so; do
+              if ! grep -qx "lib/${abi}/${so}" <<<"${libs}"; then
+                echo "::error::sample APK missing lib/${abi}/${so}"
+                exit 1
+              fi
+            done
+          done
+          # No stray x86 slice from transitive AndroidX libs — abiFilters kept the APK matched.
+          if grep -qE '^lib/x86/' <<<"${libs}"; then
+            echo "::error::sample APK contains lib/x86/ (abiFilters regression)"
+            exit 1
+          fi
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundry-local-sample-android-debug
+          path: samples/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
   # Apple cross-build. macOS runners are slower and more expensive, so this
   # runs on push to main and on PRs that touch code affecting the Apple build.
   # ---------------------------------------------------------------------------
