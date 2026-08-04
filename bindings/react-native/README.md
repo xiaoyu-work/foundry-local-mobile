@@ -8,7 +8,7 @@ on-device LLM inference from JavaScript, backed by ONNX Runtime.
 | Platform | Status |
 | --- | --- |
 | Android | Wired. Wraps the `bindings/android/` Kotlin binding through a TurboModule. |
-| iOS | **Not yet wired.** The Swift binding this module wraps is being written in parallel; the iOS TurboModule scaffold is in place but every native method rejects with a `notImplemented` `FoundryLocalError` at runtime. Do not use on iOS until the Swift binding lands and the iOS module is wired in a follow-up release. |
+| iOS | Wired against the Swift binding at `bindings/ios/Sources/FoundryLocal/`, unverified. The iOS TurboModule wraps the Swift binding so the JS surface is identical to Android's, but neither the Swift binding nor this wrapper has been compiled — no Swift toolchain has been run against them yet. Confidence is structural review only; the first `swift build` / `pod install` may surface build issues. |
 
 ## Installation
 
@@ -20,6 +20,7 @@ npm install @foundry-local/react-native
 
 - React Native **≥ 0.73** with the **New Architecture** enabled (this package is a TurboModule; the legacy bridge is not supported).
 - Android **minSdk 26** (arm64-v8a and armeabi-v7a). NDK build is handled by the wrapped Kotlin binding — no `externalNativeBuild` block in your app is required.
+- iOS **15.0+** (the Swift binding uses `AsyncThrowingStream`). Before running `pod install`, build the C ABI XCFramework once by running `scripts/build_apple.sh` from the repo root — the podspec vendors `bindings/ios/Frameworks/FoundryLocalMobile.xcframework`, and the pod will not link without it.
 - Autolinking picks this package up automatically. If you have opted out of autolinking, register the module under `RNFoundryLocal`.
 
 Codegen configuration is declared in this package's `package.json` (`codegenConfig`); no additional Gradle setup is needed in your app.
@@ -173,8 +174,8 @@ No bare `Error` reaches an app from the SDK.
 ## Architecture notes
 
 - **Android**: this package's TurboModule wraps the Kotlin binding at `bindings/android/`. It does not re-bind the C ABI — every download, callback, transport, and lifecycle concern is handled by the Kotlin binding's existing OkHttp + WorkManager transport, which survives the app being backgrounded and applies the append-on-resume fix for partial downloads.
-- **iOS**: the podspec depends on `React-Core`; every method rejects with `notImplemented` today. When the Swift binding lands the iOS module will wrap it the same way the Android module wraps Kotlin — see `ios/RNFoundryLocal.mm` for the scaffold and the TODO comment at the top.
-- **Wire format**: everything richer than a primitive crosses the TurboModule boundary as a UTF-8 JSON string. The TypeScript layer parses/produces those strings, so the codegen'd spec stays small and the same JSON shape is used by the iOS module when it is wired.
+- **iOS**: this package's TurboModule wraps the Swift binding at `bindings/ios/Sources/FoundryLocal/`, mirroring Android's shape. `ios/RNFoundryLocalCore.swift` owns the handle registries and subscription table; `ios/RNFoundryLocal.mm` is a thin Objective-C++ `RCTEventEmitter` that exports the codegen'd selectors and forwards to Swift. Streaming maps `AsyncThrowingStream` to the same `FoundryLocal:*` event names the Android module uses, so the shared JS async-iterator layer is platform-agnostic. The podspec vendors the Swift binding's source tree until a `FoundryLocalKit.podspec` ships.
+- **Wire format**: everything richer than a primitive crosses the TurboModule boundary as a UTF-8 JSON string. The TypeScript layer parses/produces those strings, so the codegen'd spec stays small and the same JSON shape is used by iOS and Android.
 - **Handles**: all native handles are opaque `number`s (slot ids into a per-module registry). The `0` slot is reserved as the invalid-handle sentinel.
 
 ## License
