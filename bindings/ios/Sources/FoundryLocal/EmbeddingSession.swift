@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// A text-embedding session over a loaded embedding model.
 public final class EmbeddingSession: @unchecked Sendable {

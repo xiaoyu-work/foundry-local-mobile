@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Options for a chat session, mirroring the JSON schema on `flm_session_create` /
 /// `flm_session_set_options`.

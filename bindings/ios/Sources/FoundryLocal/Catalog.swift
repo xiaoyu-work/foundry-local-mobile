@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Read-only view of the model catalog. Obtained from ``FoundryLocal/catalog``.
 ///

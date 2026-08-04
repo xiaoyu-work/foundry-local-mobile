@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// A model, model package or package variant. All three flavours share this handle
 /// type; the ABI disambiguates through ``isPackage``.

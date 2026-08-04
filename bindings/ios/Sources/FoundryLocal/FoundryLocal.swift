@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Root object of the Swift SDK. Wraps a single `flm_manager` handle.
 ///

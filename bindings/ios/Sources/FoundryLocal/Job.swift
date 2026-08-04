@@ -32,7 +32,7 @@
 //      call returns.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Continuation guarded by a lock, so an early cancel path and the eventual completion
 /// callback can race for who wakes the awaiter, and only the first winner actually

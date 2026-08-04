@@ -9,7 +9,7 @@
 // standard `UIApplication`, `ProcessInfo` and `NWPathMonitor` notifications for you.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 import Network
 
 #if canImport(UIKit)

@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Snapshot of a long-running operation, mirroring `flm_progress`. Progress values from
 /// the ABI are borrowed C strings; every field here is copied out before the callback

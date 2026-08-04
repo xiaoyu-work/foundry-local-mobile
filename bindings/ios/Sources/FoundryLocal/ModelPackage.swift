@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Model-package facet of ``Model``. On a non-package handle these calls throw
 /// ``FoundryLocalError/Code/invalidState``.

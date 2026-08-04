@@ -56,7 +56,7 @@
 // deletes and reinstalls — resume data does not.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 #if canImport(UIKit)
 import UIKit

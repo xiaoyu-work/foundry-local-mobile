@@ -49,8 +49,8 @@ multi-gigabyte model downloads running while the app is backgrounded or killed.
 )
 ```
 
-`FoundryLocal` depends on an XCFramework named `FoundryLocalCore` that ships alongside
-this package under `Frameworks/FoundryLocalCore.xcframework`. Published releases attach
+`FoundryLocal` depends on an XCFramework named `FoundryLocalMobile` that ships alongside
+this package under `Frameworks/FoundryLocalMobile.xcframework`. Published releases attach
 a pre-built XCFramework to the GitHub release. For local development, build it
 yourself as described in [Building the XCFramework](#building-the-xcframework).
 
@@ -61,21 +61,30 @@ podspec that mirrors this package.
 
 ## Building the XCFramework
 
-Run once, from the repository root:
+From the repository root:
 
 ```bash
-./bindings/ios/scripts/build_xcframework.sh
+./scripts/build_apple.sh
+cp -R build/apple/FoundryLocalMobile.xcframework bindings/ios/Frameworks/
 ```
 
-The script:
+Or, from inside `bindings/ios/`, use the wrapper that does the copy for you:
 
-- Builds the C++ core with CMake for iOS device (`arm64`), iOS simulator
-  (`arm64` + `x86_64`), and macOS (`arm64` + `x86_64`). Set `FLM_SKIP_MACOS=1` to skip
-  the macOS slice, or `FLM_SKIP_VISIONOS=0` to opt into building the visionOS slices.
-- Wraps each static archive in a `.framework` bundle with an umbrella header and a
-  module map, so Swift can `import FoundryLocalCore` directly.
+```bash
+./scripts/build_xcframework.sh
+```
+
+The top-level `scripts/build_apple.sh`:
+
+- Builds the C++ core with CMake for iOS device (`arm64`) and iOS simulator
+  (`arm64` and `x86_64`, fused into a single Mach-O with `lipo`). Pass `--macos` to
+  add a macOS slice.
+- Wraps each build in a `.framework` bundle with a public umbrella header (`flm_api.h`)
+  and a module map, so Swift resolves `import FoundryLocalMobile` without a bridging
+  header.
 - Combines the slices with `xcodebuild -create-xcframework` into
-  `bindings/ios/Frameworks/FoundryLocalCore.xcframework`.
+  `build/apple/FoundryLocalMobile.xcframework`. The wrapper above copies it into
+  `bindings/ios/Frameworks/` where `Package.swift` references it.
 
 Requirements:
 

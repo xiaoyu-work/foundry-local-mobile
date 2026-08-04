@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// One event from a streaming inference session — a token fragment, a reasoning trace,
 /// a tool call the model wants executed, a speech hypothesis or a terminal marker.

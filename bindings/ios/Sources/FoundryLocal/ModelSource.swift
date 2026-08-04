@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Model source flavour, mirroring the JSON shapes documented on
 /// `flm_manager_add_model_source_async`.

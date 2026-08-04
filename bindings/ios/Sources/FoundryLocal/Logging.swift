@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 import os
 
 /// Route the core's internal log messages into `os_log`, or into a custom sink.

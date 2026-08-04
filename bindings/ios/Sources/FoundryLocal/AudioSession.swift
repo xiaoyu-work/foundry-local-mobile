@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// Options for a speech-to-text session.
 public struct AudioSessionOptions: Sendable {

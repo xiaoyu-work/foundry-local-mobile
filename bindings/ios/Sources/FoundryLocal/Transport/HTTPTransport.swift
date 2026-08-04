@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import Foundation
-import FoundryLocalCore
+import FoundryLocalMobile
 
 /// One HTTP request the transport must perform, mirroring `flm_http_request` after the
 /// borrowed C pointers have been copied into Swift-owned storage.
