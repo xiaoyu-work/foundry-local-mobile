@@ -133,9 +133,32 @@ public class ChatSession internal constructor(model: Model, options: ChatOptions
             "tool_calls" -> FinishReason.TOOL_CALLS
             "cancelled" -> FinishReason.CANCELLED
             "error" -> FinishReason.ERROR
+            // "none" or anything else falls through: the model produced text
+            // but the runtime did not report a terminal reason.
             else -> FinishReason.NONE
         }
-        return CompleteResult(text = text, finishReason = finishReason, rawJson = json)
+        // Both `tool_calls` and `usage` are absent when there is nothing to
+        // report, per the ABI shape doc. Do not synthesise an empty Usage or
+        // treat an empty list as an error — a text-only turn is normal.
+        val toolCalls = (obj["tool_calls"] as? JsonArray)?.mapNotNull { el ->
+            (el as? JsonObject)?.let { tc ->
+                Delta.ToolCall(
+                    callId = tc["call_id"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                    name = tc["name"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                    // Wire form: arguments is a JSON *string* (double-encoded)
+                    // because the model may emit something that doesn't match
+                    // the tool schema, and it's the app's job to decide.
+                    argumentsJson = tc["arguments"]?.jsonPrimitive?.content ?: "{}",
+                )
+            }
+        } ?: emptyList()
+        val usage = (obj["usage"] as? JsonObject)?.let { u ->
+            Delta.Usage(
+                promptTokens = u["prompt_tokens"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                completionTokens = u["completion_tokens"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+            )
+        }
+        return CompleteResult(text, finishReason, toolCalls, usage, json)
     }
 
     /**
@@ -192,11 +215,25 @@ public class AudioSession internal constructor(model: Model, options: AudioOptio
             NativeBridge.sessionTranscribeAsync(requireHandle(), request.toJson(), true, corr)
         }
 
-    public suspend fun transcribe(request: TranscribeRequest): String {
+    /** Transcribe [request] and return the full result (text, language, segments). */
+    public suspend fun transcribe(request: TranscribeRequest): TranscribeResult {
         val json = JobBridge.awaitResult { corr ->
             NativeBridge.sessionTranscribeAsync(requireHandle(), request.toJson(), false, corr)
-        } ?: return ""
-        return JsonCodec.parseObject(json)["text"]?.jsonPrimitive?.content ?: ""
+        } ?: return TranscribeResult(text = "", language = null, segments = emptyList())
+        val obj = JsonCodec.parseObject(json)
+        val text = obj["text"]?.jsonPrimitive?.content ?: ""
+        val language = obj["language"]?.jsonPrimitive?.content
+        val segments = (obj["segments"] as? JsonArray)?.mapNotNull { el ->
+            (el as? JsonObject)?.let { seg ->
+                TranscribeSegment(
+                    text = seg["text"]?.jsonPrimitive?.content ?: "",
+                    startTimeMs = seg["start_time_ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                    endTimeMs = seg["end_time_ms"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                    language = seg["language"]?.jsonPrimitive?.content,
+                )
+            }
+        } ?: emptyList()
+        return TranscribeResult(text, language, segments)
     }
 
     /**
@@ -394,10 +431,30 @@ public sealed class TranscribeRequest {
 public data class CompleteResult(
     val text: String,
     val finishReason: FinishReason,
+    /** Tool calls the model wants executed. Empty when none. */
+    val toolCalls: List<Delta.ToolCall> = emptyList(),
+    /** Token accounting, or null if the runtime did not report it. */
+    val usage: Delta.Usage? = null,
+    /** The raw completion JSON, exposed for callers who need unmodelled fields. */
     val rawJson: String? = null,
 )
 
 public data class EmbeddingResult(
     val embeddings: List<List<Float>>,
     val dimensions: Int,
+)
+
+public data class TranscribeResult(
+    val text: String,
+    /** Detected language BCP-47 tag, or null when the model reports none. */
+    val language: String?,
+    /** Aligned segments; empty when the runtime does not report timestamps. */
+    val segments: List<TranscribeSegment>,
+)
+
+public data class TranscribeSegment(
+    val text: String,
+    val startTimeMs: Long,
+    val endTimeMs: Long,
+    val language: String?,
 )

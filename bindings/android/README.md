@@ -47,8 +47,14 @@ your first `FoundryLocal.create`.
 ```kotlin
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
-val model = foundry.catalog.getModel("qwen2.5-0.5b")
-model.download().collect { progress -> println("${progress.percent}%") }
+// Point the SDK at your model: bundled in the app, or hosted on storage you control.
+val model = foundry.addModelSource(
+    ModelSource.Remote(
+        name = "qwen2.5-0.5b",
+        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
+    )
+) { progress -> println("${progress.percent}%") }
+
 model.load()
 
 val chat = model.createChatSession()
@@ -104,6 +110,11 @@ val model = foundry.addModelSource(
         name = "phi-4-mini",
         url = "https://models.example.com/phi-4-mini/manifest.json",
         headers = mapOf("Authorization" to "******"),
+        // Both default to true. Turn `resume` off to force a fresh fetch,
+        // and `verifyChecksums` off to skip the SHA-256 check on both the
+        // reuse and post-download paths.
+        resume = true,
+        verifyChecksums = true,
     ),
 ) { progress ->
     println("Downloading ${progress.stage}: ${progress.percent}%")
@@ -115,6 +126,14 @@ manifest and a flat file index work. When it is a package, only the variant
 this device can run and the shared assets it references are downloaded —
 never the variants a phone cannot run, which are routinely larger than the
 one it can.
+
+**On acquisition and downloads.** `Model.download()` and `Model.load()`
+work on a model whose files are already on the device: the ones from
+`addModelSource`, or a bundled model already extracted with
+`BundledAssets`. There is no implicit catalog fetch — the Foundry Local
+catalog publishes desktop builds (CUDA, DirectML, OpenVINO, x64), which are
+gigabytes of weights a phone cannot execute. A model that is not on the
+device throws `NotImplementedException` pointing at `addModelSource`.
 
 ## HTTP transport
 

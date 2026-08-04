@@ -46,20 +46,25 @@ public open class Model internal constructor(
      *
      * For a package handle this downloads the currently selected variant plus
      * the shared assets it references — not the whole package.
+     *
+     * `resume` and checksum verification are set on the [ModelSource] itself,
+     * not on the download call.
      */
     public fun download(
         allowMetered: Boolean? = null,
-        resume: Boolean? = null,
-        verifyChecksums: Boolean? = null,
     ): Flow<Progress> {
-        val opts = JsonCodec.encodeDownloadOptions(allowMetered, resume, verifyChecksums)
+        val opts = JsonCodec.encodeDownloadOptions(allowMetered)
         return JobBridge.progressStream { corr ->
             NativeBridge.modelDownloadAsync(requireHandle(), opts, corr)
         }
     }
 
     /**
-     * Load the model into memory, downloading it first if necessary.
+     * Load the model into memory.
+     *
+     * The model must already be on the device — call [FoundryLocal.addModelSource]
+     * and, for a remote source, [download] first. Loading a model whose files are
+     * absent throws [NotImplementedException] pointing at the source API.
      */
     public suspend fun load(
         executionProvider: String? = null,

@@ -14,8 +14,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
-import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonPrimitive
@@ -27,9 +27,12 @@ import kotlinx.serialization.json.buildJsonObject
  * Behaviour:
  *
  *  * **Ranged resume.** When [NativeHttpRequest.offset] is > 0 the transport
- *    sends `Range: bytes=<offset>-`, opens the destination in append mode
- *    from that offset, and writes body bytes as they arrive. This is what
- *    lets a multi-gigabyte download survive an app restart.
+ *    sends `Range: bytes=<offset>-` and, on a `206 Partial Content` response,
+ *    opens the destination in **append mode** so the bytes the core already
+ *    trusts on disk are preserved. If the server ignores the range and
+ *    returns `200 OK` with the full body, the file is truncated and rewritten
+ *    from byte 0 — writing a fresh full body onto an existing prefix would
+ *    silently corrupt the model.
  *  * **In-memory delivery.** When [NativeHttpRequest.destinationPath] is
  *    `null` the body is buffered in memory (bounded — the ABI only asks for
  *    small documents like catalog listings and manifests this way) and
@@ -149,13 +152,18 @@ public class OkHttpTransport(
         reporter: TransportReporter,
     ) {
         val body = response.body ?: throw IOException("empty body")
+        val destinationPath = request.destinationPath
+
+        // 206: content-length is the range portion, so the absolute total is length + offset.
+        // 200: content-length is the whole resource; use it as-is regardless of offset.
+        val serverHonouredRange = response.code == 206 && request.offset > 0L
         val expectedTotal = when {
             request.expectedBytes > 0 -> request.expectedBytes
-            body.contentLength() > 0 -> body.contentLength() + request.offset
+            body.contentLength() > 0 -> body.contentLength() +
+                (if (serverHonouredRange) request.offset else 0L)
             else -> -1L
         }
 
-        val destinationPath = request.destinationPath
         if (destinationPath.isNullOrEmpty()) {
             // In-memory delivery: buffer up to the cap, then hand off.
             val bytes = body.byteStream().use { stream ->
@@ -181,20 +189,23 @@ public class OkHttpTransport(
 
         val file = File(destinationPath)
         file.parentFile?.mkdirs()
-        RandomAccessFile(file, "rw").use { raf ->
-            // Honour resume: seek to `offset` regardless of whether the
-            // server returned 206 or 200. Requesting a `Range` and getting a
-            // full 200 back is legal, and truncating would corrupt the file
-            // that the core already trusts up to `offset`.
-            raf.seek(request.offset)
+
+        // Two write modes are correct here; the wrong one silently corrupts the file:
+        //   206 Partial Content + offset > 0 -> APPEND: bytes 0..offset-1 must survive.
+        //   200 OK (or offset == 0)          -> TRUNCATE: the body is the whole resource
+        //                                       from byte 0, so any stale prefix has to go.
+        // Opening a FileOutputStream in append=true translates to O_APPEND on Linux;
+        // opening with append=false truncates on open — exactly the semantics we need.
+        val startByte = if (serverHonouredRange) request.offset else 0L
+        FileOutputStream(file, /* append = */ serverHonouredRange).use { fos ->
             body.byteStream().use { stream ->
                 val chunk = ByteArray(64 * 1024)
-                var total = request.offset
+                var total = startByte
                 var lastReported = total
                 while (true) {
                     val n = stream.read(chunk)
                     if (n <= 0) break
-                    raf.write(chunk, 0, n)
+                    fos.write(chunk, 0, n)
                     total += n
                     // Throttle progress reports; the core aggregates them
                     // anyway and JNI hops are not free.

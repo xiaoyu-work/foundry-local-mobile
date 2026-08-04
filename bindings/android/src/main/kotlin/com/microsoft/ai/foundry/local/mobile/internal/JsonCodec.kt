@@ -67,6 +67,8 @@ internal object JsonCodec {
             put("name", source.name)
             put("path", source.path)
             put("copy_into_cache", source.copyIntoCache)
+            put("resume", source.resume)
+            put("verify_checksums", source.verifyChecksums)
         }.toString()
         is ModelSource.Remote -> buildJsonObject {
             put("kind", "remote")
@@ -77,6 +79,8 @@ internal object JsonCodec {
                     source.headers.forEach { (k, v) -> put(k, v) }
                 })
             }
+            put("resume", source.resume)
+            put("verify_checksums", source.verifyChecksums)
         }.toString()
     }
 
@@ -106,14 +110,10 @@ internal object JsonCodec {
 
     fun encodeDownloadOptions(
         allowMetered: Boolean? = null,
-        resume: Boolean? = null,
-        verifyChecksums: Boolean? = null,
     ): String? {
-        if (allowMetered == null && resume == null && verifyChecksums == null) return null
+        if (allowMetered == null) return null
         return buildJsonObject {
-            allowMetered?.let { put("allow_metered", it) }
-            resume?.let { put("resume", it) }
-            verifyChecksums?.let { put("verify_checksums", it) }
+            allowMetered.let { put("allow_metered", it) }
         }.toString()
     }
 

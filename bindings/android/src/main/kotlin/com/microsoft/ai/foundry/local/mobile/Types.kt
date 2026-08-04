@@ -174,6 +174,21 @@ public sealed class ModelSource {
     public abstract val name: String
 
     /**
+     * Whether a partial download already on disk should be resumed. Defaults
+     * to `true`. Set `false` to force a fresh fetch — the core discards any
+     * partial file and refetches from offset 0.
+     */
+    public abstract val resume: Boolean
+
+    /**
+     * Whether each file's SHA-256 is verified after download and against a
+     * previously downloaded copy. Defaults to `true`. Turning this off makes
+     * an incremental catalog refresh cheaper on device but disables the
+     * corruption check the core normally performs.
+     */
+    public abstract val verifyChecksums: Boolean
+
+    /**
      * A model already present on the device. The default is to load it in
      * place; set [copyIntoCache] when the source path is temporary.
      */
@@ -181,6 +196,8 @@ public sealed class ModelSource {
         override val name: String,
         val path: String,
         val copyIntoCache: Boolean = false,
+        override val resume: Boolean = true,
+        override val verifyChecksums: Boolean = true,
     ) : ModelSource()
 
     /**
@@ -191,6 +208,8 @@ public sealed class ModelSource {
         override val name: String,
         val url: String,
         val headers: Map<String, String> = emptyMap(),
+        override val resume: Boolean = true,
+        override val verifyChecksums: Boolean = true,
     ) : ModelSource()
 }
 
@@ -266,8 +285,11 @@ public sealed class Delta {
     public data class Reasoning(val text: String) : Delta()
 
     /**
-     * A complete tool call the model wants executed. Arguments are a JSON
-     * object; parse them with [kotlinx.serialization.json.Json].
+     * A complete tool call the model wants executed. `argumentsJson` is the
+     * raw JSON payload the model produced — usually a JSON object matching
+     * the tool's declared schema. A runaway model may emit something that
+     * does not match, and deciding what to do about that belongs to the
+     * app; parse defensively.
      */
     public data class ToolCall(
         val callId: String,
