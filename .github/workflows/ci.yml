@@ -489,7 +489,23 @@ jobs:
           key: fetchcontent-apple-${{ hashFiles('core/CMakeLists.txt') }}
 
       - name: Build XCFramework
-        run: ./scripts/build_apple.sh --build-type Release
+        run: ./bindings/ios/scripts/build_xcframework.sh --build-type Release
+
+      # The XCFramework only proves the C++ core compiles for Apple. The Swift
+      # binding on top of it is a separate body of code, and until this step it
+      # was never compiled anywhere — a green CI said nothing about it.
+      - name: Build the Swift package
+        run: swift build --package-path bindings/ios
+
+      # macOS is not enough on its own: the lifecycle observer is behind
+      # `canImport(UIKit)`, so building for the host would skip it entirely.
+      # An iOS destination is what actually compiles those paths.
+      - name: Type-check the Swift package for iOS
+        run: |
+          xcodebuild build \
+            -scheme FoundryLocal \
+            -destination 'generic/platform=iOS'
+        working-directory: bindings/ios
 
       - name: Upload XCFramework
         uses: actions/upload-artifact@v4
