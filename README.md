@@ -34,7 +34,7 @@ were. What each one has actually been through:
 
 | Target | Compiled | Verified on device |
 |---|---|---|
-| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | No |
+| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | Not on a phone, but exercised end to end against the real Foundry Local runtime: a bundled model package is registered, scored against the host's execution providers, the matching variant selected, published into the cache and resolved back to a live model handle |
 | **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
 | **iOS** | Partly — the Foundation subset type-checks against the real C ABI headers under strict concurrency; the UIKit/Network parts need a Mac | No |
 | **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
@@ -45,6 +45,11 @@ checked against its Kotlin `external fun` declarations at build time, which turn
 would otherwise be an `UnsatisfiedLinkError` on a user's phone into a build failure. It
 says nothing about whether the code behaves correctly once it runs. Treat the unchecked
 rows as unproven rather than broken, and please report what you find.
+
+The core's end-to-end run is worth reading precisely: it proves the model-source and
+model-package paths work against the genuine runtime, on a desktop Linux host, with a
+fixture package rather than real weights. Inference itself has never been run, and no
+binding has executed on phone hardware.
 
 ## Why a separate mobile SDK?
 
