@@ -39,7 +39,8 @@ public open class Model internal constructor(
      * The cache is invalidated automatically after [load], [unload] and
      * [delete]. Explicit [refresh] is only needed when an out-of-band change
      * — a manual filesystem edit, another process — has made the cache
-     * stale.
+     * stale. Note that this applies to [info] only; see [refresh] for why
+     * it does not extend to [ModelPackage.variants].
      */
     public val info: ModelInfo
         get() {
@@ -61,6 +62,14 @@ public open class Model internal constructor(
      * [ModelPackage.selectVariant] and [ModelPackage.selectBestVariant]; an
      * explicit call is only useful when something outside the SDK's control
      * has invalidated the cache.
+     *
+     * For [info] that works: the ABI re-queries the runtime on every call.
+     * For [ModelPackage.variants] it does not. The core scans a package
+     * directory once, when the model handle first resolves a package, and
+     * holds that snapshot until the model is deleted; the variants ABI
+     * re-serialises it rather than re-reading disk. Refreshing therefore
+     * re-decodes the same bytes. To observe a download that completed
+     * elsewhere, obtain a new model handle from the manager.
      */
     public open fun refresh() {
         cachedInfo = null
@@ -194,8 +203,10 @@ public class ModelPackage internal constructor(handle: Long) : Model(handle) {
      * [selectBestVariant] because those change [PackageVariants.selectedVariantId];
      * call [refresh] for an unconditional re-read.
      *
-     * `downloadSizeBytes` reflects the current cache state — shared assets
-     * already on disk are excluded, so the value shrinks as the cache fills.
+     * `downloadSizeBytes` excludes shared assets that were already on disk
+     * when the package was first scanned. It is fixed for the lifetime of
+     * this handle — it does not shrink as a download progresses, because
+     * the core does not re-stat the directory. See [refresh].
      */
     public val variants: PackageVariants
         get() {

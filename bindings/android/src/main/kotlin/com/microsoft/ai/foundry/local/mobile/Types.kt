@@ -112,8 +112,9 @@ public data class ExecutionProviderInfo(
      * values are progressively worse fallbacks.
      *
      * Concrete values from the platform detectors:
-     * `0` for accelerator providers (QNN on Android NPU, CoreML on iOS
-     * NPU), `20` for XNNPACK (the fast ARM CPU path), `30` for the generic
+     * `0` for accelerator providers (QNN, NNAPI, CoreML, OpenVINO,
+     * VitisAI), `10` for GPU providers (CUDA, DirectML, Metal, WebGPU,
+     * ROCm), `20` for XNNPACK (the fast ARM CPU path), `30` for the generic
      * CPU provider, and `100` for providers the SDK does not otherwise
      * classify. Sort ascending in a debug UI to see the SDK's own preference
      * order.
