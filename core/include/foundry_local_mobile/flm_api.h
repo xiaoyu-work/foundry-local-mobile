@@ -286,9 +286,11 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *   "model_handle"}`.
  *
  * `model_handle` is a ready-to-use model, so there is no need to look the model up
- * through the catalog afterwards. It is FLM_INVALID_HANDLE in the unexpected case where
- * the files landed but the catalog did not pick them up; the download still succeeded.
- * Release it with flm_model_release() as usual.
+ * through the catalog afterwards. It is FLM_INVALID_HANDLE when the files landed but the
+ * catalog did not pick them up; the download still succeeded, so treat that as success
+ * and fall back to a catalog lookup only if you need a handle. Release it with
+ * flm_model_release() as usual — releasing FLM_INVALID_HANDLE is a no-op, so an
+ * unconditional release is safe.
  */
 FLM_EXPORT flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, const char* source_json,
                                                                   flm_progress_callback on_progress,

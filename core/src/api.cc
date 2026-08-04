@@ -333,13 +333,17 @@ flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, cons
         // Hand back a usable model, not just a path. The files are on disk now, so the
         // catalog's local scan will find them; resolving here saves every binding an
         // extra async round-trip through flm_catalog_get_model_async just to reach the
-        // model it explicitly asked for. If the scan somehow misses it the download
-        // still succeeded, so report the handle as absent rather than failing.
+        // model it explicitly asked for.
+        //
+        // This is strictly a convenience, so nothing it does may fail the job: the bytes
+        // are already committed to disk, and reporting a completed download as a failure
+        // would send the caller back to re-fetch hundreds of megabytes, potentially over
+        // a metered connection. Any failure here just means no handle.
         try {
           if (auto model = instance->catalog()->GetModel(result.value("name", std::string()))) {
             result["model_handle"] = RegisterModel(model);
           }
-        } catch (const Error&) {
+        } catch (...) {
           // Left absent below.
         }
         if (!result.contains("model_handle")) {

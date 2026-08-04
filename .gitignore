@@ -69,6 +69,18 @@ yarn-error.log*
 .expo/
 
 # ---------------------------------------------------------------------------
+# Locally provisioned toolchains. Never belongs in the repo: an unpacked SDK is
+# hundreds of megabytes and exceeds GitHub's per-file limit outright.
+# ---------------------------------------------------------------------------
+.dart-tmp/
+.toolchains/
+android-ndk-*/
+flutter/
+*.tar.gz
+*.tar.xz
+*.zip
+
+# ---------------------------------------------------------------------------
 # Editors / OS
 # ---------------------------------------------------------------------------
 .DS_Store
