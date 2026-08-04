@@ -38,7 +38,10 @@ import java.util.concurrent.ConcurrentHashMap
  * To use it, replace the default in [com.microsoft.ai.foundry.local.mobile.FoundryLocal.create]:
  *
  * ```kotlin
- * FoundryLocal.create(context, cfg, transport = WorkManagerTransport(context))
+ * // create is a suspend fun; call from a coroutine.
+ * val foundry = FoundryLocal.create(
+ *     context, cfg, transport = WorkManagerTransport(context),
+ * )
  * ```
  *
  * WorkManager requires an application context, so this transport captures

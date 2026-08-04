@@ -45,6 +45,8 @@ your first `FoundryLocal.create`.
 ## Quickstart
 
 ```kotlin
+// FoundryLocal.create is a suspend fun; call from a coroutine
+// (lifecycleScope, viewModelScope, or your own).
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
@@ -55,7 +57,7 @@ val result = foundry.addModelSource(
     )
 ) { progress -> println("${progress.percent}%") }
 
-val model = result.model ?: foundry.catalog.getModel(result.name)
+val model = result.requireModel()
 model.load()
 
 val chat = model.createChatSession()
@@ -67,8 +69,12 @@ chat.completeStreaming("What is the golden ratio?").collect { delta ->
 `addModelSource` returns a [`ModelSourceResult`](src/main/kotlin/com/microsoft/ai/foundry/local/mobile/Types.kt)
 with the resolved `name`, `path`, download counters and — in the common case
 — a ready-to-use `model`. `result.model` is `null` only when the download
-succeeded but the catalog's local scan did not pick the files up; the
-`?: foundry.catalog.getModel(result.name)` above is the recommended fallback.
+succeeded but the catalog's local scan did not pick the files up.
+[`requireModel()`](src/main/kotlin/com/microsoft/ai/foundry/local/mobile/Types.kt)
+throws an actionable `IllegalStateException` that names both the source and
+the on-disk path for that case; apps that want to handle it themselves —
+falling back to `foundry.catalog.getModel(result.name)`, showing a
+different UI — should read `result.model` directly instead.
 
 Every long-running operation returns a `Flow<Progress>` or a `Flow<Delta>`.
 Both propagate collector-side cancellation into the core — cancelling the
@@ -204,6 +210,7 @@ val transport = OkHttpTransport(
         .certificatePinner(pinner)
         .build(),
 )
+// create is a suspend fun; call from a coroutine.
 val foundry = FoundryLocal.create(context, cfg, transport = transport)
 ```
 
@@ -217,6 +224,7 @@ requests on OkHttp (WorkManager scheduling latency is unacceptable for a
 manifest sniff).
 
 ```kotlin
+// create is a suspend fun; call from a coroutine.
 val foundry = FoundryLocal.create(
     context,
     cfg,

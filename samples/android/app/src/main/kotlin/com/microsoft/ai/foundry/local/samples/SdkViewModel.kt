@@ -17,14 +17,12 @@ import com.microsoft.ai.foundry.local.mobile.PackageVariants
 import com.microsoft.ai.foundry.local.mobile.Progress
 import com.microsoft.ai.foundry.local.mobile.VariantConstraints
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * State machine driving the sample UI.
@@ -125,22 +123,18 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             try {
-                val fl = withContext(Dispatchers.IO) {
-                    FoundryLocal.create(
-                        getApplication(),
-                        FoundryLocalConfig(appName = "foundry-local-sample"),
-                    )
-                }
+                // FoundryLocal.create is a suspend fun that dispatches its
+                // filesystem work internally, so this call is safe on any
+                // dispatcher — the viewModelScope's Main is fine.
+                val fl = FoundryLocal.create(
+                    getApplication(),
+                    FoundryLocalConfig(appName = "foundry-local-sample"),
+                )
                 foundry = fl
-                val profile = fl.deviceProfile
-                val eps = profile.executionProviders
-                    .filter { it.available }
-                    .joinToString(", ") { "${it.name} (${it.device})" }
-                    .ifBlank { "CPU only" }
                 _state.value = UiState.Configured(
                     name = name.trim(),
                     url = url.trim(),
-                    deviceSummary = "${profile.abi}, ${profile.cpuCores} cores, EPs: $eps",
+                    deviceSummary = fl.deviceProfile.summary,
                 )
             } catch (t: Throwable) {
                 _state.value = UiState.Error("prepare", messageOf(t), detailOf(t))
@@ -184,14 +178,19 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     },
                 )
-                model = result.model
+                // The sample only demonstrates package sources, so the null
+                // case is a bug we would want to raise loudly rather than
+                // silently swallow. requireModel() throws IllegalStateException
+                // with an actionable message that names the source and the
+                // on-disk path, which the Error panel below will surface.
+                model = result.requireModel()
 
                 // Snapshot the variants the SDK saw. If the model happens to
                 // be a flat file the list is empty; if it is a package this
                 // is where the "why was this variant chosen" answer comes
                 // from — is_compatible / incompatibility_reason /
                 // compatibility_score for every candidate.
-                val variants: PackageVariants? = result.model?.asPackage()?.variants
+                val variants: PackageVariants? = model?.asPackage()?.variants
                 _state.value = UiState.VariantsResolved(
                     name = cfg.name,
                     selectedVariantId = result.variantId?.ifBlank { null }

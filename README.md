@@ -135,6 +135,8 @@ verified against its manifest digest. See
 <summary><strong>Kotlin (Android)</strong></summary>
 
 ```kotlin
+// FoundryLocal.create is a suspend fun; call from a coroutine
+// (lifecycleScope, viewModelScope, or your own).
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
@@ -145,9 +147,10 @@ val added = foundry.addModelSource(
     )
 ) { progress -> println("${progress.percent}%") }
 
-// Acquiring a model hands one straight back. `model` is null only in the rare case
-// where the files landed but the local scan missed them, so fall back to the catalog.
-val model = added.model ?: foundry.catalog.getModel(added.name)
+// requireModel() throws IllegalStateException with an actionable message on the
+// rare "download succeeded but the catalog missed it" case. Read added.model
+// directly and fall back to catalog.getModel(name) if you want to handle it.
+val model = added.requireModel()
 
 model.load()
 
