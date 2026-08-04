@@ -108,9 +108,11 @@ class BundledModelSource extends ModelSource {
 
   final String path;
 
-  /// When true the core copies the files into the model cache before loading,
-  /// which is useful when [path] is a temporary extraction directory the OS
-  /// can evict.
+  /// When true the core copies the files into the model cache before loading.
+  /// The default links to [path] instead, so the app keeps owning those files
+  /// and must keep them where they are. Copy when it cannot promise that —
+  /// a temporary extraction directory, or an OS cache that can be evicted.
+  /// For a package only the selected variant is copied.
   final bool copyIntoCache;
 
   @override

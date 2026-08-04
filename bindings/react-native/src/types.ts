@@ -176,7 +176,12 @@ export interface BundledModelSource extends ModelSourceCommon {
   kind: 'bundled';
   /** Absolute filesystem path to the model directory already on the device. */
   path: string;
-  /** Set only when the source path is temporary and must be copied. */
+  /**
+   * Copy the model into the SDK's cache instead of linking to `path`. The
+   * default links, so the app keeps owning those files and must keep them
+   * where they are; copy when it cannot promise that. For a package only the
+   * selected variant is copied.
+   */
   copyIntoCache?: boolean;
 }
 

@@ -18,6 +18,13 @@ public enum ModelSource: Sendable {
     /// Model shipped inside the app bundle, extracted to `path` (or already a real
     /// path when it comes from a folder reference on iOS).
     ///
+    /// The default is to load in place: the cache entry links back to `path` rather
+    /// than copying the weights, so the app keeps owning those files and must keep
+    /// them where they are. Pass `copyIntoCache: true` when it cannot promise that —
+    /// a staging directory, or anything under `NSCachesDirectory`, which iOS may
+    /// purge under storage pressure. For a package only the selected variant is
+    /// copied.
+    ///
     /// `verifyChecksums` still applies here: bundled model manifests may carry
     /// per-file SHA-256 hashes and the runtime checks them at load if this stays
     /// `true`. `resume` is a no-op for bundled sources since nothing downloads,

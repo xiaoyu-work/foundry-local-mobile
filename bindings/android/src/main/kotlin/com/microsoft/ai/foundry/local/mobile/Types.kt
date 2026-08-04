@@ -260,11 +260,20 @@ public sealed class ModelSource {
 
     /**
      * A model already present on the device. The default is to load it in
-     * place; set [copyIntoCache] when the source path is temporary.
+     * place: the cache entry links back to [path] instead of copying the
+     * weights, so the app keeps owning those files and must keep them where
+     * they are. Set [copyIntoCache] when it cannot promise that.
      */
     public data class Bundled(
         override val name: String,
         val path: String,
+        /**
+         * Copy the model into the SDK's cache instead of linking to [path].
+         * Costs a second copy of the weights, and for a package only the
+         * selected variant is copied. Use it when [path] is a staging
+         * directory, shared storage the user can clear, or an OS cache that
+         * may be reclaimed — anywhere the files could vanish under the SDK.
+         */
         val copyIntoCache: Boolean = false,
         override val resume: Boolean = true,
         override val verifyChecksums: Boolean = true,

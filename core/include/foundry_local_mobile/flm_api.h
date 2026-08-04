@@ -265,7 +265,13 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *   "verify_checksums": true         // check each file's digest, default true
  *
  * A bundled source is loaded in place by default, since the files are already on the
- * device and copying would double the storage the user pays for.
+ * device and copying would double the storage the user pays for. In-place means the
+ * cache entry is a directory of links back to "path" rather than a second copy of the
+ * weights, so the app keeps owning those files: move or delete them and the cache entry
+ * stops resolving. Set "copy_into_cache" when the app cannot promise the path outlives
+ * the model — a staging directory, a shared-storage URI the user can clear, an asset
+ * unpacked into a cache the OS may reclaim. For a package only the selected variant is
+ * copied, not the whole thing.
  *
  * A remote URL may serve either a model package manifest (an object with "components")
  * or a flat file index (an object with "files"). The document is sniffed rather than the
@@ -285,10 +291,14 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  * `{"name", "path", "variant_id", "bytes_downloaded", "bytes_reused", "was_cached",
  *   "model_handle"}`.
  *
+ * Either kind registers the model under "name", so flm_catalog_get_model() and
+ * flm_catalog_list_cached_models() find it afterwards under exactly that name, in this
+ * process and in every later run.
+ *
  * `model_handle` is a ready-to-use model, so there is no need to look the model up
  * through the catalog afterwards. It is FLM_INVALID_HANDLE when the files landed but the
  * catalog did not pick them up; the download still succeeded, so treat that as success
- * and fall back to a catalog lookup only if you need a handle. Release it with
+ * and look the model up by "name" only if you need a handle. Release it with
  * flm_model_release() as usual — releasing FLM_INVALID_HANDLE is a no-op, so an
  * unconditional release is safe.
  */
