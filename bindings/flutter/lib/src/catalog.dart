@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart';
 
 import 'bindings/bindings.dart' as raw;
 import 'bindings/native_library.dart';
@@ -44,7 +45,9 @@ class CatalogFilter {
 /// The model catalog. Handle is borrowed from the manager and remains valid
 /// for the manager's lifetime; there is no explicit release.
 class Catalog {
-  Catalog._(this._handle);
+  /// Internal constructor — call [FoundryLocal.catalog] to get an instance.
+  @internal
+  Catalog.internal(this._handle);
 
   final int _handle;
 

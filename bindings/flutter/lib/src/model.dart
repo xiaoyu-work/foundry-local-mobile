@@ -168,17 +168,18 @@ class Model {
   Stream<Progress> download({DownloadOptions options = const DownloadOptions()}) {
     _ensureAlive();
     return _startProgressStream(
-      (progressPtr, completionPtr, userData, outJob) =>
-          withCString(jsonEncode(options.toJson()), (optsPtr) {
-        return NativeLibrary.instance.bindings.flm_model_download_async(
-          _handle,
-          optsPtr,
-          progressPtr,
-          completionPtr,
-          userData,
-          outJob,
-        );
-      }),
+      (progressPtr, completionPtr, userData, outJob) {
+        return withCString(jsonEncode(options.toJson()), (optsPtr) {
+          return NativeLibrary.instance.bindings.flm_model_download_async(
+            _handle,
+            optsPtr,
+            progressPtr,
+            completionPtr,
+            userData,
+            outJob,
+          );
+        });
+      },
     );
   }
 
@@ -187,17 +188,18 @@ class Model {
   Stream<Progress> load({LoadOptions options = const LoadOptions()}) {
     _ensureAlive();
     return _startProgressStream(
-      (progressPtr, completionPtr, userData, outJob) =>
-          withCString(jsonEncode(options.toJson()), (optsPtr) {
-        return NativeLibrary.instance.bindings.flm_model_load_async(
-          _handle,
-          optsPtr,
-          progressPtr,
-          completionPtr,
-          userData,
-          outJob,
-        );
-      }),
+      (progressPtr, completionPtr, userData, outJob) {
+        return withCString(jsonEncode(options.toJson()), (optsPtr) {
+          return NativeLibrary.instance.bindings.flm_model_load_async(
+            _handle,
+            optsPtr,
+            progressPtr,
+            completionPtr,
+            userData,
+            outJob,
+          );
+        });
+      },
     );
   }
 
@@ -277,9 +279,10 @@ class Model {
 
   /// Start a progress-streaming ABI call and expose the underlying stream.
   ///
-  /// The stream is backed by [runProgressJob]; cancellation of the stream
-  /// subscription calls `flm_job_cancel`, which unwinds any in-flight
-  /// download / load / verification.
+  /// Cancellation of the returned subscription is forwarded to
+  /// `flm_job_cancel`. The stream reflects the job's underlying progress
+  /// stream 1:1, and errors on the job are re-thrown by the stream so
+  /// `await for` unwinds naturally.
   Stream<Progress> _startProgressStream(
     int Function(
       Pointer<NativeFunction<Int32 Function(Uint64, Pointer<raw.flm_progress>, Pointer<Void>)>> onProgress,
@@ -289,22 +292,32 @@ class Model {
     ) abiCall,
   ) {
     late StreamController<Progress> controller;
-    late Future<void> future;
+    JobHandles<Progress>? handles;
+    StreamSubscription<Progress>? sub;
+
     controller = StreamController<Progress>(
       onListen: () {
-        future = runProgressJob(
-          abiCall: abiCall,
-          onProgress: controller.sink,
-        ).then((_) => controller.close())
-            .catchError((Object e, StackTrace st) {
+        try {
+          handles = runProgressStreamJob(abiCall);
+        } catch (e, st) {
           controller.addError(e, st);
-          return controller.close();
+          controller.close();
+          return;
+        }
+        sub = handles!.stream.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: () => controller.close(),
+        );
+        handles!.result.catchError((Object e, StackTrace st) {
+          // Errors are also delivered to the stream; swallow here so the
+          // Future does not remain uncaught.
+          return <String, Object?>{};
         });
       },
       onCancel: () async {
-        // The underlying job cancels via the stream's onCancel inside
-        // runProgressJob, so awaiting the future is enough here.
-        await future;
+        handles?.cancel();
+        await sub?.cancel();
       },
     );
     return controller.stream;

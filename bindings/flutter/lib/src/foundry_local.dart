@@ -36,7 +36,7 @@ class FoundryLocal {
   })  : _managerHandle = managerHandle,
         _transportRegistration = transportRegistration,
         _lifecycleBridge = lifecycleBridge,
-        catalog = Catalog._(catalogHandle);
+        catalog = Catalog.internal(catalogHandle);
 
   /// Configuration this instance was created with. Read-only after creation.
   final FoundryLocalConfig config;

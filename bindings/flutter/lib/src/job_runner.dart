@@ -336,6 +336,36 @@ Future<Map<String, Object?>> runProgressJob({
   }
 }
 
+/// Run an async ABI call that reports progress + completion and expose the
+/// result as a [JobHandles] with a cancel hook wired to `flm_job_cancel`.
+///
+/// This is the primitive [Model.download] / [Model.load] use so subscription
+/// cancellation on the exposed stream actually cancels the underlying job.
+JobHandles<Progress> runProgressStreamJob(
+  int Function(
+    Pointer<NativeFunction<Int32 Function(Uint64, Pointer<raw.flm_progress>, Pointer<Void>)>> onProgress,
+    Pointer<NativeFunction<raw.flm_completion_callback_native>> onComplete,
+    Pointer<Void> userData,
+    Pointer<Uint64> outJob,
+  ) abiCall,
+) {
+  final runner = JobRunner._(streamProgress: true, streamDeltas: false);
+  runner.start(({
+    required onProgress,
+    required onDelta,
+    required onComplete,
+    required userData,
+    required outJob,
+  }) =>
+      abiCall(onProgress, onComplete, userData, outJob));
+  return JobHandles<Progress>(
+    stream: runner.progressStream,
+    result: runner.result,
+    cancel: runner._cancelJob,
+    jobHandle: () => runner.jobHandle,
+  );
+}
+
 /// Run an async ABI call with only a completion callback (no progress, no
 /// deltas).
 Future<Map<String, Object?>> runSimpleJob(
