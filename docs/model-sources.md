@@ -45,9 +45,10 @@ if (!modelDir.exists()) {
     context.assets.extractDirectory("models/phi-4-mini", modelDir)
 }
 
-val model = manager.addModelSource(
+val result = manager.addModelSource(
     ModelSource.Bundled(name = "phi-4-mini", path = modelDir.absolutePath)
 )
+val model = result.model ?: error("model registered at ${result.path} but not found in the catalog")
 ```
 
 Large model files should be left uncompressed so the extraction is a plain copy:
@@ -68,7 +69,8 @@ structure is preserved:
 
 ```swift
 let path = Bundle.main.path(forResource: "phi-4-mini", ofType: nil)!
-let model = try await manager.addModelSource(.bundled(name: "phi-4-mini", path: path))
+let result = try await manager.addModelSource(.bundled(name: "phi-4-mini", path: path))
+let model = result.model
 ```
 
 ### Bundling a package
