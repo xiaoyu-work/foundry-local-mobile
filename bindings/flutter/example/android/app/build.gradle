@@ -31,6 +31,18 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Ship only the ABIs the plugin builds. Flutter's default template
+        // pulls libflutter.so for a fourth architecture (x86, from
+        // io.flutter:flutter_embedding_debug's transitive natives), which
+        // the plugin's CMake ExternalNativeBuild does not target. Without
+        // this filter the APK installs on a 32-bit x86 image and then
+        // crashes at DynamicLibrary.open the moment the SDK is touched.
+        // Matches the abiFilters set the native binding and the Android
+        // sample already use.
+        ndk {
+            abiFilters += ["arm64-v8a", "armeabi-v7a", "x86_64"]
+        }
     }
 
     buildTypes {

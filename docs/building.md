@@ -228,7 +228,7 @@ README for the exact command.
 |---|---|---|
 | `bindings/android` | `core/` sources (rebuilt inside AGP) | `./gradlew assembleRelease` from `bindings/android/`, or `./scripts/build.sh android-binding`. See [Build the Android AAR](#build-the-android-aar). |
 | `bindings/ios` | `build/apple/FoundryLocalMobile.xcframework` | `swift build` or Xcode |
-| `bindings/flutter` | Android + iOS cross-builds | `flutter build` (in the sample) or `dart pub publish --dry-run` |
+| `bindings/flutter` | Android + iOS cross-builds | `flutter build apk` from `bindings/flutter/example/` (see [Build the Flutter example](#build-the-flutter-example)), or `dart pub publish --dry-run`. |
 | `bindings/react-native` | Android + iOS cross-builds | `npm pack` |
 
 ## Build a sample app
@@ -251,6 +251,44 @@ The sample reads `flm.sample.modelName`, `flm.sample.modelUrl` and
 so a developer can point it at a private manifest and credential without
 touching source. See `samples/android/README.md` for the full flow.
 
+## Build the Flutter example
+
+`bindings/flutter/example/` is the pub-style example app that pins the
+plugin as `foundry_local_mobile: { path: ../ }` and consumes it strictly
+through the public `foundry_local_mobile.dart` barrel. It exercises the
+same end-to-end flow as `samples/android/`: register a remote model
+source, show the chosen variant and the alternatives, download with a
+progress bar and a working cancel button, load, and stream a chat
+completion.
+
+```bash
+export ANDROID_NDK_HOME=$HOME/android-ndk-r27c
+cd bindings/flutter/example
+flutter build apk --debug
+```
+
+Output: `bindings/flutter/example/build/app/outputs/flutter-apk/app-debug.apk`.
+
+Configure the model URL and auth header at build time with `--dart-define`:
+
+```bash
+flutter run \
+  --dart-define=FLM_MODEL_URL=https://models.example.com/phi-4-mini/manifest.json \
+  --dart-define=FLM_MODEL_AUTH="Bearer …" \
+  --dart-define=FLM_MODEL_NAME=phi-4-mini
+```
+
+Anything left off the command line stays editable in the app's first
+screen; credentials are held only in widget state, so nothing that a
+`git add -A` habit could sweep in ever lands on disk.
+
+Two details that trip up a first-time Flutter binding consumer, both
+carried by the example's own configuration but worth being aware of when
+copying the setup into a real app:
+
+- **Manifest needs `<uses-permission android:name="android.permission.INTERNET"/>`.** Flutter's default `flutter create` template does not include it. Remote model sources reach out through the plugin's transport, so without this line the download step throws instead of running. The example adds it in `android/app/src/main/AndroidManifest.xml`.
+- **`ndkVersion` needs to be pinned in the app.** The plugin's `ExternalNativeBuild` requires NDK 26.1.10909125; Flutter's default `flutter.ndkVersion` points at an older release. Leaving the pin off surfaces as a Gradle warning on every build and, on some SDK combinations, a full configure failure. The example pins it explicitly in `android/app/build.gradle`.
+
 ## Where artifacts land
 
 | Command | Artifact |
@@ -259,6 +297,7 @@ touching source. See `samples/android/README.md` for the full flow.
 | `./scripts/build_android.sh` | `build/android/jniLibs/<abi>/libfoundry_local_mobile.so` |
 | `./scripts/build.sh android-binding` | `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar` |
 | `./scripts/build_apple.sh` | `build/apple/FoundryLocalMobile.xcframework/` |
+| `flutter build apk --debug` (in `bindings/flutter/example/`) | `bindings/flutter/example/build/app/outputs/flutter-apk/app-debug.apk` |
 | CI `Release` workflow | `foundry-local-mobile-{android-jniLibs.zip,android.aar,apple-xcframework.zip,flutter.tar.gz,react-native.tgz}` on the tagged GitHub Release. |
 
 ## Troubleshooting

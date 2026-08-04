@@ -37,6 +37,25 @@ flutter build apk --debug
 The resulting APK ships `libfoundry_local_mobile.so` and `libc++_shared.so`
 for `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
 
+## Two setup details worth knowing before copying this into a real app
+
+Both of these are handled inside this example's own configuration, but the
+next person adopting the plugin will hit them and there is no framework
+message that points at either one:
+
+- **INTERNET permission.** `flutter create` does not include
+  `<uses-permission android:name="android.permission.INTERNET"/>` in the
+  app manifest. Remote model sources go through the plugin's transport,
+  which fails immediately without it. See
+  `android/app/src/main/AndroidManifest.xml`.
+- **`ndkVersion` pin.** The plugin's `ExternalNativeBuild` requires NDK
+  `26.1.10909125`. Deferring to `flutter.ndkVersion` picks something
+  older and Gradle warns on every build (and configure sometimes fails
+  outright). The example pins it in `android/app/build.gradle`. It also
+  pins `abiFilters` to the three ABIs the plugin ships — otherwise a
+  stray `lib/x86/libflutter.so` slice would install on 32-bit x86
+  devices with no matching `libfoundry_local_mobile.so`.
+
 ## Consuming the plugin
 
 `pubspec.yaml` pulls the plugin in as `foundry_local_mobile: { path: ../ }`,
