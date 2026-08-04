@@ -34,7 +34,7 @@ were. What each one has actually been through:
 
 | Target | Compiled | Verified on device |
 |---|---|---|
-| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | Not on a phone, but both model sources exercised end to end against the real Foundry Local runtime. Bundled: a package is scored against the host's execution providers, the matching variant published into the cache and resolved back to a live model handle. Remote: the same over HTTP from a credential-gated server — only the winning variant's bytes are requested, digests verified, the app's `Authorization` header on every request, and a second run transfers nothing. Interrupt it and it resumes from the byte it stopped at; cancel it and the job ends cancelled with the partial file kept. A real ONNX GenAI model loads; it cannot yet infer, for the reason below |
+| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | Not on a phone, but exercised end to end against the real Foundry Local runtime, inference included: a real ONNX model is added as a source, loaded, and generates tokens that stream back as deltas with usage counts and session history. Bundled sources: a package is scored against the host's execution providers and the matching variant published into the cache. Remote: the same over HTTP from a credential-gated server — only the winning variant's bytes are requested, digests verified, the app's `Authorization` header on every request, and a second run transfers nothing. Interrupt it and it resumes from the byte it stopped at; cancel it and the job ends cancelled with the partial file kept |
 | **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
 | **iOS** | Partly — the Foundation subset type-checks against the real C ABI headers under strict concurrency; the UIKit/Network parts need a Mac | No |
 | **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
@@ -46,34 +46,35 @@ would otherwise be an `UnsatisfiedLinkError` on a user's phone into a build fail
 says nothing about whether the code behaves correctly once it runs. Treat the unchecked
 rows as unproven rather than broken, and please report what you find.
 
-The core's end-to-end run is worth reading precisely: it proves the model-source and
-model-package paths work against the genuine runtime, on a desktop Linux host, with a
-fixture package rather than real weights. Resume was checked both against a server that
-honours `Range` and one that ignores it — the second is common on plain object storage,
-and the SDK notices the oversized file, discards it and refetches rather than committing
-a corrupt model. No binding has executed on phone hardware.
+The core's end-to-end run is worth reading precisely: the download and packaging paths
+were proved against the genuine runtime on a desktop Linux host with a fixture package,
+and inference separately with a real model whose weights are small and randomly
+initialised, so it emits real tokens that mean nothing. Resume was checked both against a
+server that honours `Range` and one that ignores it — the second is common on plain object
+storage, and the SDK notices the oversized file, discards it and refetches rather than
+committing a corrupt model. No binding has executed on phone hardware.
 
-### The blocker: inference on an app-supplied model
+### Naming a model source
 
-A real ONNX GenAI model loads — that much is verified, with `flm_model_is_loaded`
-returning true against genuine weights. Opening a session on it does not, and the reason
-is upstream's, not this SDK's.
+A model source's `name` is not just a label. The runtime picks a session implementation
+from the model's *task* (`chat-completion`, `automatic-speech-recognition`, `embeddings`,
+…), and it learns tasks from the Foundry Local catalog. Name a source after the catalog
+model it actually is — `qwen2.5-0.5b-instruct-generic-cpu:4`, not `my-model` — and the
+task comes with it and inference works. That is the normal case for this SDK: a model
+package is a catalog model the app happens to be shipping or hosting itself.
 
-Foundry Local picks a session implementation from the model's *task*
-(`chat-completion`, `automatic-speech-recognition`, `embeddings`, …), and it learns tasks
-from the Azure catalog. A model the app supplies — bundled in the APK or downloaded from
-the app's own URL, which is every model this SDK is built for — is what upstream's own
-code calls a "BYO model": it synthesises a catalog entry with an empty task, and
-`Session::Create` rejects an empty task. Nothing in the ABI can set it; the model info is
-read-only, and the on-disk catalog snapshot is consulted only in a mode where sessions are
-refused outright. Verified by injecting a task into the snapshot and watching it be
-ignored.
+Give it a name the catalog has never seen and it becomes what upstream's code calls a
+"BYO model": a synthesised entry with an empty task, which `Session::Create` refuses.
+Everything before that still succeeds — the model downloads, verifies, installs, appears
+in the catalog and loads into memory — so the failure surfaces at the last possible
+moment. `flm_session_create` names the cause rather than passing along upstream's blank
+`unsupported model task: `. Nothing in the ABI can set a task; a genuinely custom model
+needs a change upstream.
 
-So the whole chain works up to the last step, which is exactly what makes this easy to
-miss: the model downloads, verifies, installs, appears in the catalog and loads into
-memory. `flm_session_create` names the cause rather than passing along upstream's blank
-`unsupported model task: `. Lifting it needs a change upstream — a way to declare a task
-for a model the catalog has never heard of.
+Verified end to end with a real ONNX GenAI model — real weights and tokenizer, not a
+fixture: prompt templated and tokenized, the ONNX graph executed, 24 tokens sampled and
+detokenized, streamed back as deltas, counted in `usage`, recorded in session history, and
+the model unloaded cleanly afterwards.
 
 ## Why a separate mobile SDK?
 

@@ -335,16 +335,32 @@ flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, cons
         // extra async round-trip through flm_catalog_get_model_async just to reach the
         // model it explicitly asked for.
         //
+        // The name doubles as the alias for a model the catalog has never heard of, but
+        // an app that names its source after a catalog model -- the way to give a model a
+        // task, and so the only way to reach inference -- has given an id instead, and
+        // the catalog files that model under its own alias. Try both rather than handing
+        // back nothing in precisely the case that works best.
+        //
         // This is strictly a convenience, so nothing it does may fail the job: the bytes
         // are already committed to disk, and reporting a completed download as a failure
         // would send the caller back to re-fetch hundreds of megabytes, potentially over
         // a metered connection. Any failure here just means no handle.
+        const std::string name = result.value("name", std::string());
         try {
-          if (auto model = instance->catalog()->GetModel(result.value("name", std::string()))) {
+          if (auto model = instance->catalog()->GetModel(name)) {
             result["model_handle"] = RegisterModel(model);
           }
         } catch (...) {
           // Left absent below.
+        }
+        if (!result.contains("model_handle")) {
+          try {
+            if (auto model = instance->catalog()->GetModelById(name)) {
+              result["model_handle"] = RegisterModel(model);
+            }
+          } catch (...) {
+            // Left absent below.
+          }
         }
         if (!result.contains("model_handle")) {
           result["model_handle"] = FLM_INVALID_HANDLE;

@@ -583,13 +583,14 @@ FLM_EXPORT flm_status FLM_CALL flm_package_estimate_download_json(flm_model pack
 /**
  * Create an inference session over a loaded model.
  *
- * Returns FLM_ERROR_NOT_IMPLEMENTED for a model the app supplied itself. The runtime
- * chooses a session implementation from the model's task, and it learns tasks from the
- * Foundry Local catalog; a bundled or self-hosted model is not in that catalog, so it has
- * no task and no session can be opened for it. Everything up to that point works — the
- * model installs, is discoverable, and loads — which is what makes the limit easy to
- * miss. It is upstream's, not this SDK's, and nothing in the ABI can override a model's
- * task, so today inference is limited to models the catalog knows.
+ * The runtime chooses a session implementation from the model's task, and it learns tasks
+ * from the Foundry Local catalog. A model added through flm_manager_add_model_source_async
+ * under a name the catalog recognises therefore works normally. A model under a name the
+ * catalog has never seen has no task, and this returns FLM_ERROR_NOT_IMPLEMENTED naming
+ * that as the reason — everything before it succeeds, so the model installs, is
+ * discoverable and loads, which is what makes the limit easy to mistake for a bug here.
+ * Nothing in the ABI can set a model's task, so name a source after the catalog model it
+ * actually is.
  *
  * `options_json` may be NULL, or:
  * {
