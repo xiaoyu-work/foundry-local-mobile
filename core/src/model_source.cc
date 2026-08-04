@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <system_error>
 
@@ -42,6 +43,90 @@ bool LooksLikeManifestUrl(const std::string& url) {
     path = path.substr(0, q);
   }
   return path.size() >= 5 && path.compare(path.size() - 5, 5, ".json") == 0;
+}
+
+/// The file the runtime's local scan reads a model's id out of. A directory counts as a
+/// cached model only when it holds this *and* genai_config.json, with no download.tmp.
+constexpr const char* kInferenceModelFileName = "inference_model.json";
+
+/// Make a model directory discoverable by the runtime's catalog.
+///
+/// The runtime finds a locally present model by walking the model cache directory for a
+/// directory holding both genai_config.json and inference_model.json, taking the model's
+/// id from the latter's "Name". A model the app supplies — bundled in the APK or fetched
+/// by this SDK's own downloader — carries the first file but never the second, because
+/// only the runtime's own downloader writes it. Without this step such a model stays
+/// invisible: absent from the catalog, absent from the cached list, and impossible to get
+/// a handle for, which makes it impossible to load. The bytes being on disk is not enough.
+///
+/// Writing it is idempotent and preserves an id the model already declares, so a package
+/// that was published with its own inference_model.json keeps it. The shape matches what
+/// Downloader::WriteInferenceModelJson emits for a downloaded model, so a bundled model
+/// and a fetched one are indistinguishable to the scanner.
+void PublishModelId(const fs::path& model_dir, const std::string& name,
+                    const nlohmann::json& prompt_templates) {
+  const fs::path marker = model_dir / kInferenceModelFileName;
+  std::error_code ec;
+  if (fs::exists(marker, ec)) {
+    return;
+  }
+  nlohmann::json document;
+  document["Name"] = name;
+  if (prompt_templates.is_object() && !prompt_templates.empty()) {
+    document["PromptTemplate"] = prompt_templates;
+  } else {
+    document["PromptTemplate"] = nullptr;
+  }
+
+  std::ofstream stream(marker, std::ios::binary | std::ios::trunc);
+  if (!stream) {
+    throw Error(FLM_ERROR_STORAGE, "cannot publish the model id for '" + name + "'",
+                {{"path", marker.string()}});
+  }
+  stream << document.dump(2);
+  stream.close();
+  if (stream.fail()) {
+    fs::remove(marker, ec);
+    throw Error(FLM_ERROR_STORAGE, "cannot publish the model id for '" + name + "'",
+                {{"path", marker.string()}});
+  }
+}
+
+/// Expose a model directory inside the cache without duplicating its bytes.
+///
+/// A bundled model is loaded in place, so it sits outside the cache the runtime scans and
+/// stays invisible however complete it is. Copying it would double the storage the user
+/// paid for once already, so instead the cache gets a real directory of symlinks to the
+/// source's files. That also covers a source the app cannot write to — assets extracted
+/// read-only, or a path inside the app bundle — where publishing the id in place is not
+/// an option.
+fs::path LinkModelIntoCache(const fs::path& model_dir, const fs::path& destination, const std::string& name) {
+  std::error_code ec;
+  fs::remove_all(destination, ec);
+  fs::create_directories(destination, ec);
+  if (ec) {
+    throw Error(FLM_ERROR_STORAGE, "cannot create the cache directory for '" + name + "'",
+                {{"path", destination.string()}, {"reason", ec.message()}});
+  }
+
+  for (const auto& entry : fs::directory_iterator(model_dir, ec)) {
+    if (!entry.is_regular_file(ec)) {
+      continue;
+    }
+    const fs::path link = destination / entry.path().filename();
+    fs::create_symlink(fs::absolute(entry.path()), link, ec);
+    if (ec) {
+      // Filesystems that cannot link still have to end up with a usable model, and a
+      // single model directory is small next to the weights it points at.
+      ec.clear();
+      fs::copy_file(entry.path(), link, fs::copy_options::overwrite_existing, ec);
+      if (ec) {
+        throw Error(FLM_ERROR_STORAGE, "cannot publish '" + name + "' into the model cache",
+                    {{"source", entry.path().string()}, {"destination", link.string()}, {"reason", ec.message()}});
+      }
+    }
+  }
+  return destination;
 }
 
 }  // namespace
@@ -133,7 +218,12 @@ nlohmann::json ModelSourceResolver::ResolveBundled(const ModelSource& source, Jo
   // An app bundling several variants gets the same device-aware selection as a remote
   // package. Shipping one APK that runs the NPU build on hardware that has one and falls
   // back to CPU elsewhere is the whole point of bundling a package rather than a model.
+  //
+  // `model_dir` is what actually holds the weights, which for a package is the selected
+  // variant rather than the package root. That distinction matters below: the runtime
+  // scans for the directory containing genai_config.json, not for the package.
   std::string variant_id;
+  fs::path model_dir = path;
   if (ModelPackage::IsPackageDirectory(source.path)) {
     ModelPackage package = ModelPackage::FromDirectory(source.path, source.name);
     package.ScoreVariants(manager_->device_profile());
@@ -145,6 +235,9 @@ nlohmann::json ModelSourceResolver::ResolveBundled(const ModelSource& source, Jo
                   {{"name", source.name}, {"package", package.ToJson()}});
     }
     variant_id = *selected;
+    if (const ModelVariant* variant = package.FindVariant(variant_id)) {
+      model_dir = path / variant->relative_path;
+    }
   }
 
   context.ThrowIfCancelled();
@@ -153,17 +246,25 @@ nlohmann::json ModelSourceResolver::ResolveBundled(const ModelSource& source, Jo
   // copying it would double the storage a user pays for. Copying is opt-in for the case
   // where the source lives somewhere the app cannot keep, such as a temporary
   // extraction directory.
-  std::string resolved_path = source.path;
+  //
+  // Either way it has to end up visible to the runtime's catalog, which only looks inside
+  // the model cache directory. In place means linking it in; a copy is already there.
+  const fs::path destination(DestinationFor(source));
+  std::string resolved_path;
   if (source.copy_into_cache) {
-    const fs::path destination(DestinationFor(source));
-    fs::create_directories(destination.parent_path(), ec);
-    fs::copy(path, destination, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
-    if (ec) {
-      throw Error(FLM_ERROR_STORAGE, "cannot copy the bundled model into the cache: " + ec.message(),
-                  {{"source", source.path}, {"destination", destination.string()}});
+    std::error_code copy_ec;
+    fs::create_directories(destination.parent_path(), copy_ec);
+    fs::copy(model_dir, destination, fs::copy_options::recursive | fs::copy_options::overwrite_existing, copy_ec);
+    if (copy_ec) {
+      throw Error(FLM_ERROR_STORAGE, "cannot copy the bundled model into the cache: " + copy_ec.message(),
+                  {{"source", model_dir.string()}, {"destination", destination.string()}});
     }
     resolved_path = destination.string();
+  } else {
+    resolved_path = LinkModelIntoCache(model_dir, destination, source.name).string();
   }
+
+  PublishModelId(resolved_path, source.name, source.prompt_templates);
 
   return nlohmann::json{{"name", source.name},
                         {"path", resolved_path},
