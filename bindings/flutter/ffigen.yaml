@@ -1,0 +1,79 @@
+# ffigen configuration for the Foundry Local Mobile Dart FFI bindings.
+#
+# The bindings under `lib/src/bindings/bindings.dart` are the raw C ABI surface. They
+# should be regenerated whenever `core/include/foundry_local_mobile/flm_api.h` changes:
+#
+#   dart run ffigen --config ffigen.yaml
+#
+# The file this generates is checked in — running the tool is a *reproducibility*
+# check, not part of the build. Regenerating requires libclang; when libclang is not
+# available (for example in this repo's CI image) the file is edited by hand in
+# exactly the shape ffigen would produce and this config keeps the two paths in sync.
+name: FlmBindings
+description: |
+  Raw dart:ffi bindings for the Foundry Local Mobile flat C ABI (flm_*).
+output: 'lib/src/bindings/bindings.dart'
+
+headers:
+  entry-points:
+    - '../../core/include/foundry_local_mobile/flm_api.h'
+  include-directives:
+    - '**/flm_api.h'
+    - '**/flm_types.h'
+    - '**/flm_export.h'
+
+compiler-opts:
+  - '-I../../core/include'
+  - '-std=c11'
+
+preamble: |
+  // GENERATED FILE — regenerate with `dart run ffigen --config ffigen.yaml`.
+  // This file is checked in so that consumers do not need libclang installed to build
+  // the plugin. Every edit here should also update ffigen.yaml so regeneration stays
+  // reproducible.
+  //
+  // The raw bindings are intentionally private to this package (`lib/src/`); the
+  // idiomatic Dart surface lives in `lib/foundry_local_mobile.dart` and the classes
+  // it re-exports.
+
+# ffigen naming: flm_manager_create -> flm_manager_create, flm_status -> FlmStatus
+functions:
+  include:
+    - 'flm_.*'
+  leaf:
+    include:
+      # All flm_* functions are marked FLM_NOEXCEPT and do not call back into Dart, so
+      # they are safe to mark leaf, which lets the VM skip a safepoint per call.
+      - 'flm_.*'
+    exclude:
+      # These *do* run callbacks (the transport send is invoked from a job thread that
+      # may end up calling into other flm_* entry points from the callback).
+      - 'flm_set_transport'
+
+structs:
+  include:
+    - 'flm_.*'
+
+enums:
+  include:
+    - 'flm_.*'
+  as-int:
+    include:
+      - 'flm_status'
+
+typedefs:
+  include:
+    - 'flm_.*'
+
+macros:
+  include:
+    - 'FLM_.*'
+
+# Emit uint64_t handles as `int` (they already are); do not treat them as opaque
+# pointers. Bindings that store them alongside JVM `long` fields need this.
+type-map:
+  native-types:
+    'uint64_t':
+      lib: 'ffi'
+      c-type: 'Uint64'
+      dart-type: 'int'

@@ -1,0 +1,47 @@
+name: foundry_local_mobile
+description: >
+  On-device AI for Flutter — a Dart FFI plugin that runs Foundry Local ONNX Runtime
+  models locally on iOS and Android. Streaming chat, tool calling, speech and
+  embeddings without a backend.
+version: 0.1.0
+homepage: https://github.com/microsoft/foundry-local-mobile
+repository: https://github.com/microsoft/foundry-local-mobile
+issue_tracker: https://github.com/microsoft/foundry-local-mobile/issues
+
+environment:
+  sdk: '>=3.1.0 <4.0.0'
+  flutter: '>=3.13.0'
+
+# NativeCallable.listener (used to hop native callbacks onto the isolate's event loop)
+# was added in Dart 3.1 / Flutter 3.13. Anything older will crash at runtime the first
+# time the core calls back into Dart, so the SDK constraint is a hard requirement, not a
+# suggestion.
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+  http: ^1.1.0
+  meta: ^1.10.0
+  path_provider: ^2.1.0
+
+dev_dependencies:
+  ffigen: ^11.0.0
+  flutter_lints: ^3.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        # Pure FFI plugin: no Kotlin/Java glue on the data path. A small MethodChannel is
+        # registered by the Kotlin class below for things Dart cannot ask the OS directly
+        # (sandbox paths, lifecycle, memory pressure, connectivity).
+        package: com.microsoft.ai.foundry.local.mobile
+        pluginClass: FoundryLocalMobilePlugin
+        ffiPlugin: true
+      ios:
+        pluginClass: FoundryLocalMobilePlugin
+        ffiPlugin: true
+      macos:
+        pluginClass: FoundryLocalMobilePlugin
+        ffiPlugin: true

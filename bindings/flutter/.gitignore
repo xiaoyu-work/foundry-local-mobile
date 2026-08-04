@@ -1,0 +1,26 @@
+# The root .gitignore has `lib/` from the React Native rules, which would
+# incidentally hide our Dart source tree. Un-ignore it for this package.
+!lib/
+!lib/**
+
+.dart_tool/
+.packages
+.pub/
+build/
+pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Native artefacts produced by the CMake external build.
+android/.cxx/
+android/build/
+android/local.properties
+ios/Pods/
+ios/.symlinks/
+macos/Pods/
+macos/.symlinks/
+
+# IDE
+.idea/
+*.iml
+.vscode/
