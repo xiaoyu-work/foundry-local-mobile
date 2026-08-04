@@ -37,7 +37,7 @@ were. What each one has actually been through:
 | **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | No |
 | **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
 | **iOS** | Not yet — no Swift toolchain has been run against it | No |
-| **Flutter** | Partly — `flutter analyze` is clean and the C trampoline compiles; the plugin has never been built into an app | No |
+| **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
 | **React Native** | In progress | No |
 
 "Compiled" is a real guarantee and a narrow one: the Android binding's native symbols are
