@@ -46,12 +46,18 @@ Future<void> main() async {
 
   // Register a model the app either bundles or fetches from its own storage.
   // See "Model sources" below for the full contract.
-  final model = await foundry.addModelSource(
-    RemoteModelSource(
+  final added = await foundry.addModelSource(
+    const RemoteModelSource(
       name: 'phi-4-mini',
       url: 'https://storage.example.com/phi-4-mini/manifest.json',
     ),
   );
+
+  // `added.model` is the ready-to-use handle the core minted in the same
+  // acquisition job. It is null only in the rare case where the download
+  // succeeded but the catalog scan missed the files — fall back by name.
+  final model =
+      added.model ?? await foundry.catalog.getModel(added.name);
 
   final load = await model.load(
     onProgress: (p) => print('${p.stage} ${p.percent}%'),
@@ -97,21 +103,31 @@ Give the SDK a model by registering a `ModelSource`:
 
 ```dart
 // A model shipped inside the app.
-final localModel = await foundry.addModelSource(
-  BundledModelSource(
+final localAdded = await foundry.addModelSource(
+  const BundledModelSource(
     name: 'phi-4-mini-bundled',
     path: '/path/to/model/dir',
   ),
 );
+final localModel = localAdded.model!; // populated for a successful add
 
 // A model the app hosts on its own storage.
-final remoteModel = await foundry.addModelSource(
-  RemoteModelSource(
+final remoteAdded = await foundry.addModelSource(
+  const RemoteModelSource(
     name: 'phi-4-mini-remote',
     url: 'https://storage.example.com/phi-4-mini/manifest.json',
   ),
 );
+final remoteModel = remoteAdded.model
+    ?? await foundry.catalog.getModel(remoteAdded.name);
 ```
+
+`addModelSource` returns a `ModelSourceResult` describing the outcome —
+`name`, `path`, `bytesDownloaded`, `bytesReused`, `wasCached`, the resolved
+`variantId` for a package, and the ready-to-use `model`. The `model` field
+is null only in the rare case where the download itself succeeded but the
+catalog scan missed the freshly-installed files; look the model up by
+`result.name` in that case and carry on.
 
 Both `ModelSource` kinds accept two optional flags that pass straight through
 to the core, both defaulting to `true`:
@@ -152,7 +168,7 @@ on the source — the core scores this device against every variant **before**
 any weights transfer, so a phone never spends bytes on a build it cannot run.
 
 ```dart
-final model = await foundry.addModelSource(
+final added = await foundry.addModelSource(
   const RemoteModelSource(
     name: 'qwen2.5-0.5b',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
@@ -163,6 +179,7 @@ final model = await foundry.addModelSource(
   ),
   onProgress: (p) => print('${p.percent}%'),
 );
+final model = added.model ?? await foundry.catalog.getModel(added.name);
 
 // What was actually chosen, and what else the package offered.
 final package = model.package;

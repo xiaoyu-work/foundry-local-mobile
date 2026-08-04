@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:meta/meta.dart';
 
+import '../model.dart';
 import 'device_profile.dart';
 
 /// How an app hands the SDK a model of its own — either bundled into the app
@@ -200,9 +201,18 @@ class VariantConstraints {
       };
 }
 
-/// Result reported when a model source has been resolved and any required
-/// download has finished. Read from `flm_job_take_result_json` on the job
-/// returned by `flm_manager_add_model_source_async`.
+/// Outcome of a successful [FoundryLocal.addModelSource]. The files are on
+/// disk at [path] regardless of whether [model] is populated.
+///
+/// [model] is a ready-to-use handle the core minted inside the same
+/// acquisition job (via the `model_handle` field on
+/// `flm_manager_add_model_source_async`'s completion result). It is `null`
+/// only in the rare case where the download itself succeeded but the
+/// catalog's local scan did not pick the files up. The caller can recover
+/// by looking the model up through `foundry.catalog.getModel(result.name)`
+/// or by working from [path] directly — the null case is **not** an error,
+/// so it is deliberately surfaced here rather than turned into a thrown
+/// exception.
 @immutable
 class ModelSourceResult {
   const ModelSourceResult({
@@ -212,17 +222,18 @@ class ModelSourceResult {
     required this.bytesDownloaded,
     required this.bytesReused,
     required this.wasCached,
-    required this.modelHandle,
+    required this.model,
   });
 
-  /// Alias the source registered under.
+  /// Alias the source registered under. Same value the caller passed on
+  /// [ModelSource.name].
   final String name;
 
   /// Absolute on-disk path of the resolved model.
   final String path;
 
   /// For a package source, the id of the variant that was chosen; `null`
-  /// (an empty string in the wire schema) for a flat model.
+  /// (empty string on the wire) for a flat model.
   final String? variantId;
 
   /// Bytes actually transferred by the transport.
@@ -235,24 +246,8 @@ class ModelSourceResult {
   /// Whether the whole source was resolved from cache, without any transfer.
   final bool wasCached;
 
-  /// A ready-to-use `flm_model` handle. `null` in the unexpected case where
-  /// the core reports `FLM_INVALID_HANDLE` — the download itself still
-  /// succeeded (`path` and byte counters are set); the caller can recover by
-  /// looking the model up through [Catalog.getModel] using [name].
-  final int? modelHandle;
-
-  factory ModelSourceResult.fromJson(Map<String, Object?> json) {
-    final rawHandle = (json['model_handle'] as num?)?.toInt();
-    final handle = (rawHandle == null || rawHandle == 0) ? null : rawHandle;
-    final rawVariant = json['variant_id'] as String?;
-    return ModelSourceResult(
-      name: json['name'] as String? ?? '',
-      path: json['path'] as String? ?? '',
-      variantId: (rawVariant == null || rawVariant.isEmpty) ? null : rawVariant,
-      bytesDownloaded: (json['bytes_downloaded'] as num?)?.toInt() ?? 0,
-      bytesReused: (json['bytes_reused'] as num?)?.toInt() ?? 0,
-      wasCached: json['was_cached'] as bool? ?? false,
-      modelHandle: handle,
-    );
-  }
+  /// Ready-to-use model handle for the acquired model, or `null` if the
+  /// catalog scan missed the files. See the class-level Dartdoc for the
+  /// recovery pattern.
+  final Model? model;
 }

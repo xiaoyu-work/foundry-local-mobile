@@ -203,11 +203,20 @@ class FoundryLocal {
   /// remote source, drive the download through the installed transport.
   ///
   /// On mobile this is **the** model-acquisition call — there is no
-  /// "download from catalog" flow. Returns a ready-to-use [Model] handle
-  /// once the source has resolved; progress events during the download are
-  /// delivered to [onProgress]. See the plugin README for the model-source
-  /// contract.
-  Future<Model> addModelSource(
+  /// "download from catalog" flow.
+  ///
+  /// Returns a [ModelSourceResult] describing the outcome. In the common
+  /// case its [ModelSourceResult.model] is a ready-to-use handle the core
+  /// minted inside the same acquisition job; the caller can go straight to
+  /// `result.model!.load(...)`. In the rare case where the download
+  /// succeeded but the catalog scan missed the freshly-installed files,
+  /// `model` is `null` and the caller can recover with
+  /// `foundry.catalog.getModel(result.name)`. Progress events during the
+  /// download are delivered to [onProgress].
+  ///
+  /// See the plugin README for the recommended `result.model ?? catalog
+  /// lookup` pattern.
+  Future<ModelSourceResult> addModelSource(
     ModelSource source, {
     void Function(Progress)? onProgress,
   }) async {
@@ -238,21 +247,38 @@ class FoundryLocal {
           onProgress: sink,
         ),
       );
-
-      // The completion payload carries a ready-to-use model_handle (added in
-      // core b263862 / aaa4838). Prefer it so we do not pay a second async
-      // round-trip through flm_catalog_get_model_async just to reach the
-      // model we already asked for. Fall back to the catalog lookup only for
-      // the documented edge case where the files landed but the catalog scan
-      // missed them.
-      final resolved = ModelSourceResult.fromJson(result);
-      if (resolved.modelHandle != null) {
-        return Model.fromHandle(resolved.modelHandle!);
-      }
-      return catalog.getModel(resolved.name);
+      return _parseModelSourceResult(result);
     } finally {
       await controller?.close();
     }
+  }
+
+  /// Parse the completion payload of `flm_manager_add_model_source_async`
+  /// into a [ModelSourceResult].
+  ///
+  /// The `model_handle` field is documented as an `flm_handle` (uint64) in
+  /// the ABI. Dart `int` is a signed 64-bit integer on the VM, so values up
+  /// to `2^63 - 1` round-trip losslessly through `jsonDecode` — which is far
+  /// beyond any realistic handle slot id. `FLM_INVALID_HANDLE` (0) means the
+  /// download succeeded but the catalog did not pick the files up; surface
+  /// that as `model: null` rather than doing a silent second-round-trip
+  /// lookup, so the caller keeps control over whether to fall back.
+  ModelSourceResult _parseModelSourceResult(Map<String, Object?> json) {
+    final rawHandle = (json['model_handle'] as num?)?.toInt();
+    Model? resolvedModel;
+    if (rawHandle != null && rawHandle != 0) {
+      resolvedModel = Model.fromHandle(rawHandle);
+    }
+    final rawVariant = json['variant_id'] as String?;
+    return ModelSourceResult(
+      name: json['name'] as String? ?? '',
+      path: json['path'] as String? ?? '',
+      variantId: (rawVariant == null || rawVariant.isEmpty) ? null : rawVariant,
+      bytesDownloaded: (json['bytes_downloaded'] as num?)?.toInt() ?? 0,
+      bytesReused: (json['bytes_reused'] as num?)?.toInt() ?? 0,
+      wasCached: json['was_cached'] as bool? ?? false,
+      model: resolvedModel,
+    );
   }
 
   /// Shut down the manager, cancel in-flight jobs and unload every model.
