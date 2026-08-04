@@ -10,8 +10,11 @@ import FoundryLocalMobile
 /// Sessions are created against a loaded model, so the typical lifecycle is:
 ///
 /// ```swift
-/// let model = try await catalog.model(alias: "qwen2.5-0.5b")
-/// for try await progress in model.download() { … }
+/// // Model acquisition is model-source-only — see ``FoundryLocal/addModelSource``.
+/// let added = try await sdk.addModelSource(
+///     .remote(name: "qwen2.5-0.5b", url: myURL)
+/// )
+/// let model = try await sdk.catalog.model(alias: added.name)
 /// try await model.load()
 /// let chat = try model.createChatSession()
 /// ```
@@ -70,50 +73,18 @@ public final class Model: @unchecked Sendable {
         return path.isEmpty ? nil : path
     }
 
-    // MARK: - Download / load lifecycle
+    // MARK: - Load lifecycle
 
-    /// Download the model, streaming progress. Wraps `flm_model_download_async`.
+    /// Load the model into memory.
     ///
-    /// For a package handle this fetches the currently selected variant and the shared
-    /// assets it needs, not the entire package. Use ``ModelPackage/selectVariant``
-    /// (or ``ModelPackage/selectBestVariant``) first to control what is downloaded.
-    ///
-    /// - Parameter allowMetered: Override the manager-level metered policy for this
-    ///   call. `nil` uses the manager setting.
-    public func download(allowMetered: Bool? = nil) -> AsyncThrowingStream<DownloadProgress, Error> {
-        let options = downloadOptions(allowMetered: allowMetered)
-        return AsyncThrowingStream { streamCont in
-            let jobBox = JobBox()
-            let context = ProgressStreamContext(continuation: streamCont, jobBox: jobBox)
-            let userData = Unmanaged.passRetained(context).toOpaque()
-
-            var jobHandle: flm_job = 0
-            let status = options.withCString { optsPtr in
-                flm_model_download_async(
-                    handle,
-                    optsPtr,
-                    _flm_progress_stream_bridge,
-                    _flm_progress_stream_completion_bridge,
-                    userData,
-                    &jobHandle
-                )
-            }
-            if status != FLM_OK {
-                _ = Unmanaged<ProgressStreamContext>.fromOpaque(userData).takeRetainedValue()
-                streamCont.finish(throwing: FoundryLocalError.fromCurrent(status: status))
-                return
-            }
-            jobBox.set(jobHandle)
-            streamCont.onTermination = { _ in
-                let handle = jobBox.peek()
-                if handle != 0 {
-                    _ = flm_job_cancel(handle)
-                }
-            }
-        }
-    }
-
-    /// Load the model into memory. Downloads the files first if needed.
+    /// The model's files must already be resident on the device — either shipped in
+    /// the app bundle via ``ModelSource/bundled(name:folder:in:subdirectory:verifyChecksums:)``
+    /// or fetched by ``FoundryLocal/addModelSource(_:progress:)`` from an
+    /// app-controlled URL. `load` does **not** download files on demand: the
+    /// Foundry Local desktop catalog isn't reachable from mobile, so
+    /// `flm_model_download_async` returns `notImplemented` for anything not already
+    /// on disk. Ship your model, or host it yourself, then add it as a model
+    /// source.
     ///
     /// - Parameter executionProvider: Optional EP override, e.g. `"CoreMLExecutionProvider"`.
     /// - Parameter device: Optional device placement override.
@@ -126,7 +97,9 @@ public final class Model: @unchecked Sendable {
         _ = try await runAsyncJob(
             progress: progress,
             decode: { job in
-                // Load's job result is `{ path, bytes }`; we don't surface it here.
+                // Load's job result is `{ path, bytes }` (LoadResult). We drop it
+                // since callers already know the model they loaded; the info is
+                // available via `Model.cachedPath` if they want it.
                 _ = try? takeJobResultJSON(job)
                 return ()
             },
@@ -179,64 +152,12 @@ public final class Model: @unchecked Sendable {
 
     // MARK: - Internal helpers
 
-    private func downloadOptions(allowMetered: Bool?) -> String {
-        var payload: [String: Any] = [:]
-        if let allowMetered { payload["allow_metered"] = allowMetered }
-        return payload.jsonString() ?? "{}"
-    }
-
     private func loadOptions(executionProvider: String?, device: Device?) -> String {
         var payload: [String: Any] = [:]
         if let executionProvider { payload["execution_provider"] = executionProvider }
         if let device { payload["device"] = device.rawValue }
         return payload.jsonString() ?? "{}"
     }
-}
-
-// MARK: - Progress stream bridge
-
-/// Progress-only streaming variant that has no distinct terminal `Element`. Used by
-/// downloads, which just want to expose progress plus errors.
-final class ProgressStreamContext: @unchecked Sendable, ProgressForwarding, CompletionCarrier {
-    let continuation: AsyncThrowingStream<DownloadProgress, Error>.Continuation
-    let jobBox: JobBox
-
-    init(continuation: AsyncThrowingStream<DownloadProgress, Error>.Continuation, jobBox: JobBox) {
-        self.continuation = continuation
-        self.jobBox = jobBox
-    }
-
-    func forwardProgress(_ progress: DownloadProgress) {
-        continuation.yield(progress)
-    }
-
-    func deliverCompletion(job: flm_job, status: flm_status, errorJSON: UnsafePointer<CChar>?) {
-        if status == FLM_OK {
-            continuation.finish()
-        } else if status == FLM_ERROR_CANCELLED {
-            continuation.finish()
-        } else {
-            continuation.finish(throwing: FoundryLocalError.fromCurrent(status: status, errorJSON: errorJSON))
-        }
-    }
-}
-
-private let _flm_progress_stream_bridge: flm_progress_callback = { _, progressPtr, userData in
-    guard let userData, let progressPtr else { return 0 }
-    let context = Unmanaged<AnyObject>.fromOpaque(userData).takeUnretainedValue()
-    if let carrier = context as? any ProgressForwarding {
-        carrier.forwardProgress(DownloadProgress(cValue: progressPtr.pointee))
-    }
-    return 0
-}
-
-private let _flm_progress_stream_completion_bridge: flm_completion_callback = { job, status, errorJSON, userData in
-    guard let userData else { return }
-    let context = Unmanaged<AnyObject>.fromOpaque(userData).takeRetainedValue()
-    if let carrier = context as? any CompletionCarrier {
-        carrier.deliverCompletion(job: job, status: status, errorJSON: errorJSON)
-    }
-    _ = flm_job_release(job)
 }
 
 // MARK: - Small utilities

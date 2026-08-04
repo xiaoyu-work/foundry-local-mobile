@@ -4,9 +4,9 @@ Swift SDK for [Microsoft Foundry Local](https://github.com/microsoft/Foundry-Loc
 a runtime for on-device inference against ONNX Runtime models.
 
 The package wraps the flat C ABI in `core/` behind an idiomatic Swift API — async /
-await for one-shot calls, `AsyncThrowingStream` for streaming inference and downloads,
-`Codable` for every JSON payload, plus a `URLSession`-based transport that keeps
-multi-gigabyte model downloads running while the app is backgrounded or killed.
+await for one-shot calls, `AsyncThrowingStream` for streaming inference, `Codable`
+for every JSON payload, plus a `URLSession`-based transport that keeps multi-gigabyte
+model downloads running while the app is backgrounded or killed.
 
 - iOS 15 · iPadOS 15 · Mac Catalyst 15 · macOS 12 · visionOS 1
 - Swift 5.9+, Xcode 15+
@@ -105,32 +105,38 @@ import FoundryLocal
 
 let sdk = try FoundryLocal(config: FoundryLocalConfig(appName: "Notes"))
 
-// 1. Ask the catalog for a model. This is a metadata read; nothing is downloaded yet.
-let model = try await sdk.catalog.model(alias: "qwen2.5-0.5b")
+// 1. Acquire the model. Ship it in the app bundle (a folder reference) or point at
+//    a URL you host. `flm_model_download_async` no longer reaches the Foundry Local
+//    desktop catalogue — mobile devices can't run the desktop CUDA / DirectML /
+//    OpenVINO builds it publishes — so acquisition is always a model source. See
+//    [Model sources](#model-sources) below.
+let added = try await sdk.addModelSource(
+    .remote(
+        name: "qwen2.5-0.5b",
+        url: URL(string: "https://models.example.com/qwen2.5-0.5b/model.json")!
+    ),
+    progress: { p in print("\(p.percent)% — \(p.stage)") }
+)
 
-// 2. Download it, in the foreground or the background. Progress is streamed.
-for try await progress in model.download() {
-    print("\(progress.percent)% — \(progress.stage)")
-}
-
-// 3. Load into memory (chooses the best execution provider by default).
+// 2. Get a handle for it and load into memory (best EP chosen by default).
+let model = try await sdk.catalog.model(alias: added.name)
 try await model.load()
 
-// 4. Chat.
+// 3. Chat.
 let chat = try model.createChatSession()
 for try await delta in chat.completeStreaming("Explain vector databases in one line.") {
     if case .text(let fragment) = delta { print(fragment, terminator: "") }
 }
 ```
 
-For a model package (a manifest with several device-specific variants) select a
-variant first:
+For a model package (a manifest with several device-specific variants) pick the
+variant before loading; the catalogue query returns a package handle whose currently
+selected variant is what `load()` operates on:
 
 ```swift
-let package = try await sdk.catalog.model(alias: "phi-4-mini")
+let package = try await sdk.catalog.model(alias: added.name)
 let bestVariantId = try package.selectBestVariant()
 print("selected \(bestVariantId)")
-for try await _ in package.download() {}
 try await package.load()
 ```
 
@@ -248,13 +254,11 @@ different one.
 
 ### Metered / cellular
 
-The SDK observes `NWPathMonitor` and forwards metered / unmetered transitions to the
-core, which pauses and resumes downloads according to
-`FoundryLocalConfig.downloadOnMeteredNetwork`. Override per-download:
-
-```swift
-for try await _ in model.download(allowMetered: false) {}
-```
+The SDK observes `NWPathMonitor` and forwards metered / unmetered transitions to
+the core, which pauses and resumes in-flight downloads according to
+`FoundryLocalConfig.downloadOnMeteredNetwork`. Set it up-front when constructing
+the `FoundryLocalConfig`; the SDK does not currently expose a per-source
+override.
 
 ## Custom HTTP transport
 
@@ -368,7 +372,7 @@ need to update UI.
 
 ```swift
 let task = Task {
-    for try await progress in model.download() { ... }
+    for try await delta in chat.completeStreaming(prompt) { ... }
 }
 task.cancel()  // triggers flm_job_cancel; the stream finishes cleanly
 ```
@@ -383,3 +387,9 @@ sessions can be large.
 - **A shipped Foundry Local runtime.** The core `dlopen`s
   `libfoundry_local`; ship it alongside your app per the root README.
 - **A CocoaPods podspec.** Add one if your organisation is Pods-only.
+- **Downloads from the Foundry Local desktop catalogue.** That catalogue publishes
+  desktop CUDA / DirectML / OpenVINO / x64 builds, which are useless on a phone.
+  `flm_model_download_async` now returns `FLM_ERROR_NOT_IMPLEMENTED` for anything
+  not already on the device — the `Model.download()` idiomatic call is gone with
+  it. Ship your model, or host it under a URL your app can reach, and add it as a
+  [model source](#model-sources).
