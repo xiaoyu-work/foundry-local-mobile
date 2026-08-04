@@ -23,6 +23,13 @@ Commands:
                         Default target is 'all' (arm64-v8a + armeabi-v7a + x86_64).
                         A specific ABI (arm64-v8a, x86_64, ...) may be given
                         instead and is forwarded as --abi.
+  android-binding       Assemble bindings/android as an AAR via Gradle.
+                        Needs a JDK 17 and either \$ANDROID_HOME or
+                        \$ANDROID_SDK_ROOT pointing at an SDK with
+                        platforms/android-35, build-tools/35.0.0,
+                        ndk/27.0.12077973 and cmake/3.22.1 installed.
+                        Forwarded arguments become extra ./gradlew arguments,
+                        e.g. \`-- --stacktrace\` or \`-- assembleDebug\`.
   apple                 Build the core as an Apple XCFramework (scripts/build_apple.sh).
                         Requires a macOS host.
   linux                 Configure and build the core natively via CMake — used
@@ -81,6 +88,28 @@ run_android() {
     "${SCRIPT_DIR}/build_android.sh" "${args[@]}"
 }
 
+run_android_binding() {
+    local module_dir="${REPO_ROOT}/bindings/android"
+    if [[ ! -x "${module_dir}/gradlew" ]]; then
+        printf '[build] error: %s/gradlew missing or not executable\n' \
+            "${module_dir}" >&2
+        exit 1
+    fi
+    if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
+        printf '[build] error: set ANDROID_HOME (or ANDROID_SDK_ROOT) to an SDK '\
+'containing platforms/android-35, build-tools/35.0.0, ndk/27.0.12077973 and '\
+'cmake/3.22.1. See docs/building.md.\n' >&2
+        exit 1
+    fi
+    local -a gradle_args=(--no-daemon --console=plain)
+    if [[ ${#FORWARDED[@]} -gt 0 ]]; then
+        gradle_args+=("${FORWARDED[@]}")
+    else
+        gradle_args+=(assembleRelease)
+    fi
+    (cd "${module_dir}" && ./gradlew "${gradle_args[@]}")
+}
+
 run_apple() {
     "${SCRIPT_DIR}/build_apple.sh" "${FORWARDED[@]}"
 }
@@ -107,11 +136,12 @@ run_clean() {
 }
 
 case "${COMMAND}" in
-    fetch)   run_fetch ;;
-    android) run_android ;;
-    apple)   run_apple ;;
-    linux)   run_linux ;;
-    clean)   run_clean ;;
+    fetch)           run_fetch ;;
+    android)         run_android ;;
+    android-binding) run_android_binding ;;
+    apple)           run_apple ;;
+    linux)           run_linux ;;
+    clean)           run_clean ;;
     all)
         run_fetch
         run_android
