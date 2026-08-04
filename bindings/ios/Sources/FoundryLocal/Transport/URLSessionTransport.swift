@@ -405,8 +405,12 @@ private func saveDownload(from tempURL: URL, to destinationPath: String, append:
         }
         try dst.seekToEnd()
         // Copy in reasonable chunks so a resumed multi-GB append doesn't spike RAM.
-        while let chunk = try? src.read(upToCount: 1 << 16), let data = chunk, !data.isEmpty {
-            try dst.write(contentsOf: data)
+        // `read(upToCount:)` returns nil at EOF. Use `try` rather than `try?` so a
+        // read error propagates instead of being silently swallowed halfway through
+        // the append — which would leave a half-written destination that fails the
+        // core's SHA-256 check and triggers a full re-download.
+        while let chunk = try src.read(upToCount: 1 << 16), !chunk.isEmpty {
+            try dst.write(contentsOf: chunk)
         }
         try? fm.removeItem(at: tempURL)
     } else {

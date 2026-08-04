@@ -136,11 +136,11 @@ extension ModelSource {
             )
         }
         var isDirectory: ObjCBool = false
-        FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        guard isDirectory.boolValue else {
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        guard exists, isDirectory.boolValue else {
             throw FoundryLocalError(
                 code: .invalidArgument,
-                message: "Bundled model path '\(url.path)' is a file, not a directory."
+                message: "Bundled model path '\(url.path)' is not a directory (exists=\(exists))."
             )
         }
         return .bundled(name: name, path: url.path, constraints: constraints, verifyChecksums: verifyChecksums)

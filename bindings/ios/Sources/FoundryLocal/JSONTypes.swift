@@ -15,6 +15,7 @@
 // hand-written CodingKey with a snake_case `stringValue` would then fail to match.
 
 import Foundation
+import FoundryLocalMobile
 
 let flmJSONDecoder: JSONDecoder = {
     let decoder = JSONDecoder()
