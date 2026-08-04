@@ -248,7 +248,7 @@ bindings/
   ios/                Swift Package: C interop + Swift API
   flutter/            Dart FFI plugin
   react-native/       TurboModule (Kotlin + Swift) + TypeScript API
-samples/              Runnable sample apps for each target
+samples/              Runnable sample apps (Android today; more as bindings mature)
 scripts/              Cross-compilation and packaging scripts
 docs/                 Architecture, model packages, platform notes
 ```
