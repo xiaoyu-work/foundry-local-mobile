@@ -36,7 +36,7 @@ were. What each one has actually been through:
 |---|---|---|
 | **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | No |
 | **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
-| **iOS** | Not yet — no Swift toolchain has been run against it | No |
+| **iOS** | Partly — the Foundation subset type-checks against the real C ABI headers under strict concurrency; the UIKit/Network parts need a Mac | No |
 | **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
 | **React Native** | In progress | No |
 
