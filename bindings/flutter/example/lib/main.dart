@@ -162,14 +162,17 @@ class _HomeScreenState extends State<_HomeScreen> {
         cancelToken: cancel,
         onProgress: (p) {
           setState(() {
-            _progress = p.percent / 100.0;
+            _progress = p.fraction;
             _progressStage = p.stage;
             _status = 'Downloading… ${p.percent.toStringAsFixed(1)}% ($_progressStage)';
           });
         },
       );
-      final model = result.model ??
-          await foundry.catalog.getModel(result.name);
+      // requireModel throws only in the "download succeeded but catalog
+      // scan missed it" case, which is a bug we would want to surface
+      // during app testing. Real apps that want to recover instead can
+      // read result.model directly and fall back to catalog.getModel.
+      final model = result.requireModel();
       _sourceResult = result;
       _model = model;
       _manifest = model.package?.manifest;
@@ -217,7 +220,7 @@ class _HomeScreenState extends State<_HomeScreen> {
       final result = await model.load(
         onProgress: (p) {
           setState(() {
-            _progress = p.percent / 100.0;
+            _progress = p.fraction;
             _progressStage = p.stage;
             _status = 'Loading… ${p.percent.toStringAsFixed(1)}% ($_progressStage)';
           });

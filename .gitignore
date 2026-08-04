@@ -72,11 +72,17 @@ yarn-error.log*
 # ---------------------------------------------------------------------------
 # Locally provisioned toolchains. Never belongs in the repo: an unpacked SDK is
 # hundreds of megabytes and exceeds GitHub's per-file limit outright.
+#
+# These are anchored with a leading slash on purpose. An unanchored `flutter/`
+# matches a directory of that name at *any* depth, which silently swallowed
+# every new file under bindings/flutter/ -- already-tracked files kept working,
+# so nothing looked wrong until someone added a source file and git quietly
+# refused to stage it.
 # ---------------------------------------------------------------------------
-.dart-tmp/
-.toolchains/
-android-ndk-*/
-flutter/
+/.dart-tmp/
+/.toolchains/
+/android-ndk-*/
+/flutter/
 *.tar.gz
 *.tar.xz
 *.zip

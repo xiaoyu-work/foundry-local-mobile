@@ -21,10 +21,21 @@ import 'native_strings.dart';
 /// imperative [selectBestVariant] / [selectVariant] methods here are for
 /// after-the-fact orchestration (offering the user a picker,
 /// pre-provisioning several variants, running estimates before committing).
+///
+/// [manifest] and its convenience projections ([variants],
+/// [selectedVariantId]) are cached after the first read to avoid two
+/// costs: re-invoking `flm_package_get_variants_json` every time a caller
+/// touches the property, and the correctness hazard of two consecutive
+/// reads returning subtly different snapshots when a
+/// [selectVariant]/[selectBestVariant] call has run in between. Any
+/// selection call automatically invalidates the cache; a caller who wants
+/// to force a re-read for any other reason can call [refresh].
 class ModelPackage {
   ModelPackage.internal(this._model);
 
   final Model _model;
+
+  ModelPackageManifest? _cachedManifest;
 
   /// Underlying model handle.
   Model get model => _model;
@@ -32,7 +43,13 @@ class ModelPackage {
   int get _handle => _model.handle;
 
   /// The package manifest, scored against this device.
-  ModelPackageManifest get manifest {
+  ///
+  /// Cached on first read. Any [selectVariant] or [selectBestVariant]
+  /// call invalidates the cache. Use [refresh] to force a fresh decode.
+  ModelPackageManifest get manifest =>
+      _cachedManifest ??= _decodeManifest();
+
+  ModelPackageManifest _decodeManifest() {
     final bindings = NativeLibrary.instance.bindings;
     final out = calloc<Pointer<Char>>();
     try {
@@ -51,24 +68,44 @@ class ModelPackage {
     }
   }
 
-  /// Convenience: variants as a list, scored against this device.
+  /// Drop the cached manifest and decode it again from the ABI on the next
+  /// read. The selection methods on this class already invalidate the
+  /// cache, so you do not need to call [refresh] after them.
+  ///
+  /// Note what this does **not** do. The core scans the package directory
+  /// once, when the model handle first resolves a package, and keeps that
+  /// snapshot until the model is deleted; `flm_package_get_variants_json`
+  /// re-serialises it rather than re-reading the disk. So [refresh] gives
+  /// you a fresh decode of the *same* snapshot — it cannot observe files
+  /// that appeared underneath, and [ModelVariant.isCached] and
+  /// [ModelVariant.downloadSizeBytes] will not move because a download
+  /// finished elsewhere. To see acquisition that happened outside this
+  /// object, get a new model handle from the manager.
+  void refresh() {
+    _cachedManifest = null;
+  }
+
+  /// Convenience: variants as a list, scored against this device. Backed
+  /// by the same cached [manifest].
   List<ModelVariant> get variants => manifest.variants;
 
   /// Currently selected variant id, or null when none has been chosen.
+  /// Backed by the same cached [manifest].
   String? get selectedVariantId => manifest.selectedVariantId;
 
   /// Pin the package to a specific variant. Subsequent [Model.load] calls
-  /// on this package act on it.
+  /// on this package act on it. Invalidates the cached [manifest].
   void selectVariant(String variantId) {
     withCString(variantId, (ptr) {
       final status =
           NativeLibrary.instance.bindings.flm_package_select_variant(_handle, ptr);
       checkStatus(status, fallbackMessage: 'flm_package_select_variant failed');
     });
+    _cachedManifest = null;
   }
 
   /// Let the SDK pick the best variant for this device. Returns the id of the
-  /// variant that was chosen.
+  /// variant that was chosen. Invalidates the cached [manifest].
   String selectBestVariant({VariantConstraints? constraints}) {
     final bindings = NativeLibrary.instance.bindings;
     final constraintsJson = constraints == null
@@ -89,6 +126,7 @@ class ModelPackage {
       });
     } finally {
       calloc.free(out);
+      _cachedManifest = null;
     }
   }
 

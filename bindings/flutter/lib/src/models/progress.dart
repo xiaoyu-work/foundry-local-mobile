@@ -42,6 +42,23 @@ class Progress {
   /// Progress in the closed interval `[0.0, 100.0]`.
   final double percent;
 
+  /// [percent] normalised to `[0.0, 1.0]`, clamped both ends.
+  ///
+  /// Every progress UI writes the same divide-and-clamp against [percent]
+  /// — `LinearProgressIndicator`'s `value`, `CircularProgressIndicator`'s
+  /// `value`, and pretty much any custom bar all want a 0-to-1 double.
+  /// Compute it once here rather than force every caller to open-code it
+  /// and get the clamp wrong on the two edge samples the runtime does
+  /// legitimately emit (percent < 0 when the total is not known yet and,
+  /// very rarely, > 100 when a resume miscounts the last chunk).
+  double get fraction {
+    final v = percent / 100.0;
+    if (v.isNaN) return 0.0;
+    if (v < 0.0) return 0.0;
+    if (v > 1.0) return 1.0;
+    return v;
+  }
+
   /// Free-form stage name — `resolving`, `downloading`, `verifying`,
   /// `extracting`, `loading`, …
   final String stage;
