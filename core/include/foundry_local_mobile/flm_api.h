@@ -247,7 +247,7 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *   "name": "phi-4-mini",            // required: the name the model is registered under
  *   "path": "/data/.../models/phi",  // required: a directory the app controls
  *   "copy_into_cache": false,        // optional: copy rather than load in place
- *   "constraints": { ... }           // optional; see flm_model_select_variant
+ *   "constraints": { ... }           // optional; see flm_package_select_best_variant
  * }
  *
  * {
@@ -257,7 +257,7 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *   "headers": {                     // optional: sent with every request
  *     "Authorization": "Bearer ..."
  *   },
- *   "constraints": { ... }           // optional
+ *   "constraints": { ... }           // optional; see flm_package_select_best_variant
  * }
  *
  * Both kinds also accept:
@@ -520,12 +520,18 @@ FLM_EXPORT flm_status FLM_CALL flm_package_select_variant(flm_model package, con
  * Let the SDK pick the best variant for this device using the device profile and the
  * variants' compatibility scores.
  *
- * `constraints_json` may be NULL, or:
+ * `constraints_json` may be NULL, or any subset of:
  * {
  *   "max_download_bytes": 838860800,   // skip variants larger than this
- *   "allowed_devices": ["npu", "cpu"], // restrict placement
- *   "prefer_smallest": false           // tie-break on size instead of score
+ *   "allowed_devices": ["npu", "cpu"], // restrict placement; empty or absent means any
+ *   "prefer_smallest": false,          // tie-break on size instead of score
+ *   "require_cached": false            // only consider variants already on disk
  * }
+ *
+ * Those four keys are the whole vocabulary; any other key is ignored silently. The same
+ * object is accepted as "constraints" on a model source, where it picks the variant
+ * before any weights transfer — which is how a cross-platform app ships one build and
+ * still downloads only the variant its device can run.
  *
  * Writes the chosen variant id to `out_variant_id` (caller frees). Returns
  * FLM_ERROR_INCOMPATIBLE when no variant satisfies the constraints.
