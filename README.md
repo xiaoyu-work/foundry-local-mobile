@@ -75,7 +75,7 @@ Point the SDK at a package manifest and it scores this device against every vari
 then fetches only the one that device can run:
 
 ```dart
-final model = await foundry.addModelSource(
+final result = await foundry.addModelSource(
   const ModelSource.remote(
     name: 'qwen2.5-0.5b',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
@@ -89,7 +89,7 @@ final model = await foundry.addModelSource(
 );
 
 // What was actually chosen, and what else the package offered.
-for (final v in model.package!.variants) {
+for (final v in result.model?.package?.variants ?? const []) {
   print('${v.id}  ep=${v.executionProvider} device=${v.device} '
         'size=${v.downloadSizeBytes} compatible=${v.isCompatible} '
         'reason=${v.incompatibilityReason}');
@@ -170,10 +170,13 @@ let source = ModelSource.remote(
     name: "qwen2.5-0.5b",
     url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!
 )
-let model = try await foundry.addModelSource(source) { progress in
+let result = try await foundry.addModelSource(source) { progress in
     print("\(progress.percent)%")
 }
 
+// `model` is nil only if the download succeeded but the catalog scan missed the
+// files; look the model up by name through `foundry.catalog` if that happens.
+guard let model = result.model else { return }
 try await model.load()
 
 let chat = try model.createChatSession()
@@ -191,7 +194,7 @@ for try await delta in chat.completeStreaming("What is the golden ratio?") {
 final foundry = await FoundryLocal.create(const FoundryLocalConfig(appName: 'my-app'));
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
-final model = await foundry.addModelSource(
+final result = await foundry.addModelSource(
   const ModelSource.remote(
     name: 'qwen2.5-0.5b',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
@@ -199,6 +202,7 @@ final model = await foundry.addModelSource(
   onProgress: (p) => print('${p.percent}%'),
 );
 
+final model = result.model!;
 await model.load();
 
 final chat = model.createChatSession();
@@ -216,12 +220,13 @@ await for (final delta in chat.completeStreaming('What is the golden ratio?')) {
 const foundry = await FoundryLocal.create({ appName: 'my-app' });
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
-const model = await foundry.addModelSource(
+const result = await foundry.addModelSource(
   { kind: 'remote', name: 'qwen2.5-0.5b',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json' },
   (p) => console.log(`${p.percent}%`),
 );
 
+const model = result.model!;
 await model.load();
 
 const chat = model.createChatSession();
