@@ -104,6 +104,9 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         const val NAME = "RNFoundryLocal"
 
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        /** `Number.MAX_SAFE_INTEGER`: the largest integer a JS double holds exactly. */
+        private const val MAX_SAFE_INTEGER = 9007199254740991L
     }
 
     private val managers = HandleRegistry<FoundryLocal>()
@@ -590,7 +593,7 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
                     null -> promise.resolve(null)
                     is Double -> promise.resolve(result)
                     is Int -> promise.resolve(result.toDouble())
-                    is Long -> promise.resolve(result.toDouble())
+                    is Long -> promise.resolve(safeDouble(result))
                     is Boolean -> promise.resolve(result)
                     is String -> promise.resolve(result)
                     else -> promise.resolve(result.toString())
@@ -605,6 +608,36 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
 
     private fun rejectFromCancellation(promise: Promise, ce: CancellationException) {
         promise.reject(errorCode(7), ce.message ?: "cancelled")
+    }
+
+    /**
+     * Convert a [Long] bound for JavaScript, refusing values the `number` type
+     * cannot represent exactly.
+     *
+     * JavaScript numbers are IEEE-754 doubles and exact only to 2^53. An
+     * `flm_handle` packs a kind tag into its high bits, so every valid one is
+     * at least 2^56 — at that magnitude the gap between representable doubles
+     * is 16, and a silent `toDouble()` would round the low four bits off the
+     * slot index. Nothing would raise; the id would simply resolve to a
+     * different slot or to none, surfacing much later as the wrong model
+     * loading.
+     *
+     * No current call path returns a raw handle — ids crossing the bridge come
+     * from [HandleRegistry] and are small sequential ints, and the other Longs
+     * here are byte counts and timestamps well inside the safe range. This
+     * guard exists so that if someone later adds one that does, it fails
+     * immediately and says why instead of corrupting a lookup.
+     */
+    private fun safeDouble(value: Long): Double {
+        if (value > MAX_SAFE_INTEGER || value < -MAX_SAFE_INTEGER) {
+            throw IllegalStateException(
+                "refusing to send $value across the React Native bridge: it exceeds " +
+                    "JavaScript's exact-integer range (2^53) and would be silently rounded. " +
+                    "If this is an flm_handle, register it in a HandleRegistry and send the " +
+                    "slot id instead — see the Handles section of src/NativeFoundryLocal.ts.",
+            )
+        }
+        return value.toDouble()
     }
 
     private fun rejectFromThrowable(promise: Promise, t: Throwable) {
