@@ -306,6 +306,13 @@ public data class CatalogFilter(
     val cachedOnly: Boolean = false,
     val loadedOnly: Boolean = false,
     val maxSizeBytes: Long? = null,
+    /**
+     * Hide models this device cannot run. Defaults to `true` here, and in the
+     * Swift and Dart bindings, because a mobile app almost never wants to
+     * offer a model the device will refuse to load. The ABI itself treats an
+     * absent `compatible_only` as `false`; the friendlier default belongs to
+     * the bindings, which is why all of them send the key explicitly.
+     */
     val compatibleOnly: Boolean = true,
 )
 

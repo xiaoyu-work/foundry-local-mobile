@@ -51,11 +51,14 @@ class Catalog {
 
   final int _handle;
 
-  /// List models. When [filter] is null every catalog entry is returned; a
-  /// filter restricts the result to models the device can run.
+  /// List models the device can run. Omitting [filter] applies the default
+  /// [CatalogFilter], which sets `compatibleOnly` — the Swift and Kotlin
+  /// bindings do the same, so the zero-argument call means the same thing on
+  /// every platform. Pass `CatalogFilter(compatibleOnly: false)` for the
+  /// unfiltered catalog.
   Future<List<ModelInfo>> listModels({CatalogFilter? filter}) async {
     final bindings = NativeLibrary.instance.bindings;
-    final filterJson = filter == null ? null : jsonEncode(filter.toJson());
+    final filterJson = jsonEncode((filter ?? const CatalogFilter()).toJson());
 
     final result = await withNullableCString<Future<Map<String, Object?>>>(
       filterJson,

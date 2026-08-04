@@ -31,10 +31,16 @@ public class Catalog internal constructor(private val handle: Long) {
      * List catalog models, optionally filtered. Reads the currently known
      * catalog — the app's own registered sources plus anything advertised by
      * a configured manifest server.
+     *
+     * Passing no filter applies the default [CatalogFilter], which sets
+     * [CatalogFilter.compatibleOnly] — the Swift and Dart bindings do the
+     * same, so the zero-argument call means the same thing on every
+     * platform. Pass `CatalogFilter(compatibleOnly = false)` for the
+     * unfiltered catalog.
      */
     public suspend fun listModels(filter: CatalogFilter? = null): List<ModelInfo> {
         val json = JobBridge.awaitResult { corr ->
-            NativeBridge.catalogListModelsAsync(handle, JsonCodec.encodeFilter(filter), corr)
+            NativeBridge.catalogListModelsAsync(handle, JsonCodec.encodeFilter(filter ?: CatalogFilter()), corr)
         } ?: return emptyList()
 
         val root = JsonCodec.parseObject(json)

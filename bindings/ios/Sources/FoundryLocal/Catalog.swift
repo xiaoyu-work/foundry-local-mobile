@@ -20,7 +20,11 @@ public final class Catalog: @unchecked Sendable {
         self.handle = handle
     }
 
-    /// List catalog models, optionally filtered.
+    /// List catalog models, optionally filtered. Omitting the filter applies
+    /// the default ``CatalogFilter``, which sets ``CatalogFilter/compatibleOnly``
+    /// — the Kotlin and Dart bindings do the same, so the zero-argument call
+    /// means the same thing on every platform. Pass
+    /// `CatalogFilter(compatibleOnly: false)` for the unfiltered catalog.
     public func listModels(_ filter: CatalogFilter = .init()) async throws -> [ModelInfo] {
         let filterJSON = filter.encodeAsJSON()
         return try await runAsyncJob(
@@ -74,7 +78,7 @@ public final class Catalog: @unchecked Sendable {
     /// synchronous and safe to call before any network is available.
     public func cachedModels() throws -> [ModelInfo] {
         let json = try readJSON { flm_catalog_list_cached_models_json(handle, $0) }
-        return try flmJSONDecoder.decode([ModelInfo].self, from: Data(json.utf8))
+        return try flmJSONDecoder.decode(CatalogListResult.self, from: Data(json.utf8)).models
     }
 
     /// Bytes currently used by the model cache.
@@ -90,14 +94,19 @@ public struct CatalogFilter: Sendable {
     public var cachedOnly: Bool = false
     public var loadedOnly: Bool = false
     public var maxSizeBytes: Int64?
-    public var compatibleOnly: Bool = false
+    /// Hide models this device cannot run. Defaults to `true` here, and in the
+    /// Kotlin and Dart bindings, because a mobile app almost never wants to
+    /// offer a model the device will refuse to load. The ABI itself treats an
+    /// absent `compatible_only` as `false`; the friendlier default belongs to
+    /// the bindings, which is why all of them send the key explicitly.
+    public var compatibleOnly: Bool = true
 
     public init(
         task: String? = nil,
         cachedOnly: Bool = false,
         loadedOnly: Bool = false,
         maxSizeBytes: Int64? = nil,
-        compatibleOnly: Bool = false
+        compatibleOnly: Bool = true
     ) {
         self.task = task
         self.cachedOnly = cachedOnly
@@ -112,7 +121,7 @@ public struct CatalogFilter: Sendable {
         if cachedOnly { payload["cached_only"] = true }
         if loadedOnly { payload["loaded_only"] = true }
         if let maxSizeBytes { payload["max_size_bytes"] = maxSizeBytes }
-        if compatibleOnly { payload["compatible_only"] = true }
+        payload["compatible_only"] = compatibleOnly
         return payload.jsonString() ?? "{}"
     }
 }
