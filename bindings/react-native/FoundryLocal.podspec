@@ -9,7 +9,12 @@ Pod::Spec.new do |s|
   s.homepage     = package["repository"]
   s.license      = package["license"]
   s.author       = "Microsoft Corporation"
-  s.source       = { :git => "https://github.com/microsoft/foundry-local-mobile.git", :tag => "v#{s.version}" }
+  # This podspec is intentionally local-path-only for now. It compiles source
+  # from the sibling Swift binding under `bindings/ios/`, which exists in this
+  # repository layout but would not be present in a CocoaPods trunk checkout or
+  # in the npm package tarball. Do not add a git `s.source` here until the Swift
+  # binding ships its own pod (for example `FoundryLocalKit`) that this React
+  # Native pod can depend on instead of reaching outside its pod root.
 
   # Matches the Swift binding's minimum (see bindings/ios/Package.swift). The
   # binding uses `AsyncThrowingStream` and `withTaskCancellationHandler`,
@@ -17,7 +22,8 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => "15.0" }
   s.swift_versions = ["5.9"]
 
-  # Two source trees are compiled into this single pod module:
+  # In a local checkout, two source trees are compiled into this single pod
+  # module:
   #
   #   1. `ios/**` — the React Native wrapper we own (this file's directory).
   #   2. `../ios/Sources/FoundryLocal/**` — the Swift binding at

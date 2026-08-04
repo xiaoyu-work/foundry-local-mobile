@@ -10,11 +10,19 @@ on-device LLM inference from JavaScript, backed by ONNX Runtime.
 | Android | Wired. Wraps the `bindings/android/` Kotlin binding through a TurboModule. |
 | iOS | Wired against the Swift binding at `bindings/ios/Sources/FoundryLocal/`, unverified. The iOS TurboModule wraps the Swift binding so the JS surface is identical to Android's, but neither the Swift binding nor this wrapper has been compiled — no Swift toolchain has been run against them yet. Confidence is structural review only; the first `swift build` / `pod install` may surface build issues. |
 
+This package is **repo-local only** today. The podspec intentionally has no
+publishable `s.source` because it compiles the sibling Swift binding from
+`bindings/ios/Sources/FoundryLocal/`; a CocoaPods trunk release and a standalone
+npm package cannot honestly include that dependency until the Swift binding
+ships its own pod for this package to depend on.
+
 ## Installation
 
-```sh
-npm install @foundry-local/react-native
-```
+Consume this package from a workspace or symlink inside a checkout of this
+repository, so CocoaPods resolves `FoundryLocal.podspec` at
+`bindings/react-native/` and can see the sibling `bindings/ios/` sources. Do
+not consume it from an npm tarball yet; `npm pack` is useful for auditing the
+package boundary, but that tarball is not a supported distribution artifact.
 
 **Requirements**
 
@@ -174,7 +182,7 @@ No bare `Error` reaches an app from the SDK.
 ## Architecture notes
 
 - **Android**: this package's TurboModule wraps the Kotlin binding at `bindings/android/`. It does not re-bind the C ABI — every download, callback, transport, and lifecycle concern is handled by the Kotlin binding's existing OkHttp + WorkManager transport, which survives the app being backgrounded and applies the append-on-resume fix for partial downloads.
-- **iOS**: this package's TurboModule wraps the Swift binding at `bindings/ios/Sources/FoundryLocal/`, mirroring Android's shape. `ios/RNFoundryLocalCore.swift` owns the handle registries and subscription table; `ios/RNFoundryLocal.mm` is a thin Objective-C++ `RCTEventEmitter` that exports the codegen'd selectors and forwards to Swift. Streaming maps `AsyncThrowingStream` to the same `FoundryLocal:*` event names the Android module uses, so the shared JS async-iterator layer is platform-agnostic. The podspec vendors the Swift binding's source tree until a `FoundryLocalKit.podspec` ships.
+- **iOS**: this package's TurboModule wraps the Swift binding at `bindings/ios/Sources/FoundryLocal/`, mirroring Android's shape. `ios/RNFoundryLocalCore.swift` owns the handle registries and subscription table; `ios/RNFoundryLocal.mm` is a thin Objective-C++ `RCTEventEmitter` that exports the codegen'd selectors and forwards to Swift. Streaming maps `AsyncThrowingStream` to the same `FoundryLocal:*` event names the Android module uses, so the shared JS async-iterator layer is platform-agnostic. The podspec reaches into the sibling Swift binding source tree only for local-path consumption; it is not publishable until a `FoundryLocalKit.podspec` (or equivalent) ships.
 - **Wire format**: everything richer than a primitive crosses the TurboModule boundary as a UTF-8 JSON string. The TypeScript layer parses/produces those strings, so the codegen'd spec stays small and the same JSON shape is used by iOS and Android.
 - **Handles**: all native handles are opaque `number`s (slot ids into a per-module registry). The `0` slot is reserved as the invalid-handle sentinel.
 

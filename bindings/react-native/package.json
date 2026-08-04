@@ -1,6 +1,7 @@
 {
   "name": "@foundry-local/react-native",
   "version": "0.1.0",
+  "private": true,
   "description": "React Native binding for Foundry Local Mobile — on-device LLM inference from JavaScript.",
   "main": "src/index.ts",
   "types": "src/index.ts",
