@@ -98,11 +98,22 @@ public class ChatSession internal constructor(model: Model, options: ChatOptions
     /**
      * Run a chat completion in streaming mode. The [prompt] is added as a
      * single user turn to the session history.
+     *
+     * Emits **only** text fragments — tool calls, usage accounting and the
+     * completion event are dropped. That matches what a chat UI typically
+     * wants; a caller that needs those events (a tool-calling agent, a
+     * token-cost meter, a UI that lights up on `FinishReason.LENGTH`) must
+     * build a [ChatRequest] and use [completeAllDeltas] instead.
      */
     public fun completeStreaming(prompt: String): Flow<Delta.Text> = completeStreaming(userTurn(prompt))
 
     /**
-     * Streaming completion with a raw OpenAI-shaped request object.
+     * Streaming completion with a raw OpenAI-shaped [ChatRequest].
+     *
+     * Emits **only** text fragments — tool calls, usage accounting and the
+     * completion event are dropped. See [completeAllDeltas] for the
+     * everything-flavoured overload, and see [complete] for a non-streaming
+     * variant that returns tool calls and usage on a single result object.
      */
     public fun completeStreaming(request: ChatRequest): Flow<Delta.Text> =
         JobBridge.stream { corr ->
@@ -110,8 +121,16 @@ public class ChatSession internal constructor(model: Model, options: ChatOptions
         }.mapNotNull { it as? Delta.Text }
 
     /**
-     * Streaming completion producing every delta kind (tool calls, usage,
-     * completion). Use this when the caller needs tool call events.
+     * Streaming completion emitting **every** delta kind — text fragments,
+     * reasoning fragments, tool calls, usage accounting and the terminal
+     * `Delta.Completed`.
+     *
+     * Reach for this when the app needs tool call events or per-turn token
+     * counts. Chat UIs that only need to paint text into a bubble should
+     * prefer [completeStreaming], whose narrower return type
+     * ([kotlinx.coroutines.flow.Flow] of [Delta.Text]) is easier to consume
+     * — the type says "you get text or nothing", so callers do not have to
+     * `is` check every element.
      */
     public fun completeAllDeltas(request: ChatRequest): Flow<Delta> =
         JobBridge.stream { corr ->

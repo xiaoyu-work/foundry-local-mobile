@@ -11,6 +11,8 @@ import com.microsoft.ai.foundry.local.mobile.lifecycle.LifecycleBridge
 import com.microsoft.ai.foundry.local.mobile.transport.OkHttpTransport
 import com.microsoft.ai.foundry.local.mobile.transport.TransportDispatcher
 import com.microsoft.ai.foundry.local.mobile.transport.HttpTransport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -22,6 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * job pool — the methods on this class either return immediately or `suspend`.
  *
  * ```kotlin
+ * // create is a suspend fun; call from a coroutine scope
+ * // (lifecycleScope, viewModelScope, or your own).
  * val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
  *
  * // Acquire a model: bundled inside the APK, or hosted at a URL the app controls.
@@ -30,7 +34,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     ModelSource.Remote(name = "qwen2.5-0.5b", url = "https://.../manifest.json"),
  * ) { println("${it.percent}%") }
  *
- * val model = result.model ?: foundry.catalog.getModel(result.name)
+ * // requireModel() throws the rare "download succeeded but catalog missed it" case
+ * // with an actionable message; use `result.model ?: catalog.getModel(name)` to
+ * // handle it explicitly.
+ * val model = result.requireModel()
  * model.load()
  *
  * val chat = model.createChatSession()
@@ -157,14 +164,27 @@ public class FoundryLocal internal constructor(
         /**
          * Create the SDK using the app's private data directory. The default
          * OkHttp-backed transport is installed at the same time.
+         *
+         * This function is `suspend` because it does filesystem work — it
+         * creates the app data, model cache and log directories, and the
+         * `flm_manager_create` call it invokes may kick off a catalog refresh
+         * that scans a cache holding several gigabytes of model files. On the
+         * main thread that is a StrictMode violation and a plausible ANR on
+         * a cold start with a populated cache; the dispatch to
+         * [Dispatchers.IO] below makes it structurally impossible to get
+         * that wrong.
+         *
+         * Call from a coroutine scope — `lifecycleScope`, `viewModelScope`,
+         * or your own. Java callers can bridge via `BuildersKt.runBlocking`
+         * or the standard Kotlin coroutines Java bridging APIs.
          */
         @JvmStatic
         @JvmOverloads
-        public fun create(
+        public suspend fun create(
             context: Context,
             config: FoundryLocalConfig,
             transport: HttpTransport = OkHttpTransport(),
-        ): FoundryLocal {
+        ): FoundryLocal = withContext(Dispatchers.IO) {
             val appContext = context.applicationContext ?: context
             val filesDir = appContext.filesDir
             val dataDir = config.appDataDir ?: File(filesDir, "foundry").apply { mkdirs() }.absolutePath
@@ -193,7 +213,7 @@ public class FoundryLocal internal constructor(
             val lifecycle = LifecycleBridge.forContext(appContext)
             val instance = FoundryLocal(handle, transport, lifecycle)
             lifecycle?.attach(instance)
-            return instance
+            instance
         }
     }
 }

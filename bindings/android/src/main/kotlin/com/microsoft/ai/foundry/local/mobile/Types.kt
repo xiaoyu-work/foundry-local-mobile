@@ -68,7 +68,29 @@ public data class DeviceProfile(
     @SerialName("thermal_state") val thermalState: String? = null,
     @SerialName("low_power_mode") val lowPowerMode: Boolean = false,
     val network: NetworkKind = NetworkKind.UNKNOWN,
-)
+) {
+    /**
+     * Concise human-readable summary of the ABI, core count and every
+     * currently-available execution provider, e.g.
+     * `arm64-v8a, 8 cores, EPs: QNN (NPU), XNNPACK (CPU)`.
+     *
+     * Meant for a debug log or a settings screen — every debug UI wants
+     * exactly this string and every one of them was writing the join by
+     * hand before this property existed. Unavailable providers are elided;
+     * if none is available the summary ends with `EPs: CPU only`.
+     *
+     * The field is a computed property, not a serialized one — it does not
+     * appear in the JSON that [DeviceProfile] is decoded from.
+     */
+    public val summary: String
+        get() {
+            val eps = executionProviders
+                .filter { it.available }
+                .joinToString(", ") { "${it.name} (${it.device})" }
+                .ifBlank { "CPU only" }
+            return "$abi, $cpuCores cores, EPs: $eps"
+        }
+}
 
 @Serializable
 public data class ExecutionProviderInfo(
@@ -438,4 +460,27 @@ public data class ModelSourceResult(
     val bytesReused: Long = 0,
     val wasCached: Boolean = false,
     val model: Model? = null,
-)
+) {
+    /**
+     * Return [model] when the core surfaced a handle, and throw an
+     * [IllegalStateException] otherwise.
+     *
+     * Apps that only ever add package sources — which is the common case,
+     * because that is the whole point of the two-source design — should not
+     * have to pay null-handling ceremony for an outcome that only arises
+     * when the SDK's catalog scan misses a completed download. If it does
+     * happen the throw message names both [name] and [path] so a caller
+     * can look the model up by name through [FoundryLocal.catalog] or work
+     * from the on-disk path directly without extra plumbing.
+     *
+     * Callers that want to handle the null case explicitly — falling back
+     * to a catalog lookup, showing a different UI, or reporting telemetry
+     * — should read [model] directly instead of calling this.
+     */
+    public fun requireModel(): Model = model ?: error(
+        "Model source \"$name\" was added successfully — files are on disk at " +
+            "\"$path\" — but the SDK's catalog scan did not surface a handle. This " +
+            "is a catalog-side bug, not a download failure. Look the model up by " +
+            "name through FoundryLocal.catalog or work from the path directly.",
+    )
+}
