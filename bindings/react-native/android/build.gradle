@@ -1,0 +1,98 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+buildscript {
+    ext.getExtOrDefault = { name, defaultValue ->
+        return rootProject.ext.has(name) ? rootProject.ext.get(name) : defaultValue
+    }
+    ext.kotlinVersion = getExtOrDefault('kotlinVersion', '2.0.20')
+
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.5.2"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+        classpath "org.jetbrains.kotlin:kotlin-serialization:$kotlinVersion"
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
+apply plugin: 'com.facebook.react'
+
+def isNewArchEnabled = rootProject.hasProperty('newArchEnabled') && rootProject.getProperty('newArchEnabled') == 'true'
+
+android {
+    namespace 'com.foundrylocal.reactnative'
+    compileSdkVersion getExtOrDefault('compileSdkVersion', 35)
+    // 24 keeps the module compatible with RN's baseline; the underlying Foundry
+    // Local Kotlin binding still needs 26 for `Files.write` and `java.time`.
+    defaultConfig {
+        minSdkVersion 26
+        targetSdkVersion getExtOrDefault('targetSdkVersion', 34)
+        buildConfigField 'boolean', 'IS_NEW_ARCHITECTURE_ENABLED', isNewArchEnabled.toString()
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+        // `internal` classes from the Kotlin binding are not part of its
+        // ABI — we only touch the public surface, so no friend paths needed.
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += ['src/main/java']
+            if (isNewArchEnabled) {
+                java.srcDirs += ["${project.buildDir}/generated/source/codegen/java"]
+            }
+        }
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+    maven {
+        // React Native's Gradle plugin publishes prefabs here on some setups.
+        url "$rootDir/../node_modules/react-native/android"
+    }
+}
+
+dependencies {
+    // React Native — pulled from the app's node_modules, standard for
+    // autolinked modules.
+    implementation 'com.facebook.react:react-android'
+
+    // The Kotlin binding we're wrapping. It in turn depends on the JNI bridge
+    // to the C ABI, OkHttp and WorkManager — we get all of that transitively.
+    //
+    // NB: the underlying binding module is expected to publish artifact
+    // `com.microsoft.ai.foundry.local:foundry-local-mobile`. When the RN
+    // module lives in the same repo as the Kotlin binding (as here), consumers
+    // can substitute the coordinate for a Gradle project dependency via
+    // `dependencySubstitution`.
+    implementation 'com.microsoft.ai.foundry.local:foundry-local-mobile:0.1.0'
+
+    // Coroutines — used to bridge the binding's `suspend`/`Flow` API to
+    // TurboModule promises and event streams.
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3'
+}
+
+react {
+    jsRootDir = file('../src/')
+    libraryName = 'RNFoundryLocalSpec'
+    codegenJavaPackageName = 'com.foundrylocal.reactnative'
+}
