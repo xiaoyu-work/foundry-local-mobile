@@ -27,6 +27,25 @@ and your app works offline. No per-token costs, no API keys, no backend to maint
 All four bindings sit on the **same** native core, so behaviour, model cache layout and
 model-package selection are identical across platforms.
 
+### Maturity
+
+The bindings are not equally proven, and it would be misleading to present them as if they
+were. What each one has actually been through:
+
+| Target | Compiled | Verified on device |
+|---|---|---|
+| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | No |
+| **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
+| **iOS** | Not yet — no Swift toolchain has been run against it | No |
+| **Flutter** | Not yet | No |
+| **React Native** | In progress | No |
+
+"Compiled" is a real guarantee and a narrow one: the Android binding's native symbols are
+checked against its Kotlin `external fun` declarations at build time, which turns what
+would otherwise be an `UnsatisfiedLinkError` on a user's phone into a build failure. It
+says nothing about whether the code behaves correctly once it runs. Treat the unchecked
+rows as unproven rather than broken, and please report what you find.
+
 ## Why a separate mobile SDK?
 
 Mobile is not just "desktop with a smaller screen". This repo exists because on-device AI
