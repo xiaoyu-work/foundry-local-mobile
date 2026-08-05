@@ -39,9 +39,9 @@ import FoundryLocalMobile
 /// resumes it.
 final class ContinuationBox<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Error>?
+    private var continuation: CheckedContinuation<Value, any Error>?
 
-    init(_ continuation: CheckedContinuation<Value, Error>) {
+    init(_ continuation: CheckedContinuation<Value, any Error>) {
         self.continuation = continuation
     }
 
@@ -53,7 +53,7 @@ final class ContinuationBox<Value: Sendable>: @unchecked Sendable {
         cont?.resume(returning: value)
     }
 
-    func resume(throwing error: Error) {
+    func resume(throwing error: any Error) {
         lock.lock()
         let cont = continuation
         continuation = nil
@@ -175,7 +175,7 @@ func runAsyncJob<Value: Sendable>(
 ) async throws -> Value {
     let jobBox = JobBox()
     return try await withTaskCancellationHandler {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Value, Error>) in
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Value, any Error>) in
             let context = AsyncCallContext<Value>(
                 continuation: ContinuationBox(cont),
                 jobBox: jobBox,
@@ -255,13 +255,13 @@ extension AsyncCallContext: CompletionCarrier {
 /// Envelope for a streaming operation. Holds the stream's continuation plus the box
 /// used to route the `onTermination` cancel.
 final class StreamCallContext<Element: Sendable>: @unchecked Sendable {
-    let continuation: AsyncThrowingStream<Element, Error>.Continuation
+    let continuation: AsyncThrowingStream<Element, any Error>.Continuation
     let jobBox: JobBox
     let decodeDelta: @Sendable (UnsafePointer<flm_delta>) -> Element?
     let decodeFinal: @Sendable (flm_job) throws -> [Element]
 
     init(
-        continuation: AsyncThrowingStream<Element, Error>.Continuation,
+        continuation: AsyncThrowingStream<Element, any Error>.Continuation,
         jobBox: JobBox,
         decodeDelta: @escaping @Sendable (UnsafePointer<flm_delta>) -> Element?,
         decodeFinal: @escaping @Sendable (flm_job) throws -> [Element]
@@ -347,7 +347,7 @@ func runStreamingJob<Element: Sendable>(
         _ onComplete: flm_completion_callback,
         _ outJob: UnsafeMutablePointer<flm_job>
     ) -> flm_status
-) -> AsyncThrowingStream<Element, Error> {
+) -> AsyncThrowingStream<Element, any Error> {
     AsyncThrowingStream { continuation in
         let jobBox = JobBox()
         let context = StreamCallContext<Element>(

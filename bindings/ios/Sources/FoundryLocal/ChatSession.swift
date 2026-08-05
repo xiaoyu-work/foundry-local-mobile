@@ -84,14 +84,14 @@ public final class ChatSession: @unchecked Sendable {
     // MARK: - Completion
 
     /// Send a text prompt as a single user turn and stream the reply.
-    public func completeStreaming(_ prompt: String) -> AsyncThrowingStream<ChatDelta, Error> {
+    public func completeStreaming(_ prompt: String) -> AsyncThrowingStream<ChatDelta, any Error> {
         let request = ChatRequest(messages: [.user(prompt)])
         return streamRequest(request)
     }
 
     /// Send a fully-shaped request (multi-turn history, tools, images) and stream the
     /// reply.
-    public func completeStreaming(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
+    public func completeStreaming(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error> {
         streamRequest(request)
     }
 
@@ -108,7 +108,7 @@ public final class ChatSession: @unchecked Sendable {
 
     /// Submit results for tool calls the model previously emitted and resume the turn.
     /// Streaming reply, as with ``completeStreaming``.
-    public func submitToolResults(_ results: [ToolResult]) -> AsyncThrowingStream<ChatDelta, Error> {
+    public func submitToolResults(_ results: [ToolResult]) -> AsyncThrowingStream<ChatDelta, any Error> {
         let json: String
         do {
             json = try encodeToolResults(results)
@@ -166,7 +166,7 @@ public final class ChatSession: @unchecked Sendable {
 
     // MARK: - Internal
 
-    private func streamRequest(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, Error> {
+    private func streamRequest(_ request: ChatRequest) -> AsyncThrowingStream<ChatDelta, any Error> {
         let json: String
         do {
             json = try String(data: flmJSONEncoder.encode(request), encoding: .utf8) ?? "{}"

@@ -24,7 +24,7 @@ import UIKit
 /// Owned by the ``FoundryLocal`` root object. Not typically constructed by apps.
 final class LifecycleObserver: @unchecked Sendable {
     private let manager: flm_manager
-    private var observers: [NSObjectProtocol] = []
+    private var observers: [any NSObjectProtocol] = []
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "FoundryLocal.NWPathMonitor")
     private let lock = NSLock()
@@ -56,7 +56,7 @@ final class LifecycleObserver: @unchecked Sendable {
 
     private func installObservers() {
         let center = NotificationCenter.default
-        var tokens: [NSObjectProtocol] = []
+        var tokens: [any NSObjectProtocol] = []
 
         #if canImport(UIKit) && !os(watchOS)
         tokens.append(center.addObserver(

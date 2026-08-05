@@ -63,7 +63,7 @@ public struct DeviceProfile: Codable, Sendable {
     public enum ThermalState: String, Codable, Sendable {
         case nominal, fair, serious, critical, unknown
 
-        public init(from decoder: Decoder) throws {
+        public init(from decoder: any Decoder) throws {
             let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? "unknown"
             self = ThermalState(rawValue: raw) ?? .unknown
         }
@@ -72,7 +72,7 @@ public struct DeviceProfile: Codable, Sendable {
     public enum NetworkState: String, Codable, Sendable {
         case unmetered, metered, offline, unknown
 
-        public init(from decoder: Decoder) throws {
+        public init(from decoder: any Decoder) throws {
             let raw = (try? decoder.singleValueContainer().decode(String.self)) ?? "unknown"
             self = NetworkState(rawValue: raw) ?? .unknown
         }
@@ -416,7 +416,7 @@ public enum ChatContent: Codable, Sendable {
         case type, text, path, dataBase64, format, sampleRate
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .text(let value):
@@ -435,7 +435,7 @@ public enum ChatContent: Codable, Sendable {
         }
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         switch type {
@@ -494,7 +494,7 @@ public struct ChatRequest: Encodable, Sendable {
         case messages, tools, toolChoice, temperature, topP, topK, maxOutputTokens, seed, stopSequences
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(messages, forKey: .messages)
         if let tools {
@@ -551,7 +551,7 @@ public struct ChatRequest: Encodable, Sendable {
 struct AnyEncodable: Encodable {
     let value: Any
     init(_ value: Any) { self.value = value }
-    func encode(to encoder: Encoder) throws {
+    func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         switch value {
         case is NSNull:

@@ -62,7 +62,7 @@ public final class AudioSession: @unchecked Sendable {
         path: String,
         language: String? = nil,
         translate: Bool = false
-    ) -> AsyncThrowingStream<SpeechDelta, Error> {
+    ) -> AsyncThrowingStream<SpeechDelta, any Error> {
         var payload: [String: Any] = ["path": path, "translate": translate]
         if let language { payload["language"] = language }
         return transcribeStream(payload: payload)
@@ -76,7 +76,7 @@ public final class AudioSession: @unchecked Sendable {
         channels: Int = 1,
         language: String? = nil,
         translate: Bool = false
-    ) -> AsyncThrowingStream<SpeechDelta, Error> {
+    ) -> AsyncThrowingStream<SpeechDelta, any Error> {
         var payload: [String: Any] = [
             "data_base64": base64,
             "format": format,
@@ -116,7 +116,7 @@ public final class AudioSession: @unchecked Sendable {
     public func startStreamingTranscription(
         language: String? = nil,
         translate: Bool = false
-    ) -> AsyncThrowingStream<SpeechDelta, Error> {
+    ) -> AsyncThrowingStream<SpeechDelta, any Error> {
         var payload: [String: Any] = ["streaming": true, "translate": translate]
         if let language { payload["language"] = language }
         return transcribeStream(payload: payload)
@@ -143,7 +143,7 @@ public final class AudioSession: @unchecked Sendable {
 
     // MARK: - Internal
 
-    private func transcribeStream(payload: [String: Any]) -> AsyncThrowingStream<SpeechDelta, Error> {
+    private func transcribeStream(payload: [String: Any]) -> AsyncThrowingStream<SpeechDelta, any Error> {
         guard let json = payload.jsonString() else {
             return AsyncThrowingStream { $0.finish(throwing: FoundryLocalError(code: .invalidArgument, message: "failed to encode transcription request")) }
         }
