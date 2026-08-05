@@ -43,8 +43,8 @@ root, so an accidental `git add` cannot ride the credentials into a commit.
 Add:
 
 ```
-flm.sample.modelName=phi-4-mini
-flm.sample.modelUrl=https://your-bucket.example.com/models/phi-4-mini/manifest.json
+flm.sample.modelName=qwen2.5-0.5b-instruct-generic-cpu:4
+flm.sample.modelUrl=https://your-bucket.example.com/models/qwen2.5-0.5b/manifest.json
 flm.sample.authHeader=Bearer <token>
 ```
 

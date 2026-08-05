@@ -124,7 +124,7 @@ then fetches only the one that device can run:
 ```dart
 final result = await foundry.addModelSource(
   const ModelSource.remote(
-    name: 'qwen2.5-0.5b',
+    name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
     // Your cross-platform policy, applied before anything is transferred.
     constraints: VariantConstraints(
@@ -158,14 +158,17 @@ you control and give the SDK the URL and credentials:
 ```kotlin
 // Bundled in the app — works offline from first launch.
 val local = foundry.addModelSource(
-    ModelSource.Bundled(name = "phi-4-mini", path = extractedModelDir.absolutePath)
+    ModelSource.Bundled(
+        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
+        path = extractedModelDir.absolutePath,
+    )
 ).model
 
 // Or downloaded from your own storage, with your own credentials.
 val remote = foundry.addModelSource(
     ModelSource.Remote(
-        name = "phi-4-mini",
-        url = "https://models.example.com/phi-4-mini/manifest.json",
+        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
+        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
         headers = mapOf("Authorization" to "Bearer $token"),
     )
 ).model
@@ -189,7 +192,7 @@ val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
 val added = foundry.addModelSource(
     ModelSource.Remote(
-        name = "qwen2.5-0.5b",
+        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
         url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
     )
 ) { progress -> println("${progress.percent}%") }
@@ -217,7 +220,7 @@ let foundry = try FoundryLocal(config: .init(appName: "my-app"))
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
 let source = ModelSource.remote(
-    name: "qwen2.5-0.5b",
+    name: "qwen2.5-0.5b-instruct-generic-cpu:4",
     url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!
 )
 let result = try await foundry.addModelSource(source) { progress in
@@ -246,7 +249,7 @@ final foundry = await FoundryLocal.create(const FoundryLocalConfig(appName: 'my-
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
 final result = await foundry.addModelSource(
   const ModelSource.remote(
-    name: 'qwen2.5-0.5b',
+    name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
   ),
   onProgress: (p) => print('${p.percent}%'),
@@ -271,7 +274,7 @@ const foundry = await FoundryLocal.create({ appName: 'my-app' });
 
 // Point the SDK at your model: bundled in the app, or hosted on storage you control.
 const result = await foundry.addModelSource(
-  { kind: 'remote', name: 'qwen2.5-0.5b',
+  { kind: 'remote', name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
     url: 'https://models.example.com/qwen2.5-0.5b/manifest.json' },
   (p) => console.log(`${p.percent}%`),
 );

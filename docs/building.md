@@ -273,9 +273,9 @@ Configure the model URL and auth header at build time with `--dart-define`:
 
 ```bash
 flutter run \
-  --dart-define=FLM_MODEL_URL=https://models.example.com/phi-4-mini/manifest.json \
+  --dart-define=FLM_MODEL_URL=https://models.example.com/qwen2.5-0.5b/manifest.json \
   --dart-define=FLM_MODEL_AUTH="Bearer …" \
-  --dart-define=FLM_MODEL_NAME=phi-4-mini
+  --dart-define=FLM_MODEL_NAME=qwen2.5-0.5b-instruct-generic-cpu:4
 ```
 
 Anything left off the command line stays editable in the app's first

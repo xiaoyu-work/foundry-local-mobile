@@ -68,13 +68,13 @@ chat.completeStreaming("What is the golden ratio?").collect { delta ->
 
 `addModelSource` returns a [`ModelSourceResult`](src/main/kotlin/com/microsoft/ai/foundry/local/mobile/Types.kt)
 with the resolved `name`, `path`, download counters and — in the common case
-— a ready-to-use `model`. `result.model` is `null` only when the download
-succeeded but the catalog's local scan did not pick the files up.
+— a ready-to-use `model`. `result.model` is `null` when Foundry Local had
+already scanned the device before this source was added; that scan runs once
+per process and cannot be repeated, so a catalog lookup by `name` fails for
+the same reason. `handleUnavailableReason` explains it, and
 [`requireModel()`](src/main/kotlin/com/microsoft/ai/foundry/local/mobile/Types.kt)
-throws an actionable `IllegalStateException` that names both the source and
-the on-disk path for that case; apps that want to handle it themselves —
-falling back to `foundry.catalog.getModel(result.name)`, showing a
-different UI — should read `result.model` directly instead.
+puts it in the thrown `IllegalStateException`. Add model sources before
+querying the catalog and the case does not arise.
 
 Every long-running operation returns a `Flow<Progress>` or a `Flow<Delta>`.
 Both propagate collector-side cancellation into the core — cancelling the
@@ -92,12 +92,12 @@ The SDK supports two ways of supplying a model in addition to the catalog. See
 ```kotlin
 // One-time extraction from assets to a real filesystem path. Idempotent —
 // subsequent calls are no-ops until the assets change.
-val modelDir = BundledAssets.extractToFilesDir(context, "models/phi-4-mini", "phi-4-mini")
+val modelDir = BundledAssets.extractToFilesDir(context, "models/qwen2.5-0.5b", "qwen2.5-0.5b")
 
 val result = foundry.addModelSource(
-    ModelSource.Bundled(name = "phi-4-mini", path = modelDir.absolutePath),
+    ModelSource.Bundled(name = "qwen2.5-0.5b-instruct-generic-cpu:4", path = modelDir.absolutePath),
 )
-val model = result.model ?: foundry.catalog.getModel(result.name)
+val model = result.requireModel()
 ```
 
 Make sure large model files are left uncompressed inside the APK, or
@@ -121,8 +121,8 @@ filesystem path — so the SDK ships `BundledAssets` to copy them to
 ```kotlin
 val result = foundry.addModelSource(
     ModelSource.Remote(
-        name = "phi-4-mini",
-        url = "https://models.example.com/phi-4-mini/manifest.json",
+        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
+        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
         headers = mapOf("Authorization" to "******"),
         // Both default to true. Turn `resume` off to force a fresh fetch,
         // and `verifyChecksums` off to skip the SHA-256 check on both the
@@ -133,7 +133,7 @@ val result = foundry.addModelSource(
 ) { progress ->
     println("Downloading ${progress.stage}: ${progress.percent}%")
 }
-val model = result.model ?: foundry.catalog.getModel(result.name)
+val model = result.requireModel()
 ```
 
 The SDK sniffs the document, so both an ONNX Runtime **model package**
@@ -160,7 +160,7 @@ val result = foundry.addModelSource(
         ),
     ),
 ) { progress -> println("${progress.percent}%") }
-val model = result.model ?: foundry.catalog.getModel(result.name)
+val model = result.requireModel()
 
 // What was actually chosen, and what else the package offered.
 val pkg = model.asPackage()

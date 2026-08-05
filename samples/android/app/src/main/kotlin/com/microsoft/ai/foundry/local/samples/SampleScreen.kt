@@ -88,7 +88,7 @@ private fun ConfigPanel(state: UiState.NeedsConfig, onPrepare: (String, String, 
     OutlinedTextField(
         value = name, onValueChange = { name = it },
         label = { Text("Model name") },
-        placeholder = { Text("e.g. phi-4-mini") },
+        placeholder = { Text("e.g. qwen2.5-0.5b-instruct-generic-cpu:4") },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
     )

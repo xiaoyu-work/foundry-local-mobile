@@ -121,7 +121,7 @@ let added = try await sdk.addModelSource(
 // the local catalog scan did not pick up the freshly-installed files — the model
 // *is* on disk at `added.path`, so recover with a catalog lookup by name rather
 // than treating it as an error.
-let model = try await added.model ?? sdk.catalog.model(alias: added.name)
+let model = added.model! // non-null when sources are added before the catalog is queried
 
 // 2. Load into memory (best EP chosen by default). No network work happens here.
 try await model.load()
@@ -145,15 +145,15 @@ manifest and only fetches that one:
 ```swift
 let added = try await sdk.addModelSource(
     .remote(
-        name: "phi-4-mini",
-        url: URL(string: "https://models.example.com/phi-4-mini/manifest.json")!,
+        name: "qwen2.5-0.5b-instruct-generic-cpu:4",
+        url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!,
         constraints: VariantConstraints(
             maxDownloadBytes: 800 * 1024 * 1024,
             allowedDevices: [.npu, .gpu, .cpu]
         )
     )
 )
-let model = try await added.model ?? sdk.catalog.model(alias: added.name)
+let model = added.model! // non-null when sources are added before the catalog is queried
 print("picked variant \(added.variantId ?? "n/a")")
 try await model.load()
 
@@ -194,12 +194,13 @@ let added = try await sdk.addModelSource(
 ) { p in
     print("[\(p.stage)] \(p.percent)%")
 }
-let model = try await added.model ?? sdk.catalog.model(alias: added.name)
+let model = added.model! // non-null when sources are added before the catalog is queried
 ```
 
 `added` also carries `variantId`, `bytesDownloaded`, `bytesReused`, `wasCached`
 and `path` — surface `bytesDownloaded + bytesReused` in a "downloaded X MB"
-UI, or hand `path` to your own file inspector.
+UI, or hand `path` to your own file inspector. `handleUnavailableReason` is
+set only when `model` is nil, and says why.
 
 The URL must point at a manifest — a Foundry model package `manifest.json` or a flat
 `model.json` file index. The SDK follows relative asset URLs against the manifest's
@@ -244,13 +245,13 @@ For a model shipped inside the app bundle as a folder reference (see
 
 ```swift
 let source = try ModelSource.bundled(
-    name: "phi-4-mini",
-    folder: "phi-4-mini",
+    name: "qwen2.5-0.5b-instruct-generic-cpu:4",
+    folder: "qwen2.5-0.5b",
     in: .main,
     subdirectory: "models"
 )
 let added = try await sdk.addModelSource(source)
-let model = try await added.model ?? sdk.catalog.model(alias: added.name)
+let model = added.model! // non-null when sources are added before the catalog is queried
 ```
 
 ## Background downloads and AppDelegate wiring

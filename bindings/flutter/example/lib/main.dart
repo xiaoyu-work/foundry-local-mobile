@@ -11,7 +11,11 @@
 //   flutter run \
 //     --dart-define=FLM_MODEL_URL=https://.../manifest.json \
 //     --dart-define=FLM_MODEL_AUTH="Bearer ..."      \
-//     --dart-define=FLM_MODEL_NAME=phi-4-mini
+//     --dart-define=FLM_MODEL_NAME=qwen2.5-0.5b-instruct-generic-cpu:4
+//
+// The name must be the model's catalog id, version suffix and all: the runtime
+// reads the model's task from the catalog, and a name it has never seen has no
+// task, so no chat session can be created from it.
 //
 // Both fields can also be typed on-screen. Credentials are held only in
 // widget state — no writes back to disk, and nothing here that a
@@ -54,7 +58,7 @@ enum _Phase { idle, downloading, ready, loading, chatting }
 class _HomeScreenState extends State<_HomeScreen> {
   static const _defaultName = String.fromEnvironment(
     'FLM_MODEL_NAME',
-    defaultValue: 'demo-model',
+    defaultValue: 'qwen2.5-0.5b-instruct-generic-cpu:4',
   );
   static const _defaultUrl = String.fromEnvironment('FLM_MODEL_URL');
   static const _defaultAuth = String.fromEnvironment('FLM_MODEL_AUTH');
@@ -339,7 +343,8 @@ class _HomeScreenState extends State<_HomeScreen> {
               controller: _nameCtrl,
               enabled: canStart,
               decoration: const InputDecoration(
-                labelText: 'Model name (alias used later for lookup)',
+                labelText: 'Model name (the model\'s catalog id)',
+                helperText: 'Chat needs a task, and the task comes with the id',
               ),
             ),
             TextField(

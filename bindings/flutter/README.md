@@ -48,8 +48,8 @@ Future<void> main() async {
   // See "Model sources" below for the full contract.
   final added = await foundry.addModelSource(
     const RemoteModelSource(
-      name: 'phi-4-mini',
-      url: 'https://storage.example.com/phi-4-mini/manifest.json',
+      name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
+      url: 'https://storage.example.com/qwen2.5-0.5b/manifest.json',
     ),
   );
 
@@ -57,7 +57,7 @@ Future<void> main() async {
   // acquisition job. It is null only in the rare case where the download
   // succeeded but the catalog scan missed the files — fall back by name.
   final model =
-      added.model ?? await foundry.catalog.getModel(added.name);
+      added.model!; // non-null when sources are added before the catalog is queried
 
   final load = await model.load(
     onProgress: (p) => print('${p.stage} ${p.percent}%'),
@@ -105,7 +105,7 @@ Give the SDK a model by registering a `ModelSource`:
 // A model shipped inside the app.
 final localAdded = await foundry.addModelSource(
   const BundledModelSource(
-    name: 'phi-4-mini-bundled',
+    name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
     path: '/path/to/model/dir',
   ),
 );
@@ -114,20 +114,23 @@ final localModel = localAdded.model!; // populated for a successful add
 // A model the app hosts on its own storage.
 final remoteAdded = await foundry.addModelSource(
   const RemoteModelSource(
-    name: 'phi-4-mini-remote',
-    url: 'https://storage.example.com/phi-4-mini/manifest.json',
+    name: 'qwen2.5-1.5b-instruct-generic-cpu:4',
+    url: 'https://storage.example.com/qwen2.5-1.5b/manifest.json',
   ),
 );
-final remoteModel = remoteAdded.model
-    ?? await foundry.catalog.getModel(remoteAdded.name);
+// Non-null as long as sources are added before the catalog is queried.
+final remoteModel = remoteAdded.model!;
 ```
 
 `addModelSource` returns a `ModelSourceResult` describing the outcome —
 `name`, `path`, `bytesDownloaded`, `bytesReused`, `wasCached`, the resolved
 `variantId` for a package, and the ready-to-use `model`. The `model` field
-is null only in the rare case where the download itself succeeded but the
-catalog scan missed the freshly-installed files; look the model up by
-`result.name` in that case and carry on.
+is null when Foundry Local had already scanned the device for models before
+this source was added; that scan runs once per process and cannot be
+repeated, so looking the model up by `result.name` fails for the same
+reason. `handleUnavailableReason` says so. Add model sources before
+querying the catalog and it does not happen — the files are committed
+either way and the next launch picks them up.
 
 Both `ModelSource` kinds accept two optional flags that pass straight through
 to the core, both defaulting to `true`:
@@ -179,7 +182,7 @@ final added = await foundry.addModelSource(
   ),
   onProgress: (p) => print('${p.percent}%'),
 );
-final model = added.model ?? await foundry.catalog.getModel(added.name);
+final model = added.model!; // non-null when sources precede catalog queries
 
 // What was actually chosen, and what else the package offered.
 final package = model.package;

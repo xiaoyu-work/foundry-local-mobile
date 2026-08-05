@@ -54,7 +54,7 @@ const result = await foundry.addModelSource(
 
 // `result.model` is a ready-to-use handle in the common case. See "The
 // addModelSource result shape" below for when it can be null.
-const model = result.model ?? (await foundry.catalog.getModel(result.name));
+const model = result.model!; // non-null when sources are added before the catalog is queried
 await model.load();
 
 const chat = model.createChatSession();
@@ -116,14 +116,15 @@ interface ModelSourceResult {
   bytesReused: number;
   wasCached: boolean;
   model: Model | null;
+  handleUnavailableReason: string | null;
 }
 ```
 
-`model` is a ready-to-use handle in the common case — the core mints it inside the same job. It is `null` in the unexpected case where the download succeeded but the local scan did not pick the files up. The download itself succeeded either way; the null case is **not** an error. Fall back to `foundry.catalog.getModel(result.name)` if you specifically need a handle, or work from `result.path` directly:
+`model` is a ready-to-use handle in the common case — the core mints it inside the same job. It is `null` when Foundry Local had already scanned the device for models before this source was added; that scan runs once per process and cannot be repeated, so `foundry.catalog.getModel(result.name)` fails for the same reason. `handleUnavailableReason` carries the explanation. The download succeeded either way — the files at `result.path` are committed and the next launch picks them up. Add model sources before querying the catalog and the case does not arise:
 
 ```ts
 const result = await foundry.addModelSource(source);
-const model = result.model ?? (await foundry.catalog.getModel(result.name));
+const model = result.model!; // non-null when sources are added before the catalog is queried
 ```
 
 This deviates from the language-agnostic quickstart in the root project README, which shows `addModelSource` resolving to a `Model` directly. The deviation preserves the ABI's model-handle contract (a `uint64` that can legitimately be `FLM_INVALID_HANDLE`); fabricating a `Model` for that case or throwing would both be lossy. See the root README's TypeScript block if you want the two reconciled — the maintainers have offered to update the root README to match this shape.
