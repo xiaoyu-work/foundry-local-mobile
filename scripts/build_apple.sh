@@ -161,8 +161,8 @@ build_slice() {
         # Fallback for hosts where the framework property has not applied (Ninja
         # generator, etc): the target is a plain .dylib we wrap ourselves.
         local dylib
-        dylib="$(find "${build_dir}" -type f -name 'libfoundry_local_mobile.dylib' -print -quit || true)"
-        [[ -n "${dylib}" ]] || die "no ${FRAMEWORK_NAME}.framework or libfoundry_local_mobile.dylib produced for ${slice_id}"
+        dylib="$(find "${build_dir}" -type f -name "lib${FRAMEWORK_NAME}.dylib" -print -quit || true)"
+        [[ -n "${dylib}" ]] || die "no ${FRAMEWORK_NAME}.framework or lib${FRAMEWORK_NAME}.dylib produced for ${slice_id}"
         rm -rf "${framework_dir}"
         mkdir -p "${framework_dir}/Headers"
         cp "${dylib}" "${framework_dir}/${FRAMEWORK_NAME}"

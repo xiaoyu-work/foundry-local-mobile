@@ -125,7 +125,12 @@ if(ANDROID)
     target_link_options(foundry_local_mobile PRIVATE "-Wl,-z,max-page-size=16384")
 elseif(APPLE)
     target_link_libraries(foundry_local_mobile PRIVATE "-framework Foundation")
+    # The bundle, its binary and the module every Swift caller imports all have
+    # to agree on one name, and that name is FoundryLocalMobile. Without this
+    # CMake names the framework after the target, so build_apple.sh finds no
+    # FoundryLocalMobile.framework to harvest and the XCFramework never builds.
     set_target_properties(foundry_local_mobile PROPERTIES
+        OUTPUT_NAME FoundryLocalMobile
         FRAMEWORK TRUE
         FRAMEWORK_VERSION A
         MACOSX_FRAMEWORK_IDENTIFIER com.microsoft.ai.foundry.local.mobile

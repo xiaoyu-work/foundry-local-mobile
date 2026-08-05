@@ -815,6 +815,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SWIFT_VERSION: 5.10.1
+      # swift.org spells the same platform two ways in one URL: the directory
+      # segment has no dot, the tarball name does. One variable for both is a
+      # guaranteed 404.
+      SWIFT_PLATFORM_DIR: ubuntu2204
       SWIFT_PLATFORM: ubuntu22.04
     steps:
       - uses: actions/checkout@v4
@@ -824,7 +828,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/swift-sdk
-          key: swift-sdk-${{ env.SWIFT_VERSION }}-${{ env.SWIFT_PLATFORM }}
+          key: swift-sdk-${{ env.SWIFT_VERSION }}-${{ env.SWIFT_PLATFORM_DIR }}
 
       - name: Install Swift toolchain
         # Direct tarball fetch from swift.org. The workflow policy is no
@@ -837,7 +841,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/swift-sdk"
           cd "${RUNNER_TEMP}/swift-sdk"
           curl -fsSL -o swift.tar.gz \
-            "https://download.swift.org/swift-${SWIFT_VERSION}-release/${SWIFT_PLATFORM}/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-${SWIFT_PLATFORM}.tar.gz"
+            "https://download.swift.org/swift-${SWIFT_VERSION}-release/${SWIFT_PLATFORM_DIR}/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-${SWIFT_PLATFORM}.tar.gz"
           tar -xzf swift.tar.gz --strip-components=1
           rm swift.tar.gz
 
