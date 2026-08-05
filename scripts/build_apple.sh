@@ -60,7 +60,9 @@ Exit status:
 EOF
 }
 
-log()  { printf '[apple] %s\n' "$*"; }
+# Progress goes to stderr, not stdout: build_slice returns the framework path
+# on stdout, and anything else printed there is captured as part of that path.
+log()  { printf '[apple] %s\n' "$*" >&2; }
 warn() { printf '[apple] warn: %s\n' "$*" >&2; }
 die()  { printf '[apple] error: %s\n' "$1" >&2; exit "${2:-1}"; }
 
@@ -113,12 +115,12 @@ fi
 # deployment target, and package the output as a proper .framework alongside
 # the public headers and a module map.
 #
-# We do not use CMake's built-in FRAMEWORK target property for this step
-# because the core's public headers ship under foundry_local_mobile/, and
-# Xcode's default framework layout collapses them into a flat Headers/
-# directory that breaks `#include "foundry_local_mobile/flm_api.h"`. Building
-# the shared library ourselves and hand-rolling the framework keeps includes
-# working from Swift without a shim header per file.
+# CMake's FRAMEWORK target property does the bundle layout, but Xcode collapses
+# public headers into a flat Headers/ directory, and the core's headers ship
+# under foundry_local_mobile/ — flattening them breaks
+# `#include "foundry_local_mobile/flm_api.h"`. So we harvest the framework CMake
+# produced and re-lay the headers underneath it, which keeps includes working
+# from Swift without a shim header per file.
 build_slice() {
     local slice_id="$1"       # e.g. ios-arm64
     local sysroot="$2"
@@ -149,8 +151,10 @@ build_slice() {
         cmake_args+=(-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR="${FLM_FOUNDRY_LOCAL_INCLUDE_DIR}")
     fi
 
-    cmake "${cmake_args[@]}"
-    cmake --build "${build_dir}" --config "${BUILD_TYPE}" --parallel "${JOBS}"
+    # Same reason as log(): keep the configure and build chatter off the
+    # stdout this function returns a path on.
+    cmake "${cmake_args[@]}" >&2
+    cmake --build "${build_dir}" --config "${BUILD_TYPE}" --parallel "${JOBS}" >&2
 
     # CMake with -G Xcode puts the library under a per-config subdirectory. It
     # honours FRAMEWORK TRUE on Apple, so the artefact is already a framework;
