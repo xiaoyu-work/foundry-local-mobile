@@ -289,18 +289,24 @@ FLM_EXPORT flm_status FLM_CALL flm_transport_report_complete(uint64_t request_id
  *
  * The job's result is
  * `{"name", "path", "variant_id", "bytes_downloaded", "bytes_reused", "was_cached",
- *   "model_handle"}`.
+ *   "model_handle"}`, plus "model_handle_unavailable" when there is no handle.
  *
  * Either kind registers the model under "name", so flm_catalog_get_model() and
  * flm_catalog_list_cached_models() find it afterwards under exactly that name, in this
  * process and in every later run.
  *
  * `model_handle` is a ready-to-use model, so there is no need to look the model up
- * through the catalog afterwards. It is FLM_INVALID_HANDLE when the files landed but the
- * catalog did not pick them up; the download still succeeded, so treat that as success
- * and look the model up by "name" only if you need a handle. Release it with
- * flm_model_release() as usual — releasing FLM_INVALID_HANDLE is a no-op, so an
- * unconditional release is safe.
+ * through the catalog afterwards. Release it with flm_model_release() as usual —
+ * releasing FLM_INVALID_HANDLE is a no-op, so an unconditional release is safe.
+ *
+ * ADD YOUR MODEL SOURCES BEFORE YOU ASK THE CATALOG ANYTHING. Foundry Local scans the
+ * device for models once, the first time anything queries its catalog, and keeps that
+ * answer for the life of the process; nothing can make it scan again. A source added
+ * after that scan lands on disk but stays invisible to this run: `model_handle` is
+ * FLM_INVALID_HANDLE, "model_handle_unavailable" says why, and looking the model up by
+ * "name" fails too. The download itself still succeeded — the files are committed, and
+ * the next launch scans a disk that already holds them and picks them up. Calling this
+ * function first avoids the whole problem.
  */
 FLM_EXPORT flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, const char* source_json,
                                                                   flm_progress_callback on_progress,

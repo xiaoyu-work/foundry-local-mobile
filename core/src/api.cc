@@ -364,6 +364,21 @@ flm_status FLM_CALL flm_manager_add_model_source_async(flm_manager manager, cons
         }
         if (!result.contains("model_handle")) {
           result["model_handle"] = FLM_INVALID_HANDLE;
+          // Almost always the same cause, and it is not something the caller can read off
+          // a null handle: Foundry Local scans the device for models once, the first time
+          // anything asks its catalog a question, and keeps that answer. A model published
+          // after that scan is not in it, and there is no way to ask for the scan again.
+          // So an app that lists models before adding its sources gets a model it cannot
+          // use -- until the next launch, when the scan runs against a disk that already
+          // holds these files and picks them up.
+          //
+          // The files are committed either way. Say what happened instead of letting the
+          // caller guess from a zero.
+          result["model_handle_unavailable"] =
+              "the model files are in place, but Foundry Local had already scanned this "
+              "device for models before this source was added, so it cannot see them until "
+              "the app is restarted. Add model sources before querying the catalog to get a "
+              "usable model on the first run.";
         }
         return result;
       },
