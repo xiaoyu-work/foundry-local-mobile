@@ -905,7 +905,10 @@ jobs:
           key: fetchcontent-apple-${{ hashFiles('core/CMakeLists.txt') }}
 
       - name: Build XCFramework
-        run: ./bindings/ios/scripts/build_xcframework.sh --build-type Release
+        # --macos because Package.swift declares .macOS(.v12) and the next step
+        # runs `swift build`, which targets the host. Without a macOS slice the
+        # binary target has nothing to offer and every import fails.
+        run: ./bindings/ios/scripts/build_xcframework.sh --build-type Release --macos
 
       # The XCFramework only proves the C++ core compiles for Apple. The Swift
       # binding on top of it is a separate body of code, and until this step it
