@@ -267,10 +267,9 @@ class FoundryLocal {
   /// The `model_handle` field is documented as an `flm_handle` (uint64) in
   /// the ABI. Dart `int` is a signed 64-bit integer on the VM, so values up
   /// to `2^63 - 1` round-trip losslessly through `jsonDecode` — which is far
-  /// beyond any realistic handle slot id. `FLM_INVALID_HANDLE` (0) means the
-  /// download succeeded but the catalog did not pick the files up; surface
-  /// that as `model: null` rather than doing a silent second-round-trip
-  /// lookup, so the caller keeps control over whether to fall back.
+  /// beyond any realistic handle slot id. `FLM_INVALID_HANDLE` (0) means no
+  /// handle came back; the core says why in `model_handle_unavailable`, and
+  /// both travel to the caller so it keeps control over what to do next.
   ModelSourceResult _parseModelSourceResult(Map<String, Object?> json) {
     final rawHandle = (json['model_handle'] as num?)?.toInt();
     Model? resolvedModel;
@@ -278,6 +277,7 @@ class FoundryLocal {
       resolvedModel = Model.fromHandle(rawHandle);
     }
     final rawVariant = json['variant_id'] as String?;
+    final rawReason = json['model_handle_unavailable'] as String?;
     return ModelSourceResult(
       name: json['name'] as String? ?? '',
       path: json['path'] as String? ?? '',
@@ -286,6 +286,8 @@ class FoundryLocal {
       bytesReused: (json['bytes_reused'] as num?)?.toInt() ?? 0,
       wasCached: json['was_cached'] as bool? ?? false,
       model: resolvedModel,
+      handleUnavailableReason:
+          (rawReason == null || rawReason.isEmpty) ? null : rawReason,
     );
   }
 

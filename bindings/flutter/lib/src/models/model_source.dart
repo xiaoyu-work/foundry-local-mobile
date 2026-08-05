@@ -215,19 +215,19 @@ class VariantConstraints {
 /// [model] is a ready-to-use handle the core minted inside the same
 /// acquisition job (via the `model_handle` field on
 /// `flm_manager_add_model_source_async`'s completion result). It is `null`
-/// only in the rare case where the download itself succeeded but the
-/// catalog's local scan did not pick the files up. The caller can recover
-/// by looking the model up through `foundry.catalog.getModel(result.name)`
-/// or by working from [path] directly — the null case is **not** an error,
-/// so it is deliberately surfaced here rather than turned into a thrown
-/// exception.
+/// when Foundry Local had already scanned the device for models before this
+/// source was added: that scan runs once, on the first catalog query of the
+/// process, and cannot be repeated, so the model stays invisible for this
+/// run and looking it up by [name] fails for the same reason.
+/// [handleUnavailableReason] says so in words. Add model sources before
+/// querying the catalog and the case does not arise; the files at [path] are
+/// committed regardless and the next launch picks them up. The null case is
+/// **not** an error, so it is surfaced here rather than thrown.
 ///
-/// Callers that only ever add package sources — the common case, because
-/// that is the whole point of the two-source design — should prefer
-/// [requireModel] so they do not pay null-handling ceremony for an
-/// outcome that only arises when the catalog scan misses a completed
-/// download. Callers that want to handle the null case explicitly should
-/// read [model] directly.
+/// Callers that add their sources first — the documented order — should
+/// prefer [requireModel] rather than paying null-handling ceremony for an
+/// outcome they have designed out. Callers that want to handle it explicitly
+/// should read [model] directly.
 @immutable
 class ModelSourceResult {
   const ModelSourceResult({
@@ -238,6 +238,7 @@ class ModelSourceResult {
     required this.bytesReused,
     required this.wasCached,
     required this.model,
+    this.handleUnavailableReason,
   });
 
   /// Alias the source registered under. Same value the caller passed on
@@ -261,32 +262,31 @@ class ModelSourceResult {
   /// Whether the whole source was resolved from cache, without any transfer.
   final bool wasCached;
 
-  /// Ready-to-use model handle for the acquired model, or `null` if the
-  /// catalog scan missed the files. See the class-level Dartdoc for the
-  /// recovery pattern.
+  /// Ready-to-use model handle for the acquired model, or `null` in the
+  /// handle-less case described in the class-level Dartdoc.
   final Model? model;
+
+  /// Why [model] is `null`, straight from the core. `null` when [model] is
+  /// present.
+  final String? handleUnavailableReason;
 
   /// Return [model] when the core surfaced a handle, and throw a
   /// [StateError] otherwise.
   ///
-  /// The throw message names both [name] and [path] and states plainly
-  /// that this is a catalog-side bug, not a download failure — a caller
-  /// staring at the stack trace can then either look the model up by
-  /// [name] through `foundry.catalog.getModel(...)` or work from [path]
-  /// directly, without having to first work out whether the download
-  /// itself failed.
+  /// The throw message names both [name] and [path] and carries the core's
+  /// own explanation, so a caller staring at the stack trace can tell at a
+  /// glance that the download succeeded and what to change.
   ///
   /// Prefer reading [model] directly when the caller wants to handle the
-  /// null case (falling back to a catalog lookup, showing a different
-  /// UI, or reporting telemetry).
+  /// null case (showing a "restart to finish setup" prompt, or reporting
+  /// telemetry).
   Model requireModel() {
     final m = model;
     if (m != null) return m;
     throw StateError(
       'Model source "$name" was added successfully — files are on disk at '
-      '"$path" — but the SDK\'s catalog scan did not surface a handle. This '
-      'is a catalog-side bug, not a download failure. Look the model up by '
-      'name through FoundryLocal.catalog or work from the path directly.',
+      '"$path" — but no handle came back: '
+      '${handleUnavailableReason ?? 'the catalog did not surface one.'}',
     );
   }
 }

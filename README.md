@@ -76,6 +76,23 @@ fixture: prompt templated and tokenized, the ONNX graph executed, 24 tokens samp
 detokenized, streamed back as deltas, counted in `usage`, recorded in session history, and
 the model unloaded cleanly afterwards.
 
+### Add model sources before you query the catalog
+
+Foundry Local scans the device for models once — the first time anything asks its catalog
+a question — and keeps that answer for the life of the process. Nothing can make it scan
+again: there is no refresh in its API, and the internal one is reachable only by
+registering an execution provider, which on a phone means downloading a desktop build.
+
+So order matters. Add your model sources first, then query. An app that opens on a "your
+models" screen and adds a source afterwards gets a model that downloaded and installed
+correctly but has no handle and cannot be looked up, because the scan that would have
+found it already ran. `add_model_source` reports this in `model_handle_unavailable`
+rather than leaving a bare zero to interpret.
+
+It costs one launch, not the model: the files are committed, and the next launch scans a
+disk that already holds them. Verified both ways — sources-first works on the first run,
+catalog-first works on the second.
+
 ## Why a separate mobile SDK?
 
 Mobile is not just "desktop with a smaller screen". This repo exists because on-device AI

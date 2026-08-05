@@ -504,10 +504,13 @@ public enum class FinishReason(public val nativeValue: Int) {
  * on disk at [path] regardless of whether [model] is populated.
  *
  * [model] is the ready-to-use handle the core minted inside the same job. It is
- * `null` in the unexpected case where the download succeeded but the catalog's
- * local scan did not pick the files up — the caller can then look the model up
- * by [name] through [FoundryLocal.catalog] or work from [path] directly. The
- * download itself succeeded either way; the null case is not an error.
+ * `null` when Foundry Local had already scanned the device for models before
+ * this source was added: that scan happens once, on the first catalog query of
+ * the process, and cannot be repeated, so a source added afterwards stays
+ * invisible for this run — looking it up by [name] fails for the same reason.
+ * [handleUnavailableReason] says so in words. Add model sources before querying
+ * the catalog and the case does not arise. The download itself succeeded either
+ * way, the files at [path] are committed, and the next launch picks them up.
  */
 public data class ModelSourceResult(
     val name: String,
@@ -517,27 +520,24 @@ public data class ModelSourceResult(
     val bytesReused: Long = 0,
     val wasCached: Boolean = false,
     val model: Model? = null,
+    /** Why [model] is `null`, straight from the core. `null` when [model] is present. */
+    val handleUnavailableReason: String? = null,
 ) {
     /**
      * Return [model] when the core surfaced a handle, and throw an
      * [IllegalStateException] otherwise.
      *
-     * Apps that only ever add package sources — which is the common case,
-     * because that is the whole point of the two-source design — should not
-     * have to pay null-handling ceremony for an outcome that only arises
-     * when the SDK's catalog scan misses a completed download. If it does
-     * happen the throw message names both [name] and [path] so a caller
-     * can look the model up by name through [FoundryLocal.catalog] or work
-     * from the on-disk path directly without extra plumbing.
+     * Apps that add their sources before touching the catalog — which is the
+     * documented order, and the one that works on a first run — should not have
+     * to pay null-handling ceremony for an outcome they have designed out.
      *
-     * Callers that want to handle the null case explicitly — falling back
-     * to a catalog lookup, showing a different UI, or reporting telemetry
-     * — should read [model] directly instead of calling this.
+     * Callers that want to handle the null case explicitly — showing a "restart
+     * to finish setup" prompt, or reporting telemetry — should read [model]
+     * directly instead of calling this.
      */
     public fun requireModel(): Model = model ?: error(
         "Model source \"$name\" was added successfully — files are on disk at " +
-            "\"$path\" — but the SDK's catalog scan did not surface a handle. This " +
-            "is a catalog-side bug, not a download failure. Look the model up by " +
-            "name through FoundryLocal.catalog or work from the path directly.",
+            "\"$path\" — but no handle came back: " +
+            (handleUnavailableReason ?: "the catalog did not surface one."),
     )
 }

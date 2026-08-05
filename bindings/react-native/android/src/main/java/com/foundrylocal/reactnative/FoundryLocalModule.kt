@@ -211,6 +211,7 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
                     put("bytes_reused", result.bytesReused)
                     put("was_cached", result.wasCached)
                     put("model_handle", modelId)
+                    result.handleUnavailableReason?.let { put("model_handle_unavailable", it) }
                 }.toString()
                 subscriptions.remove(subscriptionId)
                 promise.resolve(json)

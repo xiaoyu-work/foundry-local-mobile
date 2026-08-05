@@ -236,12 +236,17 @@ function decodeModelSourceResult(raw: string | null | undefined, fallbackName: s
   const bytesReused = numberOr(obj.bytes_reused, 0);
   const wasCached = Boolean(obj.was_cached);
   // model_handle is a uint64 slot id. It can legitimately be 0
-  // (FLM_INVALID_HANDLE) — the download succeeded, the catalog scan just
-  // did not find the files. Never turn that into a rejection: surface the
-  // successful result and let the caller fall back to a catalog lookup.
+  // (FLM_INVALID_HANDLE) — the download succeeded, no handle came back, and
+  // the core says why. Never turn that into a rejection: surface both.
   const handle = numberOr(obj.model_handle, 0);
   const model = handle !== 0 ? Model.wrap(handle) : null;
-  return { name, path, variantId, bytesDownloaded, bytesReused, wasCached, model };
+  const reason = typeof obj.model_handle_unavailable === 'string' && obj.model_handle_unavailable !== ''
+    ? obj.model_handle_unavailable
+    : null;
+  return {
+    name, path, variantId, bytesDownloaded, bytesReused, wasCached, model,
+    handleUnavailableReason: reason,
+  };
 }
 
 function tryJson(raw: string): Record<string, unknown> {

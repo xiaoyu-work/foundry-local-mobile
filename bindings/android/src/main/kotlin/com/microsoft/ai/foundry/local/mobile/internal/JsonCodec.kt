@@ -149,8 +149,8 @@ internal object JsonCodec {
         val bytesReused = obj["bytes_reused"]?.jsonPrimitive?.longOrNull ?: 0L
         val wasCached = obj["was_cached"]?.jsonPrimitive?.booleanOrNull ?: false
         // model_handle is a flm_handle (uint64). Signed Long is a safe carrier
-        // for every practical value the core mints; 0 means the catalog scan
-        // did not find the freshly installed files, which is not a failure.
+        // for every practical value the core mints; 0 means no handle, and the
+        // core says why alongside it. Not a failure — the files are installed.
         val handle = obj["model_handle"]?.jsonPrimitive?.longOrNull ?: 0L
         val model = if (handle != 0L) Model.wrap(handle) else null
         return ModelSourceResult(
@@ -161,6 +161,8 @@ internal object JsonCodec {
             bytesReused = bytesReused,
             wasCached = wasCached,
             model = model,
+            handleUnavailableReason =
+                obj["model_handle_unavailable"]?.jsonPrimitive?.contentOrNull?.ifEmpty { null },
         )
     }
 

@@ -419,11 +419,13 @@ export interface Progress {
  * {@link ModelSourceResult.model} is populated.
  *
  * `model` is the ready-to-use handle the core minted inside the same job. It
- * is `null` in the unexpected case where the download succeeded but the
- * catalog's local scan did not pick the files up. The download itself
- * succeeded either way; the null case is not an error. Fall back to
- * `foundry.catalog.getModel(result.name)` if you specifically need a handle,
- * or work from `result.path` directly.
+ * is `null` when Foundry Local had already scanned the device for models
+ * before this source was added: that scan runs once, on the first catalog
+ * query of the process, and cannot be repeated, so the model stays invisible
+ * for this run and `catalog.getModel(result.name)` fails for the same reason.
+ * `handleUnavailableReason` explains it. Add model sources before querying the
+ * catalog and it does not happen. The download succeeded either way — the
+ * files at `path` are committed and the next launch picks them up.
  */
 export interface ModelSourceResult {
   name: string;
@@ -433,4 +435,6 @@ export interface ModelSourceResult {
   bytesReused: number;
   wasCached: boolean;
   model: import('./Model').Model | null;
+  /** Why `model` is null, straight from the core. `null` when `model` is present. */
+  handleUnavailableReason: string | null;
 }

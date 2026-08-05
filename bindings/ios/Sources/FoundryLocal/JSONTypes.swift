@@ -177,11 +177,12 @@ struct AddModelSourcePayload: Decodable {
     let bytesDownloaded: Int64
     let bytesReused: Int64
     let wasCached: Bool
-    /// Ready-to-use model handle, or `0` (`FLM_INVALID_HANDLE`) when the catalog
-    /// scan did not pick up the freshly-committed files. `0` still means the
-    /// transfer succeeded; the caller can look the model up via the catalog by
-    /// ``name`` or work from ``path`` directly.
+    /// Ready-to-use model handle, or `0` (`FLM_INVALID_HANDLE`) when Foundry
+    /// Local had already scanned the device before this source was added. `0`
+    /// still means the transfer succeeded.
     let modelHandle: UInt64
+    /// Why ``modelHandle`` is `0`, in the core's own words.
+    let modelHandleUnavailable: String?
 }
 
 /// Result of ``FoundryLocal/addModelSource(_:progress:)``. The download itself
@@ -191,16 +192,15 @@ struct AddModelSourcePayload: Decodable {
 ///
 /// In the common case ``model`` is a ready-to-use handle minted inside that
 /// same job, so acquisition is one round trip: no follow-up
-/// `flm_catalog_get_model_async` is needed. ``model`` is `nil` only in the
-/// rare case where the transfer succeeded but the catalog scan did not pick
-/// up the freshly-installed files. That is not an error — the model *is* on
-/// disk — so recover by looking the model up via ``FoundryLocal/catalog``
-/// by ``name``, or work from ``path`` directly:
+/// `flm_catalog_get_model_async` is needed.
 ///
-/// ```swift
-/// let added = try await sdk.addModelSource(source)
-/// let model = try await added.model ?? sdk.catalog.model(alias: added.name)
-/// ```
+/// ``model`` is `nil` when Foundry Local had already scanned the device for
+/// models before this source was added. That scan runs once, on the first
+/// catalog query of the process, and cannot be repeated — so the model stays
+/// invisible for this run, and looking it up by ``name`` fails for the same
+/// reason. ``handleUnavailableReason`` explains it. Add model sources before
+/// querying the catalog and it does not happen; the files are committed
+/// regardless and the next launch picks them up.
 public struct AddModelSourceResult: Sendable {
     /// Resolved model name (the `name` field from the ``ModelSource``).
     public let name: String
@@ -220,6 +220,8 @@ public struct AddModelSourceResult: Sendable {
     /// Ready-to-use model handle, or `nil` in the handle-less case documented
     /// on this type.
     public let model: Model?
+    /// Why ``model`` is `nil`, straight from the core. `nil` when ``model`` is present.
+    public let handleUnavailableReason: String?
 }
 
 /// Payload of `flm_model_load_async`. `flm_model_download_async` returns the same

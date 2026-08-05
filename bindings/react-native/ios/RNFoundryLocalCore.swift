@@ -343,7 +343,7 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
                     self.emitProgress(subscriptionId, progress)
                 }
                 let modelSlot = result.model.map { self.models.register($0) } ?? 0
-                let payload: [String: Any] = [
+                var payload: [String: Any] = [
                     "name": result.name,
                     "path": result.path,
                     "variant_id": result.variantId ?? "",
@@ -352,6 +352,9 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
                     "was_cached": result.wasCached,
                     "model_handle": modelSlot,
                 ]
+                if let reason = result.handleUnavailableReason {
+                    payload["model_handle_unavailable"] = reason
+                }
                 self.removeSubscription(subscriptionId)
                 resolve(self.jsonString(payload))
             } catch is CancellationError {

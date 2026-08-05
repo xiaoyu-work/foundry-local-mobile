@@ -17,6 +17,26 @@ one in the background.
 
 ---
 
+## Two rules that decide whether the model runs
+
+Both apply to bundled and remote sources alike, and both bite late — after the model has
+downloaded, installed and loaded — so they are worth getting right first.
+
+**Name the source after the catalog model it actually is.** The runtime picks a session
+implementation from the model's *task*, and it learns tasks from the Foundry Local
+catalog. `qwen2.5-0.5b-instruct-generic-cpu:4` carries a task; `my-model` does not, and
+`flm_session_create` refuses it. Use the exact catalog id, version suffix included — that
+is the string the runtime matches on. This is the normal case for this SDK: a model
+package is a catalog model the app happens to be shipping or hosting itself.
+
+**Add your sources before you ask the catalog anything.** The runtime scans the device for
+models once, on the first catalog query, and keeps that answer for the whole process. A
+source added after that scan installs correctly but has no handle and cannot be looked up
+until the next launch, when the scan runs against a disk that already holds the files.
+Adding sources first avoids it entirely.
+
+---
+
 ## Bundled
 
 Ship the model inside the app, extract it to a directory you control, and hand over the
@@ -25,8 +45,8 @@ path.
 ```json
 {
   "kind": "bundled",
-  "name": "phi-4-mini",
-  "path": "/data/user/0/com.example.app/files/models/phi-4-mini"
+  "name": "qwen2.5-0.5b-instruct-generic-cpu:4",
+  "path": "/data/user/0/com.example.app/files/models/qwen2.5-0.5b"
 }
 ```
 
@@ -40,15 +60,17 @@ Android cannot load a model directly out of `assets/` — the files are compress
 APK and have no filesystem path. Extract once on first launch:
 
 ```kotlin
-val modelDir = File(context.filesDir, "models/phi-4-mini")
+val modelDir = File(context.filesDir, "models/qwen2.5-0.5b")
 if (!modelDir.exists()) {
-    context.assets.extractDirectory("models/phi-4-mini", modelDir)
+    context.assets.extractDirectory("models/qwen2.5-0.5b", modelDir)
 }
 
 val result = manager.addModelSource(
-    ModelSource.Bundled(name = "phi-4-mini", path = modelDir.absolutePath)
+    ModelSource.Bundled(name = "qwen2.5-0.5b-instruct-generic-cpu:4", path = modelDir.absolutePath)
 )
-val model = result.model ?: error("model registered at ${result.path} but not found in the catalog")
+// Null only when something queried the catalog before this call — see the ordering rule
+// above. The files at result.path are installed either way and load on the next launch.
+val model = result.model ?: error(result.handleUnavailableReason ?: "no model handle")
 ```
 
 Large model files should be left uncompressed so the extraction is a plain copy:
@@ -68,8 +90,9 @@ directory to the target as a **folder reference** (blue folder), not a group, so
 structure is preserved:
 
 ```swift
-let path = Bundle.main.path(forResource: "phi-4-mini", ofType: nil)!
-let result = try await manager.addModelSource(.bundled(name: "phi-4-mini", path: path))
+let path = Bundle.main.path(forResource: "qwen2.5-0.5b", ofType: nil)!
+let result = try await manager.addModelSource(
+    .bundled(name: "qwen2.5-0.5b-instruct-generic-cpu:4", path: path))
 let model = result.model
 ```
 
@@ -89,8 +112,8 @@ credentials; the SDK has no built-in provider, no default host, and no account o
 ```json
 {
   "kind": "remote",
-  "name": "phi-4-mini",
-  "url": "https://models.example.com/phi-4-mini/manifest.json",
+  "name": "qwen2.5-0.5b-instruct-generic-cpu:4",
+  "url": "https://models.example.com/qwen2.5-0.5b/manifest.json",
   "headers": {
     "Authorization": "Bearer eyJhbGci..."
   }
@@ -134,7 +157,7 @@ references.
     "name": "model",
     "variants": [
       {
-        "id": "phi-4-mini.qnn",
+        "id": "qwen2.5-0.5b.qnn",
         "path": "variants/qnn",
         "ep": "QNN",
         "device": "npu",
@@ -147,7 +170,7 @@ references.
         "shared_asset_refs": ["sha256:9f8e..."]
       },
       {
-        "id": "phi-4-mini.cpu",
+        "id": "qwen2.5-0.5b.cpu",
         "path": "variants/cpu",
         "ep": "CPU",
         "device": "cpu",
@@ -266,9 +289,13 @@ Nothing stops you from deciding per device. A common pattern is to bundle a smal
 immediate availability and fetch a better one when conditions allow:
 
 ```kotlin
+// Catalog ids, not labels — the task travels with the id. See the naming rule above.
+const val LARGE = "qwen2.5-1.5b-instruct-generic-cpu:4"
+const val SMALL = "qwen2.5-0.5b-instruct-generic-cpu:4"
+
 val model = if (manager.deviceProfile.hasNpu && manager.deviceProfile.isUnmetered) {
-    manager.addModelSource(ModelSource.Remote(name = "phi-4-mini", url = MANIFEST_URL, headers = authHeaders()))
+    manager.addModelSource(ModelSource.Remote(name = LARGE, url = MANIFEST_URL, headers = authHeaders()))
 } else {
-    manager.addModelSource(ModelSource.Bundled(name = "phi-4-mini-small", path = bundledPath))
+    manager.addModelSource(ModelSource.Bundled(name = SMALL, path = bundledPath))
 }
 ```

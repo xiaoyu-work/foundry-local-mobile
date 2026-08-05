@@ -161,7 +161,8 @@ public final class FoundryLocal: @unchecked Sendable {
             bytesDownloaded: payload.bytesDownloaded,
             bytesReused: payload.bytesReused,
             wasCached: payload.wasCached,
-            model: model
+            model: model,
+            handleUnavailableReason: payload.modelHandleUnavailable
         )
     }
 
