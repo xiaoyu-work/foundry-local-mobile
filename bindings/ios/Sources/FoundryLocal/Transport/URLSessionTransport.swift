@@ -320,7 +320,7 @@ extension URLSessionBackgroundTransport: URLSessionDownloadDelegate {
     public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
-        didCompleteWithError error: Error?
+        didCompleteWithError error: (any Error)?
     ) {
         guard let entry = pendingEntry(forTask: task) else { return }
         let request = entry.request

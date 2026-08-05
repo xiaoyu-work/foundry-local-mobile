@@ -857,6 +857,12 @@ jobs:
         # JSONDecoder-Sendability and four-static-NSLock findings the first
         # time this check ran on the binding.
         #
+        # The upcoming features must match the ones Package.swift enables.
+        # They did not, once, and the gap hid nineteen `any`-existential
+        # errors from this 20-second Linux job until a three-minute macOS
+        # build tripped over them. Whatever the manifest turns on, turn on
+        # here, so the cheap job is the one that finds it.
+        #
         # The module map is written in RUNNER_TEMP so nothing lands under
         # the working tree; it points at core/include with an absolute
         # path (the same pattern used to develop the first pass locally).
@@ -875,6 +881,8 @@ jobs:
           printf '  %s\n' "${sources[@]}"
           swiftc -typecheck -parse-as-library -module-name FoundryLocal \
             -strict-concurrency=complete \
+            -enable-upcoming-feature ExistentialAny \
+            -enable-upcoming-feature InferSendableFromCaptures \
             -Xcc -I"${headers}" \
             -Xcc -fmodule-map-file="${modmap}" \
             "${sources[@]}"
