@@ -75,6 +75,21 @@ log()  { printf '[apple] %s\n' "$*" >&2; }
 warn() { printf '[apple] warn: %s\n' "$*" >&2; }
 die()  { printf '[apple] error: %s\n' "$1" >&2; exit "${2:-1}"; }
 
+ensure_framework_binary() {
+    local framework_dir="$1"
+    local binary_name="$2"
+    if [[ -f "${framework_dir}/${binary_name}" ]]; then
+        return
+    fi
+
+    local nested_binary
+    nested_binary="$(find "${framework_dir}" -type f -name "${binary_name}" -print -quit 2>/dev/null || true)"
+    [[ -n "${nested_binary}" ]] \
+        || die "${framework_dir} does not contain a ${binary_name} binary"
+    rm -f "${framework_dir}/${binary_name}"
+    cp "${nested_binary}" "${framework_dir}/${binary_name}"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --output)         OUTPUT_DIR="$2"; shift 2 ;;
@@ -192,6 +207,7 @@ build_slice() {
         # framework (Info.plist stays; PkgInfo can go).
         rm -f "${framework_dir}/PkgInfo"
     fi
+    ensure_framework_binary "${framework_dir}" "${FRAMEWORK_NAME}"
 
     # Public headers. Swift's C interop reads them through the module map, so
     # they must live under Headers/foundry_local_mobile/ to match the include
@@ -268,6 +284,7 @@ harvest_oga_framework() {
         mkdir -p "${oga_fw_dir}/Headers"
         cp "${oga_lib}" "${oga_fw_dir}/${OGA_FRAMEWORK_NAME}"
     fi
+    ensure_framework_binary "${oga_fw_dir}" "${OGA_FRAMEWORK_NAME}"
 
     # Headers — ship the public OGA C header.
     local oga_src_dir="${REPO_ROOT}/third_party/onnxruntime-genai/src"
@@ -374,18 +391,42 @@ OGA_XCFRAMEWORK_ARGS=(
 )
 
 if [[ ${INCLUDE_MACOS} -eq 1 ]]; then
-    log "building macOS slice (arm64 + x86_64)"
-    MACOS_FRAMEWORK="$(build_slice \
-        "macos" \
+    log "building macOS slice (arm64)"
+    MACOS_ARM64_FRAMEWORK="$(build_slice \
+        "macos-arm64" \
         "${MACOSX_SDK_PATH}" \
-        "arm64;x86_64" \
+        "arm64" \
         "CMAKE_OSX_DEPLOYMENT_TARGET" \
         "${MACOS_DEPLOYMENT_TARGET}")"
-    MACOS_OGA_FRAMEWORK="$(harvest_oga_framework "macos")"
-    XCFRAMEWORK_ARGS+=(-framework "${MACOS_FRAMEWORK}")
-    if [[ -n "${MACOS_OGA_FRAMEWORK}" ]]; then
-        OGA_XCFRAMEWORK_ARGS+=(-framework "${MACOS_OGA_FRAMEWORK}")
-    fi
+    MACOS_ARM64_OGA_FRAMEWORK="$(harvest_oga_framework "macos-arm64")"
+
+    log "building macOS slice (x86_64)"
+    MACOS_X86_FRAMEWORK="$(build_slice \
+        "macos-x86_64" \
+        "${MACOSX_SDK_PATH}" \
+        "x86_64" \
+        "CMAKE_OSX_DEPLOYMENT_TARGET" \
+        "${MACOS_DEPLOYMENT_TARGET}")"
+    MACOS_X86_OGA_FRAMEWORK="$(harvest_oga_framework "macos-x86_64")"
+
+    MACOS_FAT_DIR="${OUTPUT_DIR}/install/macos-fat"
+    MACOS_FAT_FRAMEWORK="${MACOS_FAT_DIR}/${FRAMEWORK_NAME}.framework"
+    MACOS_FAT_OGA_FRAMEWORK="${MACOS_FAT_DIR}/${OGA_FRAMEWORK_NAME}.framework"
+    rm -rf "${MACOS_FAT_DIR}"
+    mkdir -p "${MACOS_FAT_DIR}"
+    cp -R "${MACOS_ARM64_FRAMEWORK}" "${MACOS_FAT_FRAMEWORK}"
+    lipo -create \
+        "${MACOS_ARM64_FRAMEWORK}/${FRAMEWORK_NAME}" \
+        "${MACOS_X86_FRAMEWORK}/${FRAMEWORK_NAME}" \
+        -output "${MACOS_FAT_FRAMEWORK}/${FRAMEWORK_NAME}"
+    cp -R "${MACOS_ARM64_OGA_FRAMEWORK}" "${MACOS_FAT_OGA_FRAMEWORK}"
+    lipo -create \
+        "${MACOS_ARM64_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}" \
+        "${MACOS_X86_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}" \
+        -output "${MACOS_FAT_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}"
+
+    XCFRAMEWORK_ARGS+=(-framework "${MACOS_FAT_FRAMEWORK}")
+    OGA_XCFRAMEWORK_ARGS+=(-framework "${MACOS_FAT_OGA_FRAMEWORK}")
 fi
 
 XCFRAMEWORK_OUT="${OUTPUT_DIR}/${FRAMEWORK_NAME}.xcframework"
