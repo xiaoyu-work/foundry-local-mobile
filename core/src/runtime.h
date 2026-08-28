@@ -112,6 +112,11 @@ using OgaSequencesHandle = OgaHandle<OgaSequences, OgaDestroySequences>;
 using OgaGeneratorParamsHandle = OgaHandle<OgaGeneratorParams, OgaDestroyGeneratorParams>;
 using OgaGeneratorHandle = OgaHandle<OgaGenerator, OgaDestroyGenerator>;
 using OgaMultiModalProcessorHandle = OgaHandle<OgaMultiModalProcessor, OgaDestroyMultiModalProcessor>;
+using OgaTensorHandle = OgaHandle<OgaTensor, OgaDestroyTensor>;
+using OgaAudiosHandle = OgaHandle<OgaAudios, OgaDestroyAudios>;
+using OgaNamedTensorsHandle = OgaHandle<OgaNamedTensors, OgaDestroyNamedTensors>;
+using OgaStringArrayHandle = OgaHandle<OgaStringArray, OgaDestroyStringArray>;
+using OgaStreamingProcessorHandle = OgaHandle<OgaStreamingProcessor, OgaDestroyStreamingProcessor>;
 
 /// Destroy adapter for const char* returned by OGA (OgaDestroyString takes const char*).
 inline void DestroyOgaString(const char* s) { OgaDestroyString(s); }

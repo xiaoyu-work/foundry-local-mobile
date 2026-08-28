@@ -9,12 +9,13 @@ Everything runs on the device. There is no backend, no per-token cost and no
 network required for inference. The plugin ships:
 
 - local model loading from caller-owned directories,
-- streaming chat with tool calling (text) and multi-turn history,
+- streaming chat and multi-turn history,
+- batch/streaming audio transcription and text embeddings,
 - OS-level lifecycle bridging (memory pressure, thermal, connectivity).
 
-Speech-to-text, embeddings, multimodal inputs, and structured tool-call event
-parsing are exposed in the API surface but are **not yet implemented**: the
-native core returns `FLM_ERROR_NOT_IMPLEMENTED` for those calls today.
+Audio and embedding paths still require compatible-model and physical-device
+validation. Multimodal chat input and structured tool-call event parsing remain
+incomplete.
 
 ## Requirements
 
@@ -22,9 +23,9 @@ native core returns `FLM_ERROR_NOT_IMPLEMENTED` for those calls today.
 |-|-|
 | Dart | `>=3.1.0` — `NativeCallable.listener` is required |
 | Flutter | `>=3.13.0` |
-| Android | minSdk 21, NDK 26, 64-bit ARM |
-| iOS | 13.0+ |
-| macOS | 10.15+ |
+| Android | minSdk 26, NDK 27, 64-bit ARM |
+| iOS | 15.0+ |
+| macOS | 12.0+ |
 
 ## Install
 

@@ -6,6 +6,9 @@
 #ifndef FOUNDRY_LOCAL_MOBILE_SESSION_H_
 #define FOUNDRY_LOCAL_MOBILE_SESSION_H_
 
+#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -34,6 +37,9 @@ class Session {
 
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
+
+  /// Signal shutdown for any blocked streaming transcription.
+  void ShutdownAudioQueue() noexcept;
 
   void SetOptions(const nlohmann::json& options);
 
@@ -65,6 +71,20 @@ class Session {
   nlohmann::json Generate(const std::string& prompt, const nlohmann::json& gen_options,
                           Model::InferenceLease& lease, JobContext& context);
 
+  // -- Audio helpers --
+
+  /// Build the Whisper special-token prompt for a given language and task.
+  static std::string BuildWhisperPrompt(const std::string& language, bool translate);
+
+  /// File/buffer transcription using OgaMultiModalProcessor.
+  nlohmann::json TranscribeBatch(const nlohmann::json& request, JobContext& context);
+
+  /// Streaming transcription reading from the audio queue.
+  nlohmann::json TranscribeStreaming(const nlohmann::json& request, JobContext& context);
+
+  /// Convert signed-16-bit little-endian PCM bytes to float32 [-1, 1].
+  static std::vector<float> ConvertS16LEToFloat(const uint8_t* pcm_bytes, size_t byte_count);
+
   std::shared_ptr<Model> model_;
   SessionType type_ = SessionType::kChat;
 
@@ -80,6 +100,18 @@ class Session {
 
   /// Serialises requests; the OGA generator is not reentrant.
   std::mutex request_mutex_;
+
+  // -- Audio streaming queue --
+
+  struct AudioChunk {
+    std::vector<uint8_t> data;
+    bool is_final = false;
+  };
+
+  std::mutex audio_mutex_;
+  std::condition_variable audio_cv_;
+  std::deque<AudioChunk> audio_queue_;
+  std::atomic<bool> audio_shutdown_{false};
 };
 
 }  // namespace flm

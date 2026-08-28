@@ -109,8 +109,8 @@ Be precise about what is proven and what is not:
 | Load a local OGA model directory (flat or package) | Implemented |
 | Text chat completion, streaming deltas | Implemented — Windows end-to-end tested against the OGA `qwen3-5` fixture model |
 | Multi-turn history (export/restore/undo/clear) | Implemented and Windows E2E-tested |
-| Audio transcription (batch and streaming) | **Not implemented** — returns `FLM_ERROR_NOT_IMPLEMENTED` |
-| Embeddings | **Not implemented** — returns `FLM_ERROR_NOT_IMPLEMENTED` |
+| Audio transcription (batch and streaming) | Implemented directly with OGA; compatible-model E2E and phone validation still pending |
+| Embeddings | Implemented for `hidden_states`-style outputs with float32, float16 and bfloat16 conversion; model E2E pending |
 | Multimodal input (image/audio content parts) | **Not implemented / incomplete** |
 | Structured tool-call event parsing | **Not implemented** — the model's raw text is not parsed into structured tool calls; `finish_reason: tool_calls` is never produced today |
 | Android build | Compiles for `arm64-v8a`, `armeabi-v7a`, `x86_64`; on-device E2E not yet proven |
@@ -233,9 +233,9 @@ docs/                 Architecture, model directory requirements, platform notes
 ## Limitations
 
 - No catalog, no remote model download/transport, no SDK-managed cache or cache deletion.
-- Audio transcription, streaming audio, embeddings, multimodal inputs, and structured
-  tool-call event parsing are not implemented or not complete; calls either return
-  `FLM_ERROR_NOT_IMPLEMENTED` or are best-effort text-only.
+- Audio transcription and embeddings are implemented but still need successful
+  compatible-model and phone E2E coverage. Multimodal chat inputs and structured
+  tool-call event parsing remain incomplete.
 - Android and iOS on-device (physical hardware) end-to-end validation is not yet proven;
   today's proof point is a Windows E2E run against the OGA `qwen3-5` fixture model.
 - Flutter and React Native release packaging and device validation may still be in

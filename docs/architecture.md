@@ -93,10 +93,11 @@ Implemented and exercised: `flm_manager_load_model_async` / `flm_model_load_asyn
 `flm_session_undo_turns`, `flm_session_clear_history`,
 `flm_session_export_history_json` / `flm_session_restore_history_json`).
 
-Present in the header but **not implemented** in the current backend —
-`flm_session_transcribe_async`, `flm_session_push_audio`, and `flm_session_embed_async`
-all throw `FLM_ERROR_NOT_IMPLEMENTED`. `flm_session_submit_tool_results_async` runs, but
-the core does not parse a model's raw output into structured tool calls, so
+Also implemented directly over OGA: batch audio transcription, queued 16-kHz mono PCM
+streaming transcription, and embeddings from a configurable tensor output. These paths
+compile but still need compatible-model and physical-device E2E coverage.
+`flm_session_submit_tool_results_async` runs, but the core does not parse a model's raw
+output into structured tool calls, so
 `FLM_FINISH_TOOL_CALLS` is never produced and no `FLM_DELTA_TOOL_CALL` event is emitted
 today.
 
@@ -124,8 +125,8 @@ Each binding exposes the same object model with platform-native ergonomics:
 FoundryLocal ──▶ Model (loaded from a caller-owned path)
                     │
                     ├──▶ ChatSession   (streaming text, history — implemented)
-                    ├──▶ AudioSession  (speech-to-text — not implemented)
-                    └──▶ EmbeddingSession (not implemented)
+                    ├──▶ AudioSession  (batch + streaming speech-to-text)
+                    └──▶ EmbeddingSession (hidden-state extraction + normalization)
 ```
 
 The names, argument order and semantics are kept aligned across the four languages so

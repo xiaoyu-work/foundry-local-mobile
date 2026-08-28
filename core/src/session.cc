@@ -4,7 +4,14 @@
 #include "session.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <limits>
+#include <unordered_set>
+
+#include "encoding.h"
 
 namespace flm {
 namespace {
@@ -19,13 +26,6 @@ const char* FinishReasonName(flm_finish_reason reason) noexcept {
     case FLM_FINISH_NONE:
     default: return "none";
   }
-}
-
-/// Render a JSON value as a string for OGA generation params.
-std::string OptionValueToString(const nlohmann::json& value) {
-  if (value.is_string()) return value.get<std::string>();
-  if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
-  return value.dump();
 }
 
 /// Known generation option keys that map to OGA search params.
@@ -43,6 +43,44 @@ constexpr GenOptionMapping kGenOptions[] = {
     {"seed", "random_seed", true},
     {"do_sample", "do_sample", false},
 };
+
+float Float16ToFloat32(uint16_t value) noexcept {
+  const uint32_t sign = static_cast<uint32_t>(value & 0x8000U) << 16U;
+  const uint32_t exponent = (value >> 10U) & 0x1FU;
+  uint32_t mantissa = value & 0x03FFU;
+  uint32_t bits = 0;
+
+  if (exponent == 0) {
+    if (mantissa == 0) {
+      bits = sign;
+    } else {
+      int32_t unbiased_exponent = -14;
+      while ((mantissa & 0x0400U) == 0) {
+        mantissa <<= 1U;
+        --unbiased_exponent;
+      }
+      mantissa &= 0x03FFU;
+      bits = sign |
+             (static_cast<uint32_t>(unbiased_exponent + 127) << 23U) |
+             (mantissa << 13U);
+    }
+  } else if (exponent == 0x1FU) {
+    bits = sign | 0x7F800000U | (mantissa << 13U);
+  } else {
+    bits = sign | ((exponent + 112U) << 23U) | (mantissa << 13U);
+  }
+
+  float result = 0.0F;
+  std::memcpy(&result, &bits, sizeof(result));
+  return result;
+}
+
+float BFloat16ToFloat32(uint16_t value) noexcept {
+  const uint32_t bits = static_cast<uint32_t>(value) << 16U;
+  float result = 0.0F;
+  std::memcpy(&result, &bits, sizeof(result));
+  return result;
+}
 
 }  // namespace
 
@@ -96,7 +134,14 @@ Session::Session(std::shared_ptr<Model> model, const nlohmann::json& options) : 
   }
 }
 
-Session::~Session() = default;
+Session::~Session() {
+  ShutdownAudioQueue();
+}
+
+void Session::ShutdownAudioQueue() noexcept {
+  audio_shutdown_.store(true, std::memory_order_release);
+  audio_cv_.notify_all();
+}
 
 void Session::SetOptions(const nlohmann::json& options) {
   if (!options.is_object()) {
@@ -524,24 +569,710 @@ nlohmann::json Session::SubmitToolResults(const nlohmann::json& tool_results, Jo
 /* Audio                                                                      */
 /* ------------------------------------------------------------------------- */
 
-nlohmann::json Session::Transcribe(const nlohmann::json& /*request*/, JobContext& /*context*/) {
-  throw Error(FLM_ERROR_NOT_IMPLEMENTED,
-              "audio transcription is not yet implemented in the direct OGA backend");
+namespace {
+
+/// Supported Whisper language codes (ISO-639-1 and a few extended).
+const std::unordered_set<std::string>& WhisperLanguages() {
+  static const std::unordered_set<std::string> kLangs = {
+      "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar",
+      "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu",
+      "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa",
+      "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn",
+      "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc",
+      "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn",
+      "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su"};
+  return kLangs;
 }
 
-void Session::PushAudio(const void* /*pcm_data*/, size_t /*byte_count*/, int32_t /*sample_rate*/,
-                        int32_t /*channels*/, bool /*is_final*/) {
-  throw Error(FLM_ERROR_NOT_IMPLEMENTED,
-              "audio push is not yet implemented in the direct OGA backend");
+/// Emit a speech delta and return false if the consumer requested cancellation.
+bool EmitSpeechDelta(JobContext& context, const char* text, size_t length) {
+  flm_delta delta{};
+  delta.version = FLM_API_VERSION;
+  delta.kind = FLM_DELTA_SPEECH_FINAL;
+  delta.text = text;
+  delta.text_length = length;
+  delta.finish_reason = FLM_FINISH_NONE;
+  return context.EmitDelta(delta);
+}
+
+}  // namespace
+
+std::string Session::BuildWhisperPrompt(const std::string& language, bool translate) {
+  const auto& langs = WhisperLanguages();
+  const std::string& lang = (!language.empty() && langs.count(language)) ? language : "en";
+  const char* task = translate ? "translate" : "transcribe";
+  return "<|startoftranscript|><|" + lang + "|><|" + task + "|><|notimestamps|>";
+}
+
+std::vector<float> Session::ConvertS16LEToFloat(const uint8_t* pcm_bytes, size_t byte_count) {
+  const size_t sample_count = byte_count / 2;
+  std::vector<float> samples(sample_count);
+  for (size_t i = 0; i < sample_count; ++i) {
+    int16_t sample;
+    std::memcpy(&sample, pcm_bytes + i * 2, sizeof(int16_t));
+    samples[i] = static_cast<float>(sample) / 32768.0f;
+  }
+  return samples;
+}
+
+nlohmann::json Session::Transcribe(const nlohmann::json& request, JobContext& context) {
+  if (type_ != SessionType::kAudio) {
+    throw Error(FLM_ERROR_INVALID_STATE,
+                std::string("transcribe() requires an audio session, but this session is '") + ToString(type_) + "'");
+  }
+  if (!request.is_object()) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT, "the transcription request must be a JSON object");
+  }
+
+  const bool streaming = request.value("streaming", false);
+  if (streaming) {
+    return TranscribeStreaming(request, context);
+  }
+  return TranscribeBatch(request, context);
+}
+
+nlohmann::json Session::TranscribeBatch(const nlohmann::json& request, JobContext& context) {
+  std::lock_guard<std::mutex> request_lock(request_mutex_);
+  const Runtime& runtime = Runtime::Instance();
+
+  // --- Parse inputs ---
+  const bool has_path = request.contains("path") && request["path"].is_string();
+  const bool has_data = request.contains("data_base64") && request["data_base64"].is_string();
+  if (!has_path && !has_data) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                "transcription request needs 'path' (file path) or 'data_base64' (encoded audio bytes)");
+  }
+
+  const std::string language = request.value("language", std::string());
+  const bool translate = request.value("translate", false);
+
+  // --- Load audio ---
+  OgaAudiosHandle audios;
+
+  if (has_path) {
+    const std::string path = request["path"].get<std::string>();
+    if (path.empty()) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT, "audio path must not be empty");
+    }
+    OgaAudios* audios_raw = nullptr;
+    runtime.Check(OgaLoadAudio(path.c_str(), &audios_raw), "load audio file");
+    audios.reset();
+    audios = OgaAudiosHandle(audios_raw);
+  } else {
+    // data_base64 path — decode and load from buffer.
+    const std::string format = request.value("format", std::string());
+
+    // OgaLoadAudiosFromBuffers expects an encoded audio container (wav, mp3, flac, etc.).
+    // Raw PCM cannot be loaded this way; reject it explicitly.
+    if (format == "pcm" || format == "raw") {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                  "raw PCM buffers are not supported for batch transcription; "
+                  "use 'streaming: true' with flm_session_push_audio for raw PCM, "
+                  "or provide an encoded container (wav, mp3, flac, ogg)");
+    }
+
+    std::vector<uint8_t> audio_bytes = Base64Decode(request["data_base64"].get<std::string>());
+    if (audio_bytes.empty()) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT, "data_base64 decoded to zero bytes");
+    }
+
+    const void* buffers[] = {audio_bytes.data()};
+    const size_t sizes[] = {audio_bytes.size()};
+    OgaAudios* audios_raw = nullptr;
+    runtime.Check(OgaLoadAudiosFromBuffers(buffers, sizes, 1, &audios_raw),
+                  "load audio from buffer");
+    audios = OgaAudiosHandle(audios_raw);
+  }
+
+  context.ThrowIfCancelled();
+
+  // --- Create multimodal processor ---
+  Model::InferenceLease lease = model_->AcquireInferenceLease();
+  OgaMultiModalProcessor* processor_raw = nullptr;
+  runtime.Check(OgaCreateMultiModalProcessor(lease.oga_model(), &processor_raw),
+                "create multimodal processor for audio");
+  OgaMultiModalProcessorHandle processor(processor_raw);
+
+  // --- Build Whisper prompt ---
+  const std::string prompt = BuildWhisperPrompt(language, translate);
+
+  // Use the multi-prompt overload (batch size 1) to work around the OGA bug where
+  // single-prompt sets Payload::prompt but WhisperProcessor reads Payload::prompts.
+  std::vector<const char*> prompts_vec = {prompt.c_str()};
+  OgaStringArray* prompts_sa_raw = nullptr;
+  runtime.Check(OgaCreateStringArrayFromStrings(prompts_vec.data(), prompts_vec.size(), &prompts_sa_raw),
+                "create prompt string array");
+  OgaStringArrayHandle prompts_sa(prompts_sa_raw);
+
+  // --- Process audio + prompt into model inputs ---
+  OgaNamedTensors* inputs_raw = nullptr;
+  runtime.Check(OgaProcessorProcessAudiosAndPrompts(processor.get(), prompts_sa.get(), audios.get(), &inputs_raw),
+                "process audio through multimodal processor");
+  OgaNamedTensorsHandle inputs(inputs_raw);
+
+  context.ThrowIfCancelled();
+
+  // --- Create generator ---
+  OgaGeneratorParams* params_raw = nullptr;
+  runtime.Check(OgaCreateGeneratorParams(lease.oga_model(), &params_raw), "create audio generator params");
+  OgaGeneratorParamsHandle params(params_raw);
+
+  runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "batch_size", 1),
+                "set audio batch_size");
+  runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "max_length", 448),
+                "set audio max_length");
+  runtime.Check(OgaGeneratorParamsSetSearchBool(params.get(), "do_sample", false),
+                "set audio do_sample");
+
+  // Apply optional temperature.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (const auto it = options_.find("temperature"); it != options_.end() && it->is_number()) {
+      runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "temperature", it->get<double>()),
+                    "set audio temperature");
+    }
+  }
+  if (const auto it = request.find("temperature"); it != request.end() && it->is_number()) {
+    runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "temperature", it->get<double>()),
+                  "set audio temperature (request)");
+  }
+
+  OgaGenerator* gen_raw = nullptr;
+  runtime.Check(OgaCreateGenerator(lease.oga_model(), params.get(), &gen_raw), "create audio generator");
+  OgaGeneratorHandle generator(gen_raw);
+
+  runtime.Check(OgaGenerator_SetInputs(generator.get(), inputs.get()), "set audio model inputs");
+
+  OgaTokenizerStream* stream_raw = nullptr;
+  runtime.Check(OgaCreateTokenizerStreamFromProcessor(processor.get(), &stream_raw),
+                "create audio tokenizer stream");
+  OgaTokenizerStreamHandle token_stream(stream_raw);
+
+  context.ThrowIfCancelled();
+  context.ReportProgress(0.0f, "transcribing");
+
+  // --- Generation loop ---
+  std::string full_text;
+  int64_t completion_tokens = 0;
+  bool cancelled = false;
+
+  while (!OgaGenerator_IsDone(generator.get())) {
+    if (context.IsCancelled() || OgaGenerator_IsSessionTerminated(generator.get())) {
+      OgaResult* term = OgaGenerator_SetRuntimeOption(generator.get(), "terminate_session", "1");
+      if (term) OgaDestroyResult(term);
+      cancelled = true;
+      break;
+    }
+
+    OgaResult* step = OgaGenerator_GenerateNextToken(generator.get());
+    if (step != nullptr) {
+      const char* err = OgaResultGetError(step);
+      std::string err_msg = err ? err : "generation error";
+      OgaDestroyResult(step);
+      if (OgaGenerator_IsSessionTerminated(generator.get())) {
+        cancelled = true;
+        break;
+      }
+      throw Error(FLM_ERROR_INTERNAL, "audio generate next token: " + err_msg);
+    }
+
+    completion_tokens++;
+
+    // Get just the latest token for streaming.
+    const int32_t* next_tokens = nullptr;
+    size_t next_count = 0;
+    runtime.Check(OgaGenerator_GetNextTokens(generator.get(), &next_tokens, &next_count),
+                  "get audio next tokens");
+
+    if (next_count > 0 && next_tokens != nullptr) {
+      // Stateful decoding preserves byte-level token sequences across callbacks.
+      const char* decoded = nullptr;
+      OgaResult* decode_result =
+          OgaTokenizerStreamDecode(token_stream.get(), next_tokens[0], &decoded);
+      if (decode_result == nullptr && decoded != nullptr && decoded[0] != '\0') {
+        const size_t len = std::strlen(decoded);
+        full_text.append(decoded, len);
+        if (!EmitSpeechDelta(context, decoded, len)) {
+          OgaResult* term = OgaGenerator_SetRuntimeOption(generator.get(), "terminate_session", "1");
+          if (term) OgaDestroyResult(term);
+          cancelled = true;
+          break;
+        }
+      } else {
+        if (decode_result) OgaDestroyResult(decode_result);
+      }
+    }
+  }
+
+  // Decode the full sequence for the final result text.
+  if (!cancelled && !full_text.empty()) {
+    // full_text already contains the streamed text; use it directly.
+  } else if (!cancelled) {
+    const int32_t num_tokens = static_cast<int32_t>(OgaGenerator_GetSequenceCount(generator.get(), 0));
+    const int32_t* tokens = OgaGenerator_GetSequenceData(generator.get(), 0);
+    if (num_tokens > 0 && tokens != nullptr) {
+      const char* full_decoded = nullptr;
+      OgaResult* dec = OgaProcessorDecode(processor.get(), tokens, static_cast<size_t>(num_tokens), &full_decoded);
+      if (dec == nullptr && full_decoded) {
+        full_text = full_decoded;
+        OgaDestroyString(full_decoded);
+      } else {
+        if (dec) OgaDestroyResult(dec);
+        if (full_decoded) OgaDestroyString(full_decoded);
+      }
+    }
+  }
+
+  const flm_finish_reason finish = cancelled ? FLM_FINISH_CANCELLED : FLM_FINISH_STOP;
+
+  // Emit completion delta.
+  flm_delta done{};
+  done.version = FLM_API_VERSION;
+  done.kind = FLM_DELTA_COMPLETED;
+  done.finish_reason = finish;
+  done.prompt_tokens = 0;
+  done.completion_tokens = completion_tokens;
+  context.EmitDelta(done);
+
+  context.ReportProgress(100.0f, "transcribing");
+
+  if (cancelled) {
+    context.ThrowIfCancelled();
+  }
+
+  return nlohmann::json{
+      {"text", full_text},
+      {"language", language.empty() ? nlohmann::json(nullptr) : nlohmann::json(language)},
+      {"segments", nlohmann::json::array()},
+      {"finish_reason", FinishReasonName(finish)},
+      {"usage", {{"prompt_tokens", 0}, {"completion_tokens", completion_tokens},
+                 {"total_tokens", completion_tokens}}}};
+}
+
+nlohmann::json Session::TranscribeStreaming(const nlohmann::json& request, JobContext& context) {
+  std::lock_guard<std::mutex> request_lock(request_mutex_);
+  const Runtime& runtime = Runtime::Instance();
+
+  Model::InferenceLease lease = model_->AcquireInferenceLease();
+
+  // Reset the audio queue state for a new streaming session.
+  {
+    std::lock_guard<std::mutex> lock(audio_mutex_);
+    audio_queue_.clear();
+    audio_shutdown_.store(false, std::memory_order_release);
+  }
+
+  // Create OGA streaming processor.
+  OgaStreamingProcessor* sp_raw = nullptr;
+  runtime.Check(OgaCreateStreamingProcessor(lease.oga_model(), &sp_raw),
+                "create streaming processor");
+  OgaStreamingProcessorHandle streaming_processor(sp_raw);
+
+  // Create generator.
+  OgaGeneratorParams* params_raw = nullptr;
+  runtime.Check(OgaCreateGeneratorParams(lease.oga_model(), &params_raw),
+                "create streaming audio generator params");
+  OgaGeneratorParamsHandle params(params_raw);
+
+  // Apply temperature from session/request.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (const auto it = options_.find("temperature"); it != options_.end() && it->is_number()) {
+      runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "temperature", it->get<double>()),
+                    "set streaming audio temperature");
+    }
+  }
+  if (const auto it = request.find("temperature"); it != request.end() && it->is_number()) {
+    runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "temperature", it->get<double>()),
+                  "set streaming audio temperature (request)");
+  }
+
+  OgaGenerator* gen_raw = nullptr;
+  runtime.Check(OgaCreateGenerator(lease.oga_model(), params.get(), &gen_raw),
+                "create streaming audio generator");
+  OgaGeneratorHandle generator(gen_raw);
+
+  // Optionally set language for models that support it (e.g. Nemotron).
+  const std::string language = request.value("language", std::string());
+  if (!language.empty()) {
+    OgaResult* lang_result = OgaGenerator_SetRuntimeOption(generator.get(), "lang_id", language.c_str());
+    // Silently ignore — not all models support this.
+    if (lang_result) OgaDestroyResult(lang_result);
+  }
+
+  // Create tokenizer stream for incremental decoding.
+  OgaTokenizerStream* ts_raw = nullptr;
+  runtime.Check(OgaCreateTokenizerStream(lease.oga_tokenizer(), &ts_raw),
+                "create streaming audio tokenizer stream");
+  OgaTokenizerStreamHandle token_stream(ts_raw);
+
+  context.ReportProgress(0.0f, "streaming transcription");
+
+  std::string full_text;
+  int64_t completion_tokens = 0;
+  bool cancelled = false;
+
+  // Lambda: decode all available tokens from the generator after SetInputs.
+  auto decode_tokens = [&]() {
+    while (!OgaGenerator_IsDone(generator.get()) &&
+           !OgaGenerator_IsSessionTerminated(generator.get()) &&
+           !context.IsCancelled() &&
+           !audio_shutdown_.load(std::memory_order_acquire)) {
+      OgaResult* step = OgaGenerator_GenerateNextToken(generator.get());
+      if (step != nullptr) {
+        const char* err = OgaResultGetError(step);
+        std::string err_msg = err ? err : "generation error";
+        OgaDestroyResult(step);
+        if (OgaGenerator_IsSessionTerminated(generator.get())) {
+          cancelled = true;
+          return;
+        }
+        throw Error(FLM_ERROR_INTERNAL, "streaming audio token generation: " + err_msg);
+      }
+
+      const int32_t* next_tokens = nullptr;
+      size_t next_count = 0;
+      runtime.Check(OgaGenerator_GetNextTokens(generator.get(), &next_tokens, &next_count),
+                    "get streaming audio next tokens");
+
+      if (next_count > 0 && next_tokens != nullptr) {
+        const char* decoded = nullptr;
+        OgaResult* dec = OgaTokenizerStreamDecode(token_stream.get(), next_tokens[0], &decoded);
+        runtime.Check(dec, "decode streaming audio token");
+        if (decoded != nullptr && decoded[0] != '\0') {
+          completion_tokens++;
+          const size_t len = std::strlen(decoded);
+          full_text.append(decoded, len);
+          if (!EmitSpeechDelta(context, decoded, len)) {
+            cancelled = true;
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  // Lambda: feed float samples to the streaming processor and decode if ready.
+  auto process_chunk = [&](const std::vector<float>& samples) {
+    OgaNamedTensors* tensors_raw = nullptr;
+    runtime.Check(OgaStreamingProcessorProcess(streaming_processor.get(), samples.data(),
+                                               samples.size(), &tensors_raw),
+                  "streaming processor process chunk");
+    if (tensors_raw != nullptr) {
+      OgaNamedTensorsHandle tensors(tensors_raw);
+      runtime.Check(OgaGenerator_SetInputs(generator.get(), tensors.get()),
+                    "set streaming audio inputs");
+      decode_tokens();
+    }
+  };
+
+  // Read from the audio queue until final or cancelled.
+  while (!cancelled && !audio_shutdown_.load(std::memory_order_acquire)) {
+    if (context.IsCancelled()) {
+      cancelled = true;
+      break;
+    }
+
+    AudioChunk chunk;
+    bool got_chunk = false;
+    {
+      std::unique_lock<std::mutex> lock(audio_mutex_);
+      // Wait up to 100ms for data to avoid blocking indefinitely.
+      audio_cv_.wait_for(lock, std::chrono::milliseconds(100), [this] {
+        return !audio_queue_.empty() || audio_shutdown_.load(std::memory_order_acquire);
+      });
+      if (!audio_queue_.empty()) {
+        chunk = std::move(audio_queue_.front());
+        audio_queue_.pop_front();
+        got_chunk = true;
+      }
+    }
+
+    if (audio_shutdown_.load(std::memory_order_acquire)) {
+      cancelled = true;
+      break;
+    }
+
+    if (!got_chunk) {
+      continue;
+    }
+
+    // Process the audio chunk data.
+    if (!chunk.data.empty()) {
+      auto float_samples = ConvertS16LEToFloat(chunk.data.data(), chunk.data.size());
+      process_chunk(float_samples);
+    }
+
+    if (cancelled) break;
+
+    // Final chunk → flush remaining audio.
+    if (chunk.is_final) {
+      OgaNamedTensors* flush_raw = nullptr;
+      runtime.Check(OgaStreamingProcessorFlush(streaming_processor.get(), &flush_raw),
+                    "streaming processor flush");
+      if (flush_raw != nullptr) {
+        OgaNamedTensorsHandle flush_tensors(flush_raw);
+        runtime.Check(OgaGenerator_SetInputs(generator.get(), flush_tensors.get()),
+                      "set streaming audio flush inputs");
+        decode_tokens();
+      }
+      break;
+    }
+  }
+
+  if (cancelled || context.IsCancelled()) {
+    OgaResult* term = OgaGenerator_SetRuntimeOption(generator.get(), "terminate_session", "1");
+    if (term) OgaDestroyResult(term);
+  }
+
+  const flm_finish_reason finish = cancelled ? FLM_FINISH_CANCELLED : FLM_FINISH_STOP;
+
+  flm_delta done{};
+  done.version = FLM_API_VERSION;
+  done.kind = FLM_DELTA_COMPLETED;
+  done.finish_reason = finish;
+  done.prompt_tokens = 0;
+  done.completion_tokens = completion_tokens;
+  context.EmitDelta(done);
+
+  context.ReportProgress(100.0f, "streaming transcription");
+
+  if (cancelled) {
+    context.ThrowIfCancelled();
+  }
+
+  return nlohmann::json{
+      {"text", full_text},
+      {"language", language.empty() ? nlohmann::json(nullptr) : nlohmann::json(language)},
+      {"segments", nlohmann::json::array()},
+      {"finish_reason", FinishReasonName(finish)},
+      {"usage", {{"prompt_tokens", 0}, {"completion_tokens", completion_tokens},
+                 {"total_tokens", completion_tokens}}}};
+}
+
+void Session::PushAudio(const void* pcm_data, size_t byte_count, int32_t sample_rate,
+                        int32_t channels, bool is_final) {
+  if (type_ != SessionType::kAudio) {
+    throw Error(FLM_ERROR_INVALID_STATE,
+                "push_audio requires an audio session");
+  }
+  // Validate: only mono 16-kHz signed-16 little-endian PCM is supported.
+  if (sample_rate != 0 && sample_rate != 16000) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                "push_audio requires 16000 Hz sample rate, got " + std::to_string(sample_rate));
+  }
+  if (channels != 0 && channels != 1) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                "push_audio requires mono (1 channel), got " + std::to_string(channels));
+  }
+  if (!is_final && (pcm_data == nullptr || byte_count == 0)) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                "push_audio requires non-null pcm_data with byte_count > 0 (unless is_final)");
+  }
+  if (byte_count % 2 != 0) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                "push_audio byte_count must be even (16-bit samples), got " + std::to_string(byte_count));
+  }
+
+  AudioChunk chunk;
+  if (pcm_data != nullptr && byte_count > 0) {
+    const auto* bytes = static_cast<const uint8_t*>(pcm_data);
+    chunk.data.assign(bytes, bytes + byte_count);
+  }
+  chunk.is_final = is_final;
+
+  {
+    std::lock_guard<std::mutex> lock(audio_mutex_);
+    audio_queue_.push_back(std::move(chunk));
+  }
+  audio_cv_.notify_one();
 }
 
 /* ------------------------------------------------------------------------- */
 /* Embeddings                                                                 */
 /* ------------------------------------------------------------------------- */
 
-nlohmann::json Session::Embed(const nlohmann::json& /*request*/, JobContext& /*context*/) {
-  throw Error(FLM_ERROR_NOT_IMPLEMENTED,
-              "embedding is not yet implemented in the direct OGA backend");
+nlohmann::json Session::Embed(const nlohmann::json& request, JobContext& context) {
+  if (type_ != SessionType::kEmbedding) {
+    throw Error(FLM_ERROR_INVALID_STATE,
+                "embed() requires a session created with {\"type\":\"embedding\"}");
+  }
+  if (!request.is_object()) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT, "the embedding request must be a JSON object");
+  }
+  const auto inputs = request.find("inputs");
+  if (inputs == request.end() || !inputs->is_array() || inputs->empty()) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT, "the embedding request needs a non-empty 'inputs' array");
+  }
+
+  std::lock_guard<std::mutex> request_lock(request_mutex_);
+  Model::InferenceLease lease = model_->AcquireInferenceLease();
+  const Runtime& runtime = Runtime::Instance();
+
+  std::string output_name = "hidden_states";
+  bool normalize = true;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    output_name = options_.value("output_name", output_name);
+    normalize = options_.value("normalize", normalize);
+  }
+  output_name = request.value("output_name", output_name);
+  normalize = request.value("normalize", normalize);
+
+  nlohmann::json embeddings = nlohmann::json::array();
+  size_t dimensions = 0;
+
+  for (size_t input_index = 0; input_index < inputs->size(); ++input_index) {
+    context.ThrowIfCancelled();
+    const auto& input = (*inputs)[input_index];
+    if (!input.is_string()) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT, "each embedding input must be a string",
+                  {{"index", input_index}});
+    }
+
+    OgaSequences* sequences_raw = nullptr;
+    runtime.Check(OgaCreateSequences(&sequences_raw), "create embedding sequences");
+    OgaSequencesHandle sequences(sequences_raw);
+    runtime.Check(OgaTokenizerEncode(lease.oga_tokenizer(), input.get_ref<const std::string&>().c_str(),
+                                     sequences.get()),
+                  "encode embedding input");
+
+    const int32_t* eos_ids = nullptr;
+    size_t eos_count = 0;
+    runtime.Check(OgaTokenizerGetEosTokenIds(lease.oga_tokenizer(), &eos_ids, &eos_count),
+                  "get embedding EOS token");
+    if (eos_count > 0 && eos_ids != nullptr) {
+      runtime.Check(OgaAppendTokenToSequence(eos_ids[0], sequences.get(), 0),
+                    "append embedding EOS token");
+    }
+
+    const size_t token_count = OgaSequencesGetSequenceCount(sequences.get(), 0);
+    if (token_count == 0) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT, "embedding input tokenized to an empty sequence",
+                  {{"index", input_index}});
+    }
+
+    OgaGeneratorParams* params_raw = nullptr;
+    runtime.Check(OgaCreateGeneratorParams(lease.oga_model(), &params_raw),
+                  "create embedding generator params");
+    OgaGeneratorParamsHandle params(params_raw);
+    runtime.Check(OgaGeneratorParamsSetSearchNumber(params.get(), "batch_size", 1.0),
+                  "set embedding batch size");
+    runtime.Check(OgaGeneratorParamsSetSearchNumber(
+                      params.get(), "max_length", static_cast<double>(token_count + 1)),
+                  "set embedding maximum length");
+
+    OgaGenerator* generator_raw = nullptr;
+    runtime.Check(OgaCreateGenerator(lease.oga_model(), params.get(), &generator_raw),
+                  "create embedding generator");
+    OgaGeneratorHandle generator(generator_raw);
+    runtime.Check(OgaGenerator_AppendTokenSequences(generator.get(), sequences.get()),
+                  "append embedding tokens");
+    runtime.Check(OgaGenerator_GenerateNextToken(generator.get()),
+                  "run embedding model");
+
+    OgaTensor* tensor_raw = nullptr;
+    runtime.Check(OgaGenerator_GetOutput(generator.get(), output_name.c_str(), &tensor_raw),
+                  "read embedding output '" + output_name + "'");
+    OgaTensorHandle tensor(tensor_raw);
+
+    size_t rank = 0;
+    runtime.Check(OgaTensorGetShapeRank(tensor.get(), &rank), "read embedding tensor rank");
+    if (rank == 0) {
+      throw Error(FLM_ERROR_INTERNAL, "embedding output is a scalar",
+                  {{"output_name", output_name}});
+    }
+    std::vector<int64_t> shape(rank);
+    runtime.Check(OgaTensorGetShape(tensor.get(), shape.data(), shape.size()),
+                  "read embedding tensor shape");
+
+    size_t element_count = 1;
+    for (const int64_t dimension : shape) {
+      if (dimension <= 0 ||
+          static_cast<uint64_t>(dimension) >
+              static_cast<uint64_t>(std::numeric_limits<size_t>::max() / element_count)) {
+        throw Error(FLM_ERROR_INTERNAL, "embedding output has an invalid shape",
+                    {{"output_name", output_name}, {"shape", shape}});
+      }
+      element_count *= static_cast<size_t>(dimension);
+    }
+    const size_t vector_size = static_cast<size_t>(shape.back());
+    if (vector_size == 0 || element_count < vector_size) {
+      throw Error(FLM_ERROR_INTERNAL, "embedding output has no vector dimension",
+                  {{"output_name", output_name}, {"shape", shape}});
+    }
+
+    OgaElementType element_type = OgaElementType_undefined;
+    runtime.Check(OgaTensorGetType(tensor.get(), &element_type), "read embedding tensor type");
+    void* raw_data = nullptr;
+    runtime.Check(OgaTensorGetData(tensor.get(), &raw_data), "read embedding tensor data");
+    if (raw_data == nullptr) {
+      throw Error(FLM_ERROR_INTERNAL, "embedding output has no data",
+                  {{"output_name", output_name}});
+    }
+
+    const size_t offset = element_count - vector_size;
+    std::vector<float> values(vector_size);
+    switch (element_type) {
+      case OgaElementType_float32: {
+        const auto* data = static_cast<const float*>(raw_data);
+        std::copy(data + offset, data + offset + vector_size, values.begin());
+        break;
+      }
+      case OgaElementType_float16: {
+        const auto* data = static_cast<const uint16_t*>(raw_data);
+        for (size_t i = 0; i < vector_size; ++i) {
+          values[i] = Float16ToFloat32(data[offset + i]);
+        }
+        break;
+      }
+      case OgaElementType_bfloat16: {
+        const auto* data = static_cast<const uint16_t*>(raw_data);
+        for (size_t i = 0; i < vector_size; ++i) {
+          values[i] = BFloat16ToFloat32(data[offset + i]);
+        }
+        break;
+      }
+      case OgaElementType_float64: {
+        const auto* data = static_cast<const double*>(raw_data);
+        for (size_t i = 0; i < vector_size; ++i) {
+          values[i] = static_cast<float>(data[offset + i]);
+        }
+        break;
+      }
+      default:
+        throw Error(FLM_ERROR_NOT_IMPLEMENTED,
+                    "embedding output uses an unsupported tensor type",
+                    {{"output_name", output_name}, {"element_type", static_cast<int>(element_type)}});
+    }
+
+    if (normalize) {
+      double norm_squared = 0.0;
+      for (const float value : values) {
+        norm_squared += static_cast<double>(value) * static_cast<double>(value);
+      }
+      if (norm_squared > 0.0) {
+        const float inverse_norm = static_cast<float>(1.0 / std::sqrt(norm_squared));
+        for (float& value : values) {
+          value *= inverse_norm;
+        }
+      }
+    }
+
+    if (dimensions == 0) {
+      dimensions = vector_size;
+    } else if (dimensions != vector_size) {
+      throw Error(FLM_ERROR_INTERNAL, "embedding dimensions changed between inputs",
+                  {{"expected", dimensions}, {"actual", vector_size}, {"index", input_index}});
+    }
+    embeddings.push_back(std::move(values));
+    context.ReportProgress(
+        static_cast<float>(input_index + 1) / static_cast<float>(inputs->size()) * 100.0F,
+        "embedding");
+  }
+
+  return nlohmann::json{{"embeddings", std::move(embeddings)},
+                        {"dimensions", dimensions}};
 }
 
 /* ------------------------------------------------------------------------- */
