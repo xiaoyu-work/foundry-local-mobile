@@ -1,0 +1,14 @@
+pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+plugins { id("com.facebook.react.settings") }
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'com.microsoft.foundrylocal.example'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')
+
+// The SDK is not published to Maven yet. Resolve the coordinate used by the
+// React Native binding to the sibling Kotlin SDK for this repository example.
+includeBuild('../../../bindings/android') {
+    dependencySubstitution {
+        substitute module('com.microsoft.ai.foundry.local:foundry-local-mobile') using project(':')
+    }
+}
