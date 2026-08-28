@@ -264,9 +264,22 @@ harvest_oga_framework() {
     local install_dir="${OUTPUT_DIR}/install/${slice_id}"
     local oga_fw_dir="${install_dir}/${OGA_FRAMEWORK_NAME}.framework"
 
-    # Look for a produced .framework first (Xcode + BUILD_APPLE_FRAMEWORK=ON).
-    local produced_oga_fw
-    produced_oga_fw="$(find "${build_dir}" -type d -name "${OGA_FRAMEWORK_NAME}.framework" -print -quit 2>/dev/null || true)"
+    # OGA creates an empty static-framework skeleton during configure as well
+    # as the real Xcode product. Select by binary, not by the first directory
+    # name returned by find.
+    local produced_oga_binary produced_oga_fw
+    produced_oga_binary="$(find "${build_dir}" -type f \
+        -path "*/${OGA_FRAMEWORK_NAME}.framework/${OGA_FRAMEWORK_NAME}" \
+        -print -quit 2>/dev/null || true)"
+    if [[ -z "${produced_oga_binary}" ]]; then
+        produced_oga_binary="$(find "${build_dir}" -type f \
+            -path "*/${OGA_FRAMEWORK_NAME}.framework/*" \
+            -name "${OGA_FRAMEWORK_NAME}" -print -quit 2>/dev/null || true)"
+    fi
+    produced_oga_fw=""
+    if [[ -n "${produced_oga_binary}" ]]; then
+        produced_oga_fw="${produced_oga_binary%%.framework/*}.framework"
+    fi
     if [[ -n "${produced_oga_fw}" ]]; then
         rm -rf "${oga_fw_dir}"
         mkdir -p "$(dirname "${oga_fw_dir}")"
