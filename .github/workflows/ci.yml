@@ -813,6 +813,33 @@ jobs:
           fi
           echo "OK: $(wc -l < "${RUNNER_TEMP}/spec.txt") spec methods, all implemented."
 
+      - name: Validate the React Native example
+        working-directory: samples/react-native
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm run lint
+          npm test -- --runInBand
+
+      - name: Build the React Native example APK
+        working-directory: samples/react-native/android
+        run: ./gradlew --no-daemon --console=plain assembleDebug
+
+      - name: Verify the React Native example APK
+        run: |
+          set -euo pipefail
+          apk=samples/react-native/android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "${apk}" || { echo "::error::React Native example APK missing"; exit 1; }
+          libs=$(unzip -l "${apk}" | awk '/lib\/.*\.so$/ {print $4}' | sort -u)
+          for abi in arm64-v8a x86_64; do
+            for so in libfoundry_local_mobile.so libfoundry_local_mobile_jni.so libc++_shared.so libonnxruntime-genai.so libonnxruntime.so; do
+              if ! grep -qx "lib/${abi}/${so}" <<<"${libs}"; then
+                echo "::error::React Native example APK missing lib/${abi}/${so}"
+                exit 1
+              fi
+            done
+          done
+
   # ---------------------------------------------------------------------------
   # Linux type-check of the Swift binding's Foundation subset. Runs against
   # the real C ABI headers under core/include via a hand-written module map.
@@ -951,6 +978,14 @@ jobs:
             -scheme FoundryLocal \
             -destination 'generic/platform=iOS'
         working-directory: bindings/ios
+
+      - name: Build the SwiftUI example app
+        run: |
+          xcodebuild build \
+            -project samples/ios/FoundryLocalExample.xcodeproj \
+            -scheme FoundryLocalExample \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Upload XCFramework
         uses: actions/upload-artifact@v4

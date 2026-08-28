@@ -219,10 +219,15 @@ bindings/
   ios/                Swift Package: C interop + Swift API
   flutter/            Dart FFI plugin
   react-native/       TurboModule (Kotlin + Swift) + TypeScript API
-samples/              Runnable sample apps (Android today; more as bindings mature)
+samples/              Android, SwiftUI iOS and React Native example apps
+bindings/flutter/example/
+                      Flutter example app (standard plugin layout)
 scripts/              Cross-compilation and packaging scripts
 docs/                 Architecture, model directory requirements, platform notes
 ```
+
+All four public SDKs have runnable examples that load a caller-provided model
+directory and stream chat output; see [samples/README.md](samples/README.md).
 
 ## Documentation
 
