@@ -34,8 +34,8 @@ android {
         namespace 'com.microsoft.ai.foundry.local.mobile'
     }
 
-    compileSdk 34
-    ndkVersion "26.1.10909125"
+    compileSdk 35
+    ndkVersion "27.0.12077973"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -46,9 +46,7 @@ android {
     }
 
     defaultConfig {
-        // 21 is the practical floor for ONNX Runtime on Android; going lower is
-        // not viable because the runtime uses APIs added in Lollipop.
-        minSdk 21
+        minSdk 26
 
         if (!bundledSdkAar.exists()) {
             externalNativeBuild {

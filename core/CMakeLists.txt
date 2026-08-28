@@ -188,7 +188,19 @@ if(ANDROID)
     # OGA links ONNX Runtime dynamically on Android. Copy the matching ABI runtime
     # next to this target so AGP packages a complete set of shared libraries.
     if(TARGET onnxruntime-genai)
-        get_target_property(_oga_link_dirs onnxruntime-genai LINK_DIRECTORIES)
+        # Source builds attach the ORT directory to OGA's object target; the
+        # final shared target only consumes that object target.
+        set(_oga_runtime_target onnxruntime-genai)
+        if(TARGET onnxruntime-genai-obj)
+            set(_oga_runtime_target onnxruntime-genai-obj)
+        endif()
+        get_target_property(_oga_link_dirs ${_oga_runtime_target} LINK_DIRECTORIES)
+        get_directory_property(_oga_ort_lib_dir
+            DIRECTORY "${FLM_ORT_GENAI_ROOT}"
+            DEFINITION ORT_LIB_DIR)
+        if(_oga_ort_lib_dir)
+            list(APPEND _oga_link_dirs "${_oga_ort_lib_dir}")
+        endif()
         set(_ort_android_runtime "")
         foreach(_dir IN LISTS _oga_link_dirs)
             if(EXISTS "${_dir}/libonnxruntime.so")

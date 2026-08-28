@@ -158,7 +158,10 @@ build_slice() {
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
     )
     if [[ "${slice_id}" == ios-* ]]; then
-        cmake_args+=(-DIOS=ON)
+        cmake_args+=(
+            -DCMAKE_SYSTEM_NAME=iOS
+            -DIOS=ON
+        )
     else
         cmake_args+=(-DIOS=OFF)
     fi

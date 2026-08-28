@@ -11,7 +11,7 @@ android {
     // Match the NDK the foundry_local_mobile plugin's ExternalNativeBuild
     // pins. Leaving this at Flutter's default surfaced as a Gradle warning
     // during the APK build; setting it here is the recommended fix.
-    ndkVersion = "26.1.10909125"
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
