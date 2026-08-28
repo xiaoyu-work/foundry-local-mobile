@@ -4,6 +4,7 @@
 #include "session.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -43,6 +44,110 @@ constexpr GenOptionMapping kGenOptions[] = {
     {"seed", "random_seed", true},
     {"do_sample", "do_sample", false},
 };
+
+struct LanguageIdMapping {
+  std::string_view tag;
+  int id;
+};
+
+// NVIDIA Nemotron Speech prompt IDs, matching the canonical mapping used by
+// the pinned OGA streaming-ASR example.
+constexpr LanguageIdMapping kNemotronLanguageIds[] = {
+    {"en", 0},
+    {"en-us", 0},
+    {"en-gb", 1},
+    {"es-es", 2},
+    {"es", 3},
+    {"es-us", 3},
+    {"zh-cn", 4},
+    {"hi", 6},
+    {"hi-in", 6},
+    {"ar", 7},
+    {"ar-ar", 7},
+    {"fr", 8},
+    {"fr-fr", 8},
+    {"de", 9},
+    {"de-de", 9},
+    {"ja", 10},
+    {"ja-jp", 10},
+    {"ru", 11},
+    {"ru-ru", 11},
+    {"pt-br", 12},
+    {"pt", 13},
+    {"pt-pt", 13},
+    {"ko", 14},
+    {"ko-kr", 14},
+    {"it", 15},
+    {"it-it", 15},
+    {"nl", 16},
+    {"nl-nl", 16},
+    {"pl", 17},
+    {"pl-pl", 17},
+    {"tr", 18},
+    {"tr-tr", 18},
+    {"uk", 19},
+    {"uk-ua", 19},
+    {"ro", 20},
+    {"ro-ro", 20},
+    {"el", 21},
+    {"el-gr", 21},
+    {"cs", 22},
+    {"cs-cz", 22},
+    {"hu", 23},
+    {"hu-hu", 23},
+    {"sv", 24},
+    {"sv-se", 24},
+    {"da", 25},
+    {"da-dk", 25},
+    {"fi", 26},
+    {"fi-fi", 26},
+    {"sk", 28},
+    {"sk-sk", 28},
+    {"hr", 29},
+    {"hr-hr", 29},
+    {"bg", 30},
+    {"bg-bg", 30},
+    {"lt", 31},
+    {"lt-lt", 31},
+    {"th", 32},
+    {"th-th", 32},
+    {"vi", 33},
+    {"vi-vn", 33},
+    {"et", 60},
+    {"et-ee", 60},
+    {"lv", 61},
+    {"lv-lv", 61},
+    {"sl", 62},
+    {"sl-si", 62},
+    {"he", 64},
+    {"he-il", 64},
+    {"fr-ca", 100},
+    {"auto", 101},
+    {"mt", 102},
+    {"mt-mt", 102},
+    {"nb", 103},
+    {"nb-no", 103},
+    {"nn", 104},
+    {"nn-no", 104},
+};
+
+int ResolveNemotronLanguageId(std::string_view language) {
+  std::string normalized;
+  normalized.reserve(language.size());
+  for (const char ch : language) {
+    const unsigned char value = static_cast<unsigned char>(ch);
+    normalized.push_back(ch == '_' ? '-' : static_cast<char>(std::tolower(value)));
+  }
+
+  for (const auto& mapping : kNemotronLanguageIds) {
+    if (mapping.tag == normalized) return mapping.id;
+  }
+
+  throw Error(FLM_ERROR_INVALID_ARGUMENT,
+              "unsupported streaming transcription language '" + std::string(language) +
+                  "'; provide a supported BCP-47 tag such as 'en', 'en-US', "
+                  "'zh-CN', or 'auto'");
+}
 
 /* ------------------------------------------------------------------------- */
 /* Multimodal content helpers                                                 */
@@ -1385,12 +1490,13 @@ nlohmann::json Session::TranscribeStreaming(const nlohmann::json& request, JobCo
                 "create streaming audio generator");
   OgaGeneratorHandle generator(gen_raw);
 
-  // Optionally set language for models that support it (e.g. Nemotron).
+  // Nemotron accepts a numeric prompt ID rather than a BCP-47 tag.
   const std::string language = request.value("language", std::string());
   if (!language.empty()) {
-    OgaResult* lang_result = OgaGenerator_SetRuntimeOption(generator.get(), "lang_id", language.c_str());
-    // Silently ignore — not all models support this.
-    if (lang_result) OgaDestroyResult(lang_result);
+    const std::string language_id = std::to_string(ResolveNemotronLanguageId(language));
+    runtime.Check(
+        OgaGenerator_SetRuntimeOption(generator.get(), "lang_id", language_id.c_str()),
+        "set streaming transcription language");
   }
 
   // Create tokenizer stream for incremental decoding.
