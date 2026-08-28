@@ -7,12 +7,12 @@
 #   <output>/FoundryLocalMobile.xcframework/
 #     ios-arm64/FoundryLocalMobile.framework/
 #     ios-arm64_x86_64-simulator/FoundryLocalMobile.framework/
-#     [macos-arm64_x86_64/FoundryLocalMobile.framework/]  (only with --macos)
+#     [macos-arm64/FoundryLocalMobile.framework/]  (only with --macos)
 #
 #   <output>/onnxruntime-genai.xcframework/
 #     ios-arm64/onnxruntime-genai.framework/
 #     ios-arm64_x86_64-simulator/onnxruntime-genai.framework/
-#     [macos-arm64_x86_64/onnxruntime-genai.framework/]  (only with --macos)
+#     [macos-arm64/onnxruntime-genai.framework/]  (only with --macos)
 #
 # FoundryLocalMobile links against onnxruntime-genai at runtime; both must be
 # shipped together. ONNX Runtime is linked/embedded inside OGA's framework
@@ -51,7 +51,7 @@ Options:
   --build-type <type>   CMake build type. Default: ${BUILD_TYPE}.
   --ios-min <ver>       iOS deployment target. Default: ${IOS_DEPLOYMENT_TARGET}.
   --macos-min <ver>     macOS deployment target. Default: ${MACOS_DEPLOYMENT_TARGET}.
-  --macos               Also build a macos-arm64_x86_64 slice.
+  --macos               Also build a macos-arm64 slice.
   --clean               Remove <output> before building.
   --jobs <n>            Parallel build jobs. Default: detected CPU count.
   --verbose             Show every command.
@@ -405,41 +405,15 @@ OGA_XCFRAMEWORK_ARGS=(
 
 if [[ ${INCLUDE_MACOS} -eq 1 ]]; then
     log "building macOS slice (arm64)"
-    MACOS_ARM64_FRAMEWORK="$(build_slice \
+    MACOS_FRAMEWORK="$(build_slice \
         "macos-arm64" \
         "${MACOSX_SDK_PATH}" \
         "arm64" \
         "CMAKE_OSX_DEPLOYMENT_TARGET" \
         "${MACOS_DEPLOYMENT_TARGET}")"
-    MACOS_ARM64_OGA_FRAMEWORK="$(harvest_oga_framework "macos-arm64")"
-
-    log "building macOS slice (x86_64)"
-    MACOS_X86_FRAMEWORK="$(build_slice \
-        "macos-x86_64" \
-        "${MACOSX_SDK_PATH}" \
-        "x86_64" \
-        "CMAKE_OSX_DEPLOYMENT_TARGET" \
-        "${MACOS_DEPLOYMENT_TARGET}")"
-    MACOS_X86_OGA_FRAMEWORK="$(harvest_oga_framework "macos-x86_64")"
-
-    MACOS_FAT_DIR="${OUTPUT_DIR}/install/macos-fat"
-    MACOS_FAT_FRAMEWORK="${MACOS_FAT_DIR}/${FRAMEWORK_NAME}.framework"
-    MACOS_FAT_OGA_FRAMEWORK="${MACOS_FAT_DIR}/${OGA_FRAMEWORK_NAME}.framework"
-    rm -rf "${MACOS_FAT_DIR}"
-    mkdir -p "${MACOS_FAT_DIR}"
-    cp -R "${MACOS_ARM64_FRAMEWORK}" "${MACOS_FAT_FRAMEWORK}"
-    lipo -create \
-        "${MACOS_ARM64_FRAMEWORK}/${FRAMEWORK_NAME}" \
-        "${MACOS_X86_FRAMEWORK}/${FRAMEWORK_NAME}" \
-        -output "${MACOS_FAT_FRAMEWORK}/${FRAMEWORK_NAME}"
-    cp -R "${MACOS_ARM64_OGA_FRAMEWORK}" "${MACOS_FAT_OGA_FRAMEWORK}"
-    lipo -create \
-        "${MACOS_ARM64_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}" \
-        "${MACOS_X86_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}" \
-        -output "${MACOS_FAT_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}"
-
-    XCFRAMEWORK_ARGS+=(-framework "${MACOS_FAT_FRAMEWORK}")
-    OGA_XCFRAMEWORK_ARGS+=(-framework "${MACOS_FAT_OGA_FRAMEWORK}")
+    MACOS_OGA_FRAMEWORK="$(harvest_oga_framework "macos-arm64")"
+    XCFRAMEWORK_ARGS+=(-framework "${MACOS_FRAMEWORK}")
+    OGA_XCFRAMEWORK_ARGS+=(-framework "${MACOS_OGA_FRAMEWORK}")
 fi
 
 XCFRAMEWORK_OUT="${OUTPUT_DIR}/${FRAMEWORK_NAME}.xcframework"

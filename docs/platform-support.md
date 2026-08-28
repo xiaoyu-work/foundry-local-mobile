@@ -10,7 +10,7 @@ implements it.
 |---|---|---|---|---|
 | **Android** | 8.0 (API 26) | `arm64-v8a`, `x86_64` | QNN *(if Hexagon DSP present)*, XNNPACK, CPU | Qualcomm Hexagon NPU |
 | **iOS / iPadOS** | 15.0 | `arm64` device; `arm64` + `x86_64` simulator | CoreML, XNNPACK, CPU | Apple Neural Engine (A12+) |
-| **macOS** *(developer target only)* | 12.0 | `arm64`, `x86_64` | CoreML *(Apple silicon)*, XNNPACK, CPU | ANE on Apple silicon |
+| **macOS** *(developer target only)* | 12.0 | `arm64` | CoreML, XNNPACK, CPU | Apple Neural Engine |
 | **Linux / Windows** *(dev builds only)* | — | native | CPU | — |
 
 Every binding — Kotlin, Swift, Dart, TypeScript — sits on the same core, so the
@@ -82,7 +82,7 @@ survives in either APK.
 |---|---|---|
 | `ios-arm64` | `arm64` | Physical iPhone / iPad |
 | `ios-arm64_x86_64-simulator` | `arm64` + `x86_64` (lipo'd) | Xcode Simulator on Apple silicon and Intel Macs |
-| `macos-arm64_x86_64` *(optional, `--macos`)* | `arm64` + `x86_64` (lipo'd) | Apple silicon and Intel Macs |
+| `macos-arm64` *(optional, `--macos`)* | `arm64` | Apple silicon Macs |
 
 Simulator slices are combined into one fat framework because
 `xcodebuild -create-xcframework` refuses to accept two frameworks that share the same

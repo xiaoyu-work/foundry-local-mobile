@@ -24,7 +24,7 @@ compatible-model and physical-device validation.
 | Flutter | `>=3.13.0` |
 | Android | minSdk 26, NDK 27, 64-bit ARM |
 | iOS | 15.0+ |
-| macOS | 12.0+ |
+| macOS | 12.0+ on Apple silicon |
 
 ## Install
 

@@ -6,7 +6,7 @@ The SDK is **path-only**: callers provide a local model directory and the SDK
 loads it directly through ONNX Runtime GenAI. There is no catalog, no SDK-managed
 download, and no transport layer.
 
-- iOS 15 · iPadOS 15 · Mac Catalyst 15 · macOS 12 · visionOS 1
+- iOS 15 · iPadOS 15 · Mac Catalyst 15 · macOS 12 on Apple silicon · visionOS 1
 - Swift 5.9+, Xcode 15+
 - Swift 6 strict-concurrency clean
 

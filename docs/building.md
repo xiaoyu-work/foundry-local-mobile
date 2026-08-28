@@ -146,12 +146,12 @@ Output:
 build/apple/FoundryLocalMobile.xcframework/
 ├── ios-arm64/FoundryLocalMobile.framework/
 ├── ios-arm64_x86_64-simulator/FoundryLocalMobile.framework/
-└── [macos-arm64_x86_64/FoundryLocalMobile.framework/]  (only with --macos)
+└── [macos-arm64/FoundryLocalMobile.framework/]  (only with --macos)
 
 build/apple/onnxruntime-genai.xcframework/
 ├── ios-arm64/onnxruntime-genai.framework/
 ├── ios-arm64_x86_64-simulator/onnxruntime-genai.framework/
-└── [macos-arm64_x86_64/onnxruntime-genai.framework/]  (only with --macos)
+└── [macos-arm64/onnxruntime-genai.framework/]  (only with --macos)
 ```
 
 Each framework contains the public headers under `Headers/foundry_local_mobile/` and a
