@@ -3,24 +3,20 @@
 
 import Flutter
 import Foundation
-import Network
 import UIKit
 
 /// Method / event channel host for the Flutter FFI plugin on iOS.
 ///
-/// Everything on the data path (chat completion, streaming, embeddings,
-/// downloads) goes through the C ABI over `dart:ffi`. This class exists solely
+/// Everything on the data path (chat completion, streaming, embeddings) goes
+/// through the C ABI over `dart:ffi`. This class exists solely
 /// to forward the OS notifications Dart cannot observe on its own:
 ///
 ///   * app foreground / background transitions,
 ///   * `didReceiveMemoryWarning`,
 ///   * low-power mode changes,
-///   * thermal-state transitions,
-///   * cellular vs Wi-Fi transitions.
+///   * thermal-state transitions.
 public class FoundryLocalMobilePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var eventSink: FlutterEventSink?
-    private let monitor = NWPathMonitor()
-    private let monitorQueue = DispatchQueue(label: "com.microsoft.ai.foundry.local.mobile.monitor")
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = FoundryLocalMobilePlugin()
@@ -77,15 +73,10 @@ public class FoundryLocalMobilePlugin: NSObject, FlutterPlugin, FlutterStreamHan
         nc.addObserver(self, selector: #selector(onThermalChange),
                        name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
 
-        monitor.pathUpdateHandler = { [weak self] path in
-            self?.emit(path.isExpensive ? "network_metered" : "network_unmetered")
-        }
-        monitor.start(queue: monitorQueue)
     }
 
     private func detachObservers() {
         NotificationCenter.default.removeObserver(self)
-        monitor.cancel()
     }
 
     @objc private func onMemoryWarning() { emit("memory_warning") }
@@ -112,11 +103,6 @@ public class FoundryLocalMobilePlugin: NSObject, FlutterPlugin, FlutterStreamHan
     }
 
     private func emitInitialState() {
-        // Best-effort synchronous check for the initial network state so the
-        // core knows whether background downloads are allowed at startup.
-        if monitor.currentPath.status == .satisfied {
-            emit(monitor.currentPath.isExpensive ? "network_metered" : "network_unmetered")
-        }
         if ProcessInfo.processInfo.isLowPowerModeEnabled {
             emit("low_power")
         }

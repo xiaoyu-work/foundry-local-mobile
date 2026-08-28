@@ -241,9 +241,7 @@ enum FlmLifecycleEventKind {
   memoryWarning(raw.FlmLifecycleEvent.memoryWarning),
   memoryCritical(raw.FlmLifecycleEvent.memoryCritical),
   lowPower(raw.FlmLifecycleEvent.lowPower),
-  thermalThrottling(raw.FlmLifecycleEvent.thermalThrottling),
-  networkMetered(raw.FlmLifecycleEvent.networkMetered),
-  networkUnmetered(raw.FlmLifecycleEvent.networkUnmetered);
+  thermalThrottling(raw.FlmLifecycleEvent.thermalThrottling);
 
   const FlmLifecycleEventKind(this.code);
   final int code;

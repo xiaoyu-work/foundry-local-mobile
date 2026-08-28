@@ -33,7 +33,7 @@ flutter:
       android:
         # Pure FFI plugin: no Kotlin/Java glue on the data path. A small MethodChannel is
         # registered by the Kotlin class below for things Dart cannot ask the OS directly
-        # (sandbox paths, lifecycle, memory pressure, connectivity).
+        # (sandbox paths, lifecycle, memory pressure, and power state).
         package: com.microsoft.ai.foundry.local.mobile
         pluginClass: FoundryLocalMobilePlugin
         ffiPlugin: true

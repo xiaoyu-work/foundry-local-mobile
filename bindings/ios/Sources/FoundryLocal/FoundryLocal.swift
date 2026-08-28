@@ -17,11 +17,7 @@ public final class FoundryLocal: @unchecked Sendable {
     public let handle: flm_manager
 
     private let released = ManagedAtomicBool()
-    // The lifecycle observer wraps NWPathMonitor, which comes from the Network
-    // framework and only exists on Apple platforms. The guard is confined to this
-    // stored property and its two use sites so the rest of the class stays checkable
-    // by the Linux CI job.
-    #if canImport(Network)
+    #if canImport(Darwin)
     private let lifecycle: LifecycleObserver
     #endif
 
@@ -45,7 +41,7 @@ public final class FoundryLocal: @unchecked Sendable {
             throw FoundryLocalError(code: .invalidHandle, message: "manager handle must not be zero")
         }
         self.handle = handle
-        #if canImport(Network)
+        #if canImport(Darwin)
         self.lifecycle = LifecycleObserver(manager: handle)
         #endif
     }
@@ -61,7 +57,7 @@ public final class FoundryLocal: @unchecked Sendable {
     /// the main queue when a large model is loaded.
     public func close() {
         if released.exchange(true) { return }
-        #if canImport(Network)
+        #if canImport(Darwin)
         lifecycle.stop()
         #endif
         _ = flm_manager_shutdown(handle)
@@ -230,8 +226,6 @@ public enum LifecycleEvent: Sendable {
     case memoryCritical
     case lowPower
     case thermalThrottling
-    case networkMetered
-    case networkUnmetered
 
     var cValue: flm_lifecycle_event {
         switch self {
@@ -241,8 +235,6 @@ public enum LifecycleEvent: Sendable {
         case .memoryCritical: return FLM_LIFECYCLE_MEMORY_CRITICAL
         case .lowPower: return FLM_LIFECYCLE_LOW_POWER
         case .thermalThrottling: return FLM_LIFECYCLE_THERMAL_THROTTLING
-        case .networkMetered: return FLM_LIFECYCLE_NETWORK_METERED
-        case .networkUnmetered: return FLM_LIFECYCLE_NETWORK_UNMETERED
         }
     }
 }

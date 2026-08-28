@@ -11,7 +11,7 @@ network required for inference. The plugin ships:
 - local model loading from caller-owned directories,
 - streaming chat and multi-turn history,
 - batch/streaming audio transcription and text embeddings,
-- OS-level lifecycle bridging (memory pressure, thermal, connectivity).
+- OS-level lifecycle bridging (memory pressure, thermal, low-power state).
 
 Audio, embedding, multimodal and structured tool-call paths still require
 compatible-model and physical-device validation.
@@ -123,11 +123,11 @@ The plugin registers a `WidgetsBindingObserver` and a small
 - `didHaveMemoryPressure`,
 - Android `ComponentCallbacks2.TRIM_MEMORY_*`,
 - iOS `didReceiveMemoryWarning` and thermal state,
-- low-power mode,
-- metered vs unmetered connectivity.
+- low-power mode.
 
 They map onto `flm_manager_notify_lifecycle`. The data path never uses the
-method channel; only these low-frequency signals do.
+method channel; only these low-frequency signals do. The plugin does not
+request Android network permissions.
 
 ## API reference
 

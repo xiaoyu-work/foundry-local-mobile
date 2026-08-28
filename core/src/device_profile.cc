@@ -19,10 +19,6 @@ bool g_static_initialized = false;
 // so we stay well clear of the limit rather than optimistically filling RAM.
 constexpr double kMemoryBudgetFraction = 0.45;
 
-// Never download more than this fraction of free storage without asking. Filling a
-// user's phone is a support ticket, not a feature.
-constexpr double kStorageBudgetFraction = 0.5;
-
 }  // namespace
 
 const char* ToString(ThermalState state) noexcept {
@@ -33,16 +29,6 @@ const char* ToString(ThermalState state) noexcept {
     case ThermalState::kCritical: return "critical";
   }
   return "nominal";
-}
-
-const char* ToString(NetworkState state) noexcept {
-  switch (state) {
-    case NetworkState::kUnknown: return "unknown";
-    case NetworkState::kNone: return "none";
-    case NetworkState::kMetered: return "metered";
-    case NetworkState::kUnmetered: return "unmetered";
-  }
-  return "unknown";
 }
 
 const char* ToString(flm_device device) noexcept {
@@ -89,7 +75,9 @@ nlohmann::json DeviceProfile::ToJson() const {
       {"has_gpu", has_gpu},
       {"thermal_state", ToString(thermal_state)},
       {"low_power_mode", low_power_mode},
-      {"network", ToString(network)},
+      // Retained in the JSON schema for binding compatibility. This SDK never
+      // accesses the network, so it deliberately does not monitor connectivity.
+      {"network", "unknown"},
       {"max_model_bytes", MaxModelBytes()},
       {"execution_providers", eps},
   };
@@ -109,27 +97,6 @@ int64_t DeviceProfile::MaxModelBytes() const {
     budget /= 2;
   }
   return budget;
-}
-
-bool DeviceProfile::CanDownloadSilently(int64_t bytes) const {
-  if (bytes <= 0) {
-    return true;
-  }
-  if (network == NetworkState::kNone) {
-    return false;
-  }
-  if (network == NetworkState::kMetered || network == NetworkState::kUnknown) {
-    // Anything beyond a trivial fetch on a metered link needs consent.
-    constexpr int64_t kMeteredSilentLimit = 20LL * 1024 * 1024;
-    if (bytes > kMeteredSilentLimit) {
-      return false;
-    }
-  }
-  if (available_storage_bytes > 0 &&
-      bytes > static_cast<int64_t>(static_cast<double>(available_storage_bytes) * kStorageBudgetFraction)) {
-    return false;
-  }
-  return true;
 }
 
 DeviceProfile GetDeviceProfile() {

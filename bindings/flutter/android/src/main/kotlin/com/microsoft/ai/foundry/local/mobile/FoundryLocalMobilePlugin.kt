@@ -3,14 +3,9 @@
 
 package com.microsoft.ai.foundry.local.mobile
 
-import android.app.Activity
-import android.app.Application
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.res.Configuration
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
 import android.os.PowerManager
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
@@ -20,14 +15,13 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * Method / event channel host for the FFI plugin.
  *
- * The plugin is [ffiPlugin: true], meaning the data path — chat streaming, downloads,
+ * The plugin is [ffiPlugin: true], meaning the data path — chat streaming,
  * embeddings — bypasses this class entirely and goes through the shared native
  * library over dart:ffi. This class exists only to answer questions Dart cannot ask
  * the OS directly:
  *
  *   * sandbox paths (`getSandboxDirectory`),
  *   * memory-pressure notifications (ComponentCallbacks2),
- *   * metered / unmetered network transitions (ConnectivityManager),
  *   * low-power-mode transitions (PowerManager).
  *
  * The channel surface is intentionally narrow. Everything here is a Dart-side
@@ -45,7 +39,6 @@ class FoundryLocalMobilePlugin :
     private var appContext: Context? = null
 
     private var eventSink: EventChannel.EventSink? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var powerReceiver: android.content.BroadcastReceiver? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -69,7 +62,6 @@ class FoundryLocalMobilePlugin :
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         appContext?.unregisterComponentCallbacks(this)
-        detachConnectivity()
         detachPowerReceiver()
         appContext = null
     }
@@ -93,20 +85,18 @@ class FoundryLocalMobilePlugin :
     }
 
     // ---------------------------------------------------------------------------
-    // EventChannel — connectivity + power + memory
+    // EventChannel — power + memory
     // ---------------------------------------------------------------------------
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         eventSink = events
         val ctx = appContext ?: return
-        attachConnectivity(ctx)
         attachPowerReceiver(ctx)
         emitInitialState(ctx)
     }
 
     override fun onCancel(arguments: Any?) {
         eventSink = null
-        detachConnectivity()
         detachPowerReceiver()
     }
 
@@ -116,45 +106,9 @@ class FoundryLocalMobilePlugin :
     }
 
     private fun emitInitialState(ctx: Context) {
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager?
             ?: return
-        val active = cm.activeNetwork
-        val caps = active?.let { cm.getNetworkCapabilities(it) }
-        val unmetered =
-            caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
-        emit(if (unmetered) "network_unmetered" else "network_metered")
-    }
-
-    private fun attachConnectivity(ctx: Context) {
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
-            ?: return
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                val unmetered =
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-                emit(if (unmetered) "network_unmetered" else "network_metered")
-            }
-
-            override fun onLost(network: Network) {
-                emit("network_metered")
-            }
-        }
-        try {
-            cm.registerDefaultNetworkCallback(callback)
-            networkCallback = callback
-        } catch (_: SecurityException) {
-            // ACCESS_NETWORK_STATE is declared in the manifest; a missing permission
-            // is a host-app misconfiguration. Fall back to a one-shot poll.
-            emitInitialState(ctx)
-        }
-    }
-
-    private fun detachConnectivity() {
-        val ctx = appContext ?: return
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
-            ?: return
-        networkCallback?.let { cm.unregisterNetworkCallback(it) }
-        networkCallback = null
+        if (pm.isPowerSaveMode) emit("low_power")
     }
 
     private fun attachPowerReceiver(ctx: Context) {

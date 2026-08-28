@@ -75,7 +75,7 @@ typedef enum flm_status {
   FLM_ERROR_NOT_FOUND = 5,          ///< Model, alias, variant or tool does not exist.
   FLM_ERROR_NOT_IMPLEMENTED = 6,    ///< Not supported on this platform or runtime build.
   FLM_ERROR_CANCELLED = 7,          ///< Cancelled via flm_job_cancel or a callback returning non-zero.
-  FLM_ERROR_NETWORK = 8,            ///< Catalog query or download transport failure.
+  FLM_ERROR_NETWORK = 8,            ///< Reserved compatibility status; the SDK performs no network I/O.
   FLM_ERROR_STORAGE = 9,            ///< Filesystem failure, or insufficient free space.
   FLM_ERROR_OUT_OF_MEMORY = 10,     ///< Allocation failed, or the OS refused the model's footprint.
   FLM_ERROR_INCOMPATIBLE = 11,      ///< No model-package variant is runnable on this device.
@@ -195,8 +195,8 @@ typedef enum flm_lifecycle_event {
   FLM_LIFECYCLE_MEMORY_CRITICAL = 3,     ///< Imminent termination. Unload models now.
   FLM_LIFECYCLE_LOW_POWER = 4,           ///< Low-power mode. Prefer efficiency cores / smaller variants.
   FLM_LIFECYCLE_THERMAL_THROTTLING = 5,  ///< Device is hot. Throttle or move off the NPU/GPU.
-  FLM_LIFECYCLE_NETWORK_METERED = 6,     ///< Connection became metered. Pause background downloads.
-  FLM_LIFECYCLE_NETWORK_UNMETERED = 7,   ///< Unmetered connection available. Resume downloads.
+  FLM_LIFECYCLE_NETWORK_METERED = 6,     ///< Reserved compatibility value; currently ignored.
+  FLM_LIFECYCLE_NETWORK_UNMETERED = 7,   ///< Reserved compatibility value; currently ignored.
 } flm_lifecycle_event;
 
 /* -------------------------------------------------------------------------

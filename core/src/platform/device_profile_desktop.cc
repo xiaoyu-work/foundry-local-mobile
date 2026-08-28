@@ -86,7 +86,6 @@ void FillDynamicInfo(DeviceProfile& profile) {
     profile.available_storage_bytes = static_cast<int64_t>(stats.f_bavail) * stats.f_frsize;
   }
 #endif
-  profile.network = NetworkState::kUnmetered;
 }
 
 void FillExecutionProviders(DeviceProfile& profile) {

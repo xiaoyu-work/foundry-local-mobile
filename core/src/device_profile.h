@@ -29,13 +29,6 @@ enum class ThermalState {
   kCritical = 3,  ///< Heavy throttling; avoid accelerators entirely.
 };
 
-enum class NetworkState {
-  kUnknown = 0,
-  kNone = 1,       ///< Offline. Only cached models are usable.
-  kMetered = 2,    ///< Cellular or a hotspot. Large downloads need explicit consent.
-  kUnmetered = 3,  ///< Wi-Fi or ethernet.
-};
-
 /// One execution provider the device can offer, with the priority used for scoring.
 /// Lower `priority` wins; the ordering encodes "fastest acceptable placement first".
 struct ExecutionProviderInfo {
@@ -66,7 +59,6 @@ struct DeviceProfile {
 
   ThermalState thermal_state = ThermalState::kNominal;
   bool low_power_mode = false;
-  NetworkState network = NetworkState::kUnknown;
 
   std::vector<ExecutionProviderInfo> execution_providers;
 
@@ -77,13 +69,10 @@ struct DeviceProfile {
   /// killed by the OS on load.
   int64_t MaxModelBytes() const;
 
-  /// Whether a download of `bytes` should proceed without explicit user consent, given
-  /// the current network state and free storage.
-  bool CanDownloadSilently(int64_t bytes) const;
 };
 
-/// Detect the device profile. Static fields are cached; dynamic fields (memory, thermal,
-/// network) are re-read on every call, so this is safe to poll before a large download.
+/// Detect the device profile. Static fields are cached; dynamic fields such as memory
+/// and thermal state are re-read on every call.
 ///
 /// Returned by value on purpose. The cached profile is mutated by dynamic re-reads and by
 /// lifecycle notifications from other threads, so handing out a reference would race with
@@ -113,7 +102,6 @@ void FillExecutionProviders(DeviceProfile& profile);
 }  // namespace platform
 
 const char* ToString(ThermalState state) noexcept;
-const char* ToString(NetworkState state) noexcept;
 const char* ToString(flm_device device) noexcept;
 flm_device DeviceFromString(const std::string& value) noexcept;
 

@@ -5,8 +5,8 @@
 //
 // Everything here is read from the NDK and /proc rather than through JNI, so the core
 // stays usable from a pure-native context (a Flutter isolate, a background service)
-// without needing a JNIEnv. The exceptions are thermal state and network metering, which
-// have no NDK equivalent; the Kotlin binding observes them and pushes updates down.
+// without needing a JNIEnv. Thermal and low-power state have no NDK equivalent, so the
+// Kotlin binding observes them and pushes updates down.
 
 #include "../device_profile.h"
 

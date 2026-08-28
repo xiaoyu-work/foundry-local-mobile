@@ -4,14 +4,11 @@
 import Cocoa
 import FlutterMacOS
 import Foundation
-import Network
 
 /// Method / event channel host on macOS. Same responsibilities as the iOS
 /// plugin, but uses AppKit lifecycle rather than UIKit.
 public class FoundryLocalMobilePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var eventSink: FlutterEventSink?
-    private let monitor = NWPathMonitor()
-    private let monitorQueue = DispatchQueue(label: "com.microsoft.ai.foundry.local.mobile.monitor")
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = FoundryLocalMobilePlugin()
@@ -58,16 +55,10 @@ public class FoundryLocalMobilePlugin: NSObject, FlutterPlugin, FlutterStreamHan
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(onThermalChange),
                        name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
-
-        monitor.pathUpdateHandler = { [weak self] path in
-            self?.emit(path.isExpensive ? "network_metered" : "network_unmetered")
-        }
-        monitor.start(queue: monitorQueue)
     }
 
     private func detachObservers() {
         NotificationCenter.default.removeObserver(self)
-        monitor.cancel()
     }
 
     @objc private func onThermalChange() {
@@ -86,8 +77,6 @@ public class FoundryLocalMobilePlugin: NSObject, FlutterPlugin, FlutterStreamHan
     }
 
     private func emitInitialState() {
-        if monitor.currentPath.status == .satisfied {
-            emit(monitor.currentPath.isExpensive ? "network_metered" : "network_unmetered")
-        }
+        onThermalChange()
     }
 }

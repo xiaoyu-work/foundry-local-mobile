@@ -826,9 +826,9 @@ jobs:
   # enum used as an Encodable field without conforming to Codable, a whole
   # file that referenced C symbols with no `import FoundryLocalMobile`).
   #
-  # What this cannot catch: anything UIKit- or Network-framework-dependent.
+  # What this cannot catch: anything Darwin- or UIKit-dependent.
   # `LifecycleObserver.swift` and one stored property of `FoundryLocal` sit
-  # behind `#if canImport(Network)` and only get compiled by the macOS job.
+  # behind `#if canImport(Darwin)` and only get compiled by the macOS job.
   # ---------------------------------------------------------------------------
   ios-binding-linux:
     name: bindings / ios linux type-check

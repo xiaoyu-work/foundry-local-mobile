@@ -201,12 +201,11 @@ and risking an OS kill.
   models to this ABI.
 * **Windows and Linux are not shipping targets.** They compile so the core can be
   built and inspected on a developer's laptop and by CI. There is no packaging story
-  for either, and thermal, low-power and network state are not detected there.
-* **Thermal state, low-power mode and network metering** are pushed down from the
-  binding on both platforms (`flm_manager_notify_lifecycle`). If a binding does not
-  push them, the core assumes nominal thermal, no low-power mode, and an unknown
-  network. These signals currently affect only the memory-budget calculation above;
-  there is no download behavior for them to influence.
+  for either, and thermal and low-power state are not detected there.
+* **Thermal state and low-power mode** are pushed down from the binding on both
+  platforms (`flm_manager_notify_lifecycle`). If a binding does not push them, the
+  core assumes nominal thermal and no low-power mode. Connectivity is deliberately
+  not monitored because the SDK never performs network I/O.
 
 ## References
 

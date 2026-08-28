@@ -6,10 +6,6 @@ package com.microsoft.ai.foundry.local.mobile.lifecycle
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.res.Configuration
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -18,13 +14,12 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Wires OS lifecycle notifications and network changes into
+ * Wires OS lifecycle and memory-pressure notifications into
  * `flm_manager_notify_lifecycle`.
  *
  * The core needs foreground/background transitions to auto-unload models
  * before iOS jetsam or Android low-memory kills the process. It needs memory
- * warnings to trim caches. It also consumes metered/unmetered transitions from
- * the platform, and mapping them is a one-time job.
+ * warnings to trim caches.
  *
  * There is one bridge instance per process, and it multiplexes into every
  * live [FoundryLocal]. Registration is idempotent: if this class is not
@@ -58,7 +53,6 @@ public class LifecycleBridge private constructor(private val appContext: Context
             // through to the ComponentCallbacks2 path, which still works.
         }
         appContext.registerComponentCallbacks(this)
-        startNetworkMonitor()
     }
 
     // ---------------------------------------------------------------
@@ -100,29 +94,6 @@ public class LifecycleBridge private constructor(private val appContext: Context
 
     override fun onConfigurationChanged(newConfig: Configuration) {}
 
-    // ---------------------------------------------------------------
-    // Network
-    // ---------------------------------------------------------------
-
-    private fun startNetworkMonitor() {
-        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        try {
-            cm.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
-                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    val metered = !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-                    broadcast(if (metered) FLM_LIFECYCLE_NETWORK_METERED else FLM_LIFECYCLE_NETWORK_UNMETERED)
-                }
-            })
-        } catch (_: Throwable) {
-            // Some virtual environments (Robolectric, headless test runners)
-            // reject NetworkRequest.Builder without the network permission
-            // even though the manifest declares it. Skip silently.
-        }
-    }
-
     private fun broadcast(event: Int) {
         for (i in instances) {
             try { i.notifyLifecycle(event) } catch (_: Throwable) {}
@@ -137,8 +108,6 @@ public class LifecycleBridge private constructor(private val appContext: Context
         internal const val FLM_LIFECYCLE_MEMORY_CRITICAL = 3
         internal const val FLM_LIFECYCLE_LOW_POWER = 4
         internal const val FLM_LIFECYCLE_THERMAL_THROTTLING = 5
-        internal const val FLM_LIFECYCLE_NETWORK_METERED = 6
-        internal const val FLM_LIFECYCLE_NETWORK_UNMETERED = 7
 
         @Volatile private var singleton: LifecycleBridge? = null
 

@@ -86,12 +86,12 @@ filesystem path — so the SDK ships `BundledAssets` to copy them to
 `filesDir` atomically (staging directory + rename) and idempotently (a
 `.assets-manifest` hash file).
 
-## Lifecycle and network
+## Lifecycle
 
-`ProcessLifecycleOwner`, `ComponentCallbacks2` and
-`ConnectivityManager.NetworkCallback` are wired to `flm_manager_notify_lifecycle`
-automatically through an AndroidX Startup initializer. This lets the core
-unload models under memory pressure and react to network transitions.
+`ProcessLifecycleOwner` and `ComponentCallbacks2` are wired to
+`flm_manager_notify_lifecycle` automatically through an AndroidX Startup
+initializer. This lets the core unload models under memory pressure without
+requesting network permissions.
 
 ## Threading
 

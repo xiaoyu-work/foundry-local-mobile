@@ -16,7 +16,7 @@ import 'platform_channel.dart';
 /// [FoundryLocal.create] attaches one of these to the manager and detaches it
 /// on dispose. The bridge listens to Flutter's [WidgetsBinding] for lifecycle
 /// state, and to the Kotlin/Swift plugin classes (via [PlatformBridge]) for
-/// memory warnings and connectivity changes — things Dart cannot observe on
+/// memory warnings, thermal state, and low-power changes — things Dart cannot observe on
 /// its own.
 class LifecycleBridge with WidgetsBindingObserver {
   LifecycleBridge._(this._managerHandle);
@@ -41,8 +41,7 @@ class LifecycleBridge with WidgetsBindingObserver {
     binding.addObserver(this);
 
     _platformSub = PlatformBridge.events.listen(_onPlatformEvent);
-    // Ask the platform side for its current network state up front so the
-    // core knows whether background downloads are allowed.
+    // Prime low-power and thermal state before the first transition.
     PlatformBridge.refreshInitialState();
   }
 
@@ -91,12 +90,6 @@ class LifecycleBridge with WidgetsBindingObserver {
         break;
       case PlatformEventKind.thermalThrottling:
         _notify(raw.FlmLifecycleEvent.thermalThrottling);
-        break;
-      case PlatformEventKind.networkMetered:
-        _notify(raw.FlmLifecycleEvent.networkMetered);
-        break;
-      case PlatformEventKind.networkUnmetered:
-        _notify(raw.FlmLifecycleEvent.networkUnmetered);
         break;
       case PlatformEventKind.unknown:
         // Ignore — the native layer occasionally emits new event kinds; do

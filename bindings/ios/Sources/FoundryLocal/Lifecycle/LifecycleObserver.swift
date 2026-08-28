@@ -4,15 +4,13 @@
 // Bridges platform lifecycle notifications to the ABI's `flm_manager_notify_lifecycle`.
 //
 // The core uses these to unload models under memory pressure and adapt placement when
-// the device is low-power, hot, or on a metered link. Apps
+// the device is low-power or hot. Apps
 // almost never call the ABI directly for these transitions — this observer wires the
-// standard `UIApplication`, `ProcessInfo` and `NWPathMonitor` notifications for you.
+// standard `UIApplication` and `ProcessInfo` notifications for you.
 
+#if canImport(Darwin)
 import Foundation
 import FoundryLocalMobile
-
-#if canImport(Network)
-import Network
 
 #if canImport(UIKit)
 import UIKit
@@ -25,23 +23,19 @@ import UIKit
 final class LifecycleObserver: @unchecked Sendable {
     private let manager: flm_manager
     private var observers: [any NSObjectProtocol] = []
-    private let pathMonitor = NWPathMonitor()
-    private let pathQueue = DispatchQueue(label: "FoundryLocal.NWPathMonitor")
     private let lock = NSLock()
-    private var lastNetworkExpensive: Bool?
 
     init(manager: flm_manager) {
         self.manager = manager
         installObservers()
-        startPathMonitor()
     }
 
     deinit {
         stop()
     }
 
-    /// Detach all observers and cancel the path monitor. Called when the ``FoundryLocal``
-    /// owner is closed. Idempotent.
+    /// Detach all observers. Called when the ``FoundryLocal`` owner is closed.
+    /// Idempotent.
     func stop() {
         lock.lock()
         for token in observers {
@@ -49,7 +43,6 @@ final class LifecycleObserver: @unchecked Sendable {
         }
         observers.removeAll()
         lock.unlock()
-        pathMonitor.cancel()
     }
 
     // MARK: - Wiring
@@ -112,21 +105,6 @@ final class LifecycleObserver: @unchecked Sendable {
         forwardThermalState(ProcessInfo.processInfo.thermalState)
     }
 
-    private func startPathMonitor() {
-        pathMonitor.pathUpdateHandler = { [weak self] path in
-            guard let self else { return }
-            let expensive = path.isExpensive || path.isConstrained
-            self.lock.lock()
-            let prior = self.lastNetworkExpensive
-            self.lastNetworkExpensive = expensive
-            self.lock.unlock()
-            if prior != expensive {
-                self.notify(expensive ? FLM_LIFECYCLE_NETWORK_METERED : FLM_LIFECYCLE_NETWORK_UNMETERED)
-            }
-        }
-        pathMonitor.start(queue: pathQueue)
-    }
-
     private func forwardThermalState(_ state: ProcessInfo.ThermalState) {
         switch state {
         case .nominal, .fair:
@@ -143,5 +121,4 @@ final class LifecycleObserver: @unchecked Sendable {
         _ = flm_manager_notify_lifecycle(manager, event)
     }
 }
-
-#endif // canImport(Network)
+#endif
