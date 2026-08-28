@@ -6,15 +6,14 @@ import 'dart:async';
 /// Cancels an in-flight `Future`-returning ABI call.
 ///
 /// The ABI's cancellation primitive is `flm_job_cancel(handle)`, but any call
-/// that hides its job handle behind a plain `Future` (e.g. [FoundryLocal.
-/// addModelSource], [Model.load]) has no natural place to expose it. A
-/// `CancelToken` is the caller-supplied out-of-band handle: pass it to the
-/// call, then invoke [cancel] later — the plugin wires it to
-/// `flm_job_cancel` internally.
+/// that hides its job handle behind a plain `Future` (for example [Model.load])
+/// has no natural place to expose it. A `CancelToken` is the caller-supplied
+/// out-of-band handle: pass it to the call, then invoke [cancel] later — the
+/// plugin wires it to `flm_job_cancel` internally.
 ///
 /// The future resolves with a [CancelledException] (mapped from
-/// `FLM_ERROR_CANCELLED`) once the core acknowledges the cancel; the
-/// cancellation itself is asynchronous, so a running download may still fire
+/// `FLM_ERROR_CANCELLED`) once the core acknowledges the cancel. The
+/// cancellation itself is asynchronous, so a running operation may still fire
 /// one or two more progress events before it stops.
 ///
 /// A single token can be reused across sequential calls, but a token that has

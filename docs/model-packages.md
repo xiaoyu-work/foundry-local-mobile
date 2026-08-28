@@ -1,177 +1,85 @@
-# Model packages
+# Model directories: flat models vs. OGA packages
 
-Foundry Local Mobile treats [ONNX Runtime model packages][mp-spec] as a first-class
-concept. This page explains what they are, why they matter more on mobile than anywhere
-else, and how an app drives variant selection across platforms.
+Foundry Local Mobile does not have its own package format, catalog, or download
+mechanism. `loadModel()` accepts exactly one thing: a path to a local directory, and OGA
+itself decides how to load whatever is inside it. This page describes the two directory
+shapes OGA supports and how the SDK picks between them.
 
-## What a package is
+## Flat OGA model
 
-A model package is a directory with a top-level `manifest.json` that bundles multiple
-build **variants** of the same model behind one entry, plus content-addressed **shared
-assets** that variants reference instead of duplicating.
+A directory with `genai_config.json` at its top level, alongside the model weights and
+tokenizer files OGA needs (for example `model.onnx` / `model.onnx.data`,
+`tokenizer.json`). This is the common case:
 
 ```
-qwen2.5-0.5b/
+qwen3-5/
+├── genai_config.json
+├── model.onnx
+├── model.onnx.data
+└── tokenizer.json
+```
+
+```kotlin
+val model = foundry.loadModel(path = "/data/user/0/com.example.app/files/models/qwen3-5")
+```
+
+When no `execution_provider` is given, the SDK calls `OgaCreateModel(path)` directly and
+OGA uses whatever provider `genai_config.json` declares.
+
+## OGA package directory
+
+A directory with a top-level `manifest.json` and **no** top-level `genai_config.json`.
+This is the ONNX Runtime GenAI package layout (sometimes shipped as `.ortpackage`), where
+one manifest can describe multiple execution-provider-specific variants under a single
+directory:
+
+```
+qwen3-5.ortpackage/
 ├── manifest.json
-├── variants/
-│   ├── qnn-npu/          genai_config.json + compiled QNN context binaries
-│   ├── coreml-ane/       genai_config.json + CoreML artifacts
-│   └── cpu/              genai_config.json + int4 CPU graph
-└── shared_assets/
-    └── sha256-9f86d081.../    tokenizer + weights referenced by several variants
+├── qnn/genai_config.json + compiled QNN artifacts
+└── cpu/genai_config.json + CPU graph
 ```
 
-Each variant declares an execution provider (`ep`), a `device`, and an EP-defined opaque
-`compatibility_string`. At load time the runtime scores the variants against the local
-hardware and picks the highest-scoring compatible one. Variants reference shared assets
-with `sha256:<hex>` strings that the runtime resolves to real paths.
-
-A directory is a package when it has a top-level `manifest.json` and **no** top-level
-`genai_config.json`.
-
-## Why this matters more on mobile
-
-On a desktop, downloading every variant of a package is wasteful. On a phone it is
-unacceptable: the variants that a device cannot run are frequently *larger* than the one
-it can, mobile storage is scarce, and the connection is often metered.
-
-The mobile SDK therefore never downloads a whole package. It downloads **one variant plus
-the shared assets that variant references**. Everything else stays in the cloud.
-
-The mobile device landscape also makes the "one entry, many variants" model much more
-valuable than on desktop:
-
-| Device class | Selected variant |
-|---|---|
-| Snapdragon 8 Gen 2/3 Android | QNN / NPU — Hexagon NPU, compiled context binary |
-| Other Android arm64 | CPU int4, or GPU where the driver is trustworthy |
-| iPhone / iPad (A14+) | CoreML / ANE |
-| Older iPhone, or thermally limited | CPU int4 |
-
-A cross-platform app publishes **one** model alias and gets the right binary everywhere.
-
-## The API
-
-Every binding exposes the same three-step model: **inspect → choose → download**.
-
-### Inspect
+Loading a package **requires** an explicit `execution_provider` — the SDK detects the
+package shape (`manifest.json` present, `genai_config.json` absent at the top level) and
+calls `OgaCreateConfigFromPackageEp(path, execution_provider, &config)` so OGA can resolve
+the matching variant. There is no automatic multi-variant scoring performed by this SDK;
+you choose the provider, OGA resolves the package against it.
 
 ```kotlin
-val pkg = foundry.catalog.getModel("qwen2.5-0.5b")
-
-if (pkg.isPackage) {
-    pkg.variants.forEach { v ->
-        println("${v.id} ep=${v.executionProvider} device=${v.device} " +
-                "download=${v.downloadSizeBytes} compatible=${v.isCompatible} " +
-                "score=${v.compatibilityScore}")
-    }
-}
-```
-
-`downloadSizeBytes` is the number of bytes that would actually be transferred — shared
-assets already on disk are excluded, so it changes as the cache fills.
-`compatibilityScore` is the EP's own score for this device; higher wins.
-
-### Choose
-
-Either let the SDK decide:
-
-```kotlin
-val chosen = pkg.selectBestVariant(
-    VariantConstraints(
-        maxDownloadBytes = 800L * 1024 * 1024,
-        allowedDevices = setOf(FlmDevice.NPU, FlmDevice.CPU),
-    )
+val model = foundry.loadModel(
+    path = "/data/user/0/com.example.app/files/models/qwen3-5.ortpackage",
+    executionProvider = "QNN",
+    providerOptions = mapOf("backend_path" to "libQnnHtp.so"),
 )
 ```
 
-Or apply your own cross-platform policy, which is the point of exposing the metadata:
+## Execution provider selection
 
-```dart
-// A Flutter app that is deliberately conservative on cellular and on low-RAM devices.
-final profile = await foundry.deviceProfile;
-final budget = profile.availableMemoryBytes < 3 * 1024 * 1024 * 1024
-    ? 400 * 1024 * 1024   // low-RAM tier: small CPU variant only
-    : 2 * 1024 * 1024 * 1024;
+- **Flat models**: `executionProvider` is optional. If omitted, OGA uses the provider(s)
+  declared in `genai_config.json`. If given, the SDK clears the configured providers and
+  appends the requested one (`OgaConfigClearProviders` + `OgaConfigAppendProvider`) before
+  applying any `providerOptions`.
+- **Package directories**: `executionProvider` is required, since that is what
+  `OgaCreateConfigFromPackageEp` resolves against.
+- **`providerOptions`** is a flat string-keyed JSON object passed through to
+  `OgaConfigSetProviderOption` for the selected provider — e.g. `backend_path` for QNN.
 
-final candidates = pkg.variants
-    .where((v) => v.isCompatible && v.downloadSizeBytes <= budget)
-    .toList()
-  ..sort((a, b) => b.compatibilityScore.compareTo(a.compatibilityScore));
+## What this SDK does not do
 
-final chosen = candidates.isNotEmpty
-    ? candidates.first
-    : pkg.variants.firstWhere((v) => v.device == FlmDevice.cpu);
+- It does not parse, validate, or score a `manifest.json` itself — that work happens
+  inside OGA.
+- It does not download, cache, verify, or delete model files. The directory you pass in
+  must already be complete and correct.
+- It does not merge multiple packages, recompile a model on-device, or manage per-variant
+  storage. Each `loadModel()` call is independent.
+- It enforces one thing beyond OGA: a memory budget check (`DeviceProfile::MaxModelBytes`)
+  before loading, so a model that clearly will not fit in available RAM fails fast with
+  `FLM_ERROR_MEMORY_PRESSURE` instead of getting killed by the OS mid-load.
 
-pkg.selectVariant(chosen);
-```
+## Getting a model onto the device
 
-Because variant metadata carries `platform`, `execution_provider` and `device`, the same
-Dart or TypeScript code makes a correct — and *different* — decision on iOS and Android
-without any platform branching in app code.
-
-### Estimate, then download
-
-Always show the user what a download will cost. Shared assets are counted once, which a
-naive per-variant sum gets wrong:
-
-```swift
-let estimate = try await pkg.estimateDownload(variants: [chosen])
-guard estimate.fitsOnDevice else { throw AppError.insufficientStorage }
-
-// "Download 590 MB? (390 MB already on this device)"
-showConfirmation(
-    download: estimate.downloadBytes,
-    alreadyCached: estimate.alreadyCachedBytes
-)
-
-for try await progress in pkg.download() {
-    updateUI(progress.percent, stage: progress.stage)
-}
-```
-
-## Downloading more than one variant
-
-Apps that want a fast path and a fallback — for instance an NPU variant for speed and a
-CPU variant that keeps working while the device is hot — can hold independent handles:
-
-```kotlin
-val npu = pkg.variant("qwen2.5-0.5b.qnn-npu")
-val cpu = pkg.variant("qwen2.5-0.5b.cpu")
-
-cpu.download()   // small, fetch first so the app is usable immediately
-cpu.load()
-
-// Upgrade in the background when on Wi-Fi.
-if (foundry.deviceProfile.network == Network.UNMETERED) {
-    npu.download()
-}
-```
-
-The shared assets both variants reference are stored once and downloaded once.
-
-## Version updates
-
-Package content is checksum-addressed, so upgrading to a new version of the same package
-skips anything already present locally. Shared-asset directories from the installed
-version are reused rather than re-downloaded, and only genuinely new content is fetched.
-For a typical point release that means downloading the changed variant, not the weights.
-
-## Cleanup
-
-The package spec deliberately does not record which variants consume which shared assets,
-so the SDK maintains that mapping itself in Foundry-Local-owned metadata alongside the
-cache. Deleting a variant removes its own directory and then any shared asset no longer
-referenced by a remaining variant — no orphaned gigabytes.
-
-## Constraints in this release
-
-- Single-component packages only. Multi-component packages (pipelines such as diffusion,
-  tool-discovery components) parse correctly but only the primary component is loadable.
-- Selective download operates at variant granularity, not at the level of individual
-  files within a variant.
-- On-device merging of separately downloaded per-EP packages is not supported; each
-  package is managed independently.
-- On-device recompilation of a model is not supported.
-
-[mp-spec]: https://github.com/microsoft/onnxruntime/blob/main/model_package/README.md
+However you produce the directory — bundling it in the app package, downloading it with
+your own HTTP/CDN client, unzipping it from your own storage — is entirely up to your
+app. Once the files are in a local, caller-owned directory, pass that path to
+`loadModel()`.

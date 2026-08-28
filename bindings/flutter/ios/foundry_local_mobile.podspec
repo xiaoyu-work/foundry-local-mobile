@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'foundry_local_mobile'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'On-device AI for Flutter via Microsoft Foundry Local.'
   s.description      = <<-DESC
 Flutter FFI plugin providing streaming chat, tool calling, speech-to-text and
@@ -18,8 +18,9 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
   s.license          = { :type => 'MIT', :file => '../LICENSE' }
   s.author           = { 'Microsoft' => 'foundrylocal@microsoft.com' }
 
-  s.platform         = :ios, '13.0'
-  s.ios.deployment_target = '13.0'
+  # iOS 15.0 matches the Swift binding and OGA's supported floor.
+  s.platform         = :ios, '15.0'
+  s.ios.deployment_target = '15.0'
   s.swift_version    = '5.9'
 
   s.source           = { :path => '.' }
@@ -56,6 +57,15 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
   s.dependency 'Flutter'
   s.frameworks       = 'Foundation'
 
+  # The core links against ONNX Runtime GenAI at runtime. Vendor both
+  # XCFrameworks built by `scripts/build_apple.sh` so the dynamic linker
+  # can resolve them. The same frameworks are referenced by the Swift
+  # Package and React Native pod.
+  s.vendored_frameworks = [
+    '../../../bindings/ios/Frameworks/FoundryLocalMobile.xcframework',
+    '../../../bindings/ios/Frameworks/onnxruntime-genai.xcframework',
+  ]
+
   # nlohmann/json is a header-only dependency the C++ core relies on. The
   # simplest reproducible integration for a plugin build is to vendor a single
   # header at core/third_party/nlohmann and put it on the include path.
@@ -67,7 +77,7 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
       '"${PODS_TARGET_SRCROOT}/../../../core/include"',
       '"${PODS_TARGET_SRCROOT}/../../../core/src"',
       '"${PODS_TARGET_SRCROOT}/../../../core/third_party/nlohmann/include"',
-      '"${PODS_TARGET_SRCROOT}/../../../third_party/foundry-local/include"',
+      '"${PODS_TARGET_SRCROOT}/../../../third_party/onnxruntime-genai/src"',
       '"${PODS_TARGET_SRCROOT}/../src"'
     ].join(' '),
     'GCC_PREPROCESSOR_DEFINITIONS' => 'FLM_STATIC=1',

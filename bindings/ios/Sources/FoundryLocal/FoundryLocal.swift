@@ -8,7 +8,6 @@ import FoundryLocalMobile
 ///
 /// Owns:
 ///   * The manager handle (released on ``close()``).
-///   * The default background HTTP transport (unless the app installed its own).
 ///   * A ``LifecycleObserver`` forwarding OS notifications to the core.
 ///
 /// Not typically instantiated more than once per process. iOS supports several
@@ -16,10 +15,6 @@ import FoundryLocalMobile
 /// configured with a distinct ``FoundryLocalConfig/appDataDir``.
 public final class FoundryLocal: @unchecked Sendable {
     public let handle: flm_manager
-
-    /// The catalog is borrowed from the manager; releasing it is a no-op and it stays
-    /// valid until this ``FoundryLocal`` is closed.
-    public let catalog: Catalog
 
     private let released = ManagedAtomicBool()
     // The lifecycle observer wraps NWPathMonitor, which comes from the Network
@@ -29,13 +24,9 @@ public final class FoundryLocal: @unchecked Sendable {
     #if canImport(Network)
     private let lifecycle: LifecycleObserver
     #endif
-    private let ownedTransport: URLSessionBackgroundTransport?
 
     // MARK: - Construction
 
-    /// Create a new instance from a config. Installs the default background transport
-    /// unless one has already been installed via ``TransportRegistry/install(_:)``.
-    ///
     /// The initializer is synchronous — the core does its own work on a job thread —
     /// but it *may* block briefly while the runtime is bound. Prefer calling it once
     /// at app launch off the main thread.
@@ -46,42 +37,17 @@ public final class FoundryLocal: @unchecked Sendable {
         if status != FLM_OK {
             throw FoundryLocalError.fromCurrent(status: status)
         }
-        // Only install the default background transport when the app hasn't already
-        // registered its own. This lets apps opt into certificate pinning or a custom
-        // download queue by calling `TransportRegistry.install(_:)` before this init.
-        let transport: URLSessionBackgroundTransport?
-        if TransportRegistry.isInstalled {
-            transport = nil
-        } else {
-            transport = URLSessionBackgroundTransport.shared(
-                identifier: Self.defaultTransportIdentifier(appName: config.appName)
-            )
-        }
-        try self.init(handle: handle, transport: transport)
+        try self.init(handle: handle)
     }
 
-    /// Advanced init: build against an already-installed transport (e.g. a custom one
-    /// with certificate pinning). Does not touch the ``TransportRegistry`` so an
-    /// earlier install(nil) call is not overridden.
-    public init(handle: flm_manager, transport: URLSessionBackgroundTransport? = nil) throws {
+    public init(handle: flm_manager) throws {
         guard handle != 0 else {
             throw FoundryLocalError(code: .invalidHandle, message: "manager handle must not be zero")
         }
-        var catalogHandle: flm_catalog = 0
-        let status = flm_manager_get_catalog(handle, &catalogHandle)
-        if status != FLM_OK {
-            _ = flm_manager_release(handle)
-            throw FoundryLocalError.fromCurrent(status: status)
-        }
         self.handle = handle
-        self.catalog = Catalog(handle: catalogHandle)
         #if canImport(Network)
         self.lifecycle = LifecycleObserver(manager: handle)
         #endif
-        self.ownedTransport = transport
-        if let transport {
-            TransportRegistry.install(transport)
-        }
     }
 
     deinit {
@@ -100,75 +66,74 @@ public final class FoundryLocal: @unchecked Sendable {
         #endif
         _ = flm_manager_shutdown(handle)
         _ = flm_manager_release(handle)
-        // Do not call TransportRegistry.install(nil) here: the app may keep using
-        // downloads after this instance is gone if it holds its own transport. If we
-        // installed the default one, retain semantics keep it alive until the next
-        // install().
     }
 
-    // MARK: - Model sources
+    // MARK: - Load model from path
 
-    /// Register an app-supplied model with the manager and hand back the result.
+    /// Load a model directly from a local directory path and return a ready-to-use
+    /// ``Model``.
     ///
-    /// **This is the model acquisition call on iOS.** The desktop Foundry Local
-    /// catalog isn't reachable from mobile, so ``Catalog`` only surfaces what a
-    /// source has already committed to disk. A model source is either a
-    /// directory already on disk (``ModelSource/bundled(name:folder:in:subdirectory:constraints:verifyChecksums:)``)
-    /// or a URL the app hosts (``ModelSource/remote(name:url:headers:constraints:resume:verifyChecksums:)``).
+    /// This is the recommended entry point for on-device inference. It validates the
+    /// directory, loads the model through the native runtime, and returns a ready
+    /// ``Model`` handle in one call.
     ///
-    /// For a bundled source this is fast (the files are already on disk). For a
-    /// remote source it kicks off a possibly-multi-gigabyte download; progress is
-    /// delivered through the closure.
+    /// ```swift
+    /// let model = try await sdk.loadModel(
+    ///     at: "/path/to/model/dir",
+    ///     executionProvider: "CoreMLExecutionProvider"
+    /// )
+    /// let chat = try model.createChatSession()
+    /// ```
     ///
-    /// Variant selection is expressed declaratively via ``VariantConstraints`` on
-    /// the source itself — the runtime picks the best variant against the manifest
-    /// before any weights transfer, so the phone never spends bytes on the wrong
-    /// build.
-    ///
-    /// The core mints a ready-to-use model handle inside the same job when the
-    /// scan of the freshly-installed files succeeds, which is the common case.
-    /// Read ``AddModelSourceResult/model`` and use it directly. When that field
-    /// is `nil` the transfer still succeeded — the files are at
-    /// ``AddModelSourceResult/path`` — and you can recover with a normal catalog
-    /// lookup by name if you want a handle.
-    public func addModelSource(
-        _ source: ModelSource,
-        progress: (@Sendable (DownloadProgress) -> Void)? = nil
-    ) async throws -> AddModelSourceResult {
-        let json = try source.encodeAsJSON()
-        let payload: AddModelSourcePayload = try await runAsyncJob(
-            progress: progress,
+    /// - Parameter path: Absolute filesystem path to the model directory. The
+    ///   directory must already exist on disk.
+    /// - Parameter executionProvider: Optional execution provider override, e.g.
+    ///   `"CoreMLExecutionProvider"`.
+    /// - Parameter providerOptions: Optional key-value EP configuration, forwarded
+    ///   as `provider_options` to the OGA session (e.g. `["use_fp16": "1"]`).
+    /// - Parameter progress: Optional progress callback for the load phase.
+    /// - Returns: A loaded ``Model`` ready for session creation.
+    /// - Throws: ``FoundryLocalError`` if the path is invalid or loading fails.
+    public func loadModel(
+        at path: String,
+        executionProvider: String? = nil,
+        providerOptions: [String: String]? = nil,
+        progress: ((Progress) -> Void)? = nil
+    ) async throws -> Model {
+        let progressHandler: (@Sendable (Progress) -> Void)? = progress.map { callback in
+            let box = ProgressCallbackBox(callback)
+            return { value in box.callback(value) }
+        }
+        let options = loadModelOptions(
+            executionProvider: executionProvider,
+            providerOptions: providerOptions
+        )
+        let payload: LoadModelPayload = try await runAsyncJob(
+            progress: progressHandler,
             decode: { job in
                 let text = try takeJobResultJSON(job)
-                return try flmJSONDecoder.decode(AddModelSourcePayload.self, from: Data(text.utf8))
+                return try flmJSONDecoder.decode(LoadModelPayload.self, from: Data(text.utf8))
             },
             submit: { [handle] userData, onProgress, onComplete, outJob in
-                json.withCString { jsonPtr in
-                    flm_manager_add_model_source_async(handle, jsonPtr, onProgress, onComplete, userData, outJob)
+                path.withCString { pathPtr in
+                    options.withCString { optionsPtr in
+                        flm_manager_load_model_async(handle, pathPtr, optionsPtr, onProgress, onComplete, userData, outJob)
+                    }
                 }
             }
         )
-        let model: Model? = payload.modelHandle != 0
-            ? Model(handle: flm_model(payload.modelHandle))
-            : nil
-        // ABI reports `""` for a non-package source. Normalise to `nil` so
-        // callers can just `if let variantId`.
-        let variantId = payload.variantId.flatMap { $0.isEmpty ? nil : $0 }
-        return AddModelSourceResult(
-            name: payload.name,
-            path: payload.path,
-            variantId: variantId,
-            bytesDownloaded: payload.bytesDownloaded,
-            bytesReused: payload.bytesReused,
-            wasCached: payload.wasCached,
-            model: model,
-            handleUnavailableReason: payload.modelHandleUnavailable
-        )
+        guard payload.modelHandle != 0 else {
+            throw FoundryLocalError(
+                code: .invalidHandle,
+                message: "No model handle returned for path '\(path)'."
+            )
+        }
+        return Model(handle: flm_model(payload.modelHandle))
     }
 
     // MARK: - Introspection
 
-    /// Read the device profile the core uses for variant scoring.
+    /// Read the device profile the core uses for model placement.
     public func deviceProfile() throws -> DeviceProfile {
         let json = try readJSON { flm_manager_get_device_profile_json(handle, $0) }
         return try flmJSONDecoder.decode(DeviceProfile.self, from: Data(json.utf8))
@@ -178,18 +143,12 @@ public final class FoundryLocal: @unchecked Sendable {
     /// preserved. Corresponds to the subset of ``FoundryLocalConfig`` accepted by
     /// `flm_manager_update_settings`.
     public func updateSettings(
-        downloadOnMeteredNetwork: Bool? = nil,
-        maxConcurrentDownloads: Int? = nil,
         logLevel: FoundryLocalConfig.LogLevel? = nil,
-        autoUnloadOnBackground: Bool? = nil,
-        offline: Bool? = nil
+        autoUnloadOnBackground: Bool? = nil
     ) throws {
         var payload: [String: Any] = [:]
-        if let v = downloadOnMeteredNetwork { payload["download_on_metered_network"] = v }
-        if let v = maxConcurrentDownloads { payload["max_concurrent_downloads"] = v }
         if let v = logLevel { payload["log_level"] = v.rawValue }
         if let v = autoUnloadOnBackground { payload["auto_unload_on_background"] = v }
-        if let v = offline { payload["offline"] = v }
         guard !payload.isEmpty else { return }
         let json = payload.jsonString() ?? "{}"
         let status = json.withCString { flm_manager_update_settings(handle, $0) }
@@ -204,16 +163,6 @@ public final class FoundryLocal: @unchecked Sendable {
         _ = flm_manager_notify_lifecycle(handle, event.cValue)
     }
 
-    // MARK: - Transport install (convenience)
-
-    /// Install a custom transport. Passing `nil` uninstalls the current transport and
-    /// leaves the SDK unable to download until another is installed. To restore the
-    /// default background URLSession transport, pass a new
-    /// ``URLSessionBackgroundTransport`` instance.
-    public func setTransport(_ transport: (any HTTPTransport)?) {
-        TransportRegistry.install(transport)
-    }
-
     // MARK: - Static ABI helpers
 
     /// Version of this Swift SDK, sourced from the core.
@@ -222,8 +171,8 @@ public final class FoundryLocal: @unchecked Sendable {
         return String(cString: ptr)
     }
 
-    /// Version of the underlying Foundry Local runtime, or `nil` when the runtime is
-    /// not linked in — usually a build error rather than a runtime concern.
+    /// Version of the underlying ONNX Runtime GenAI runtime, or `nil` when the runtime
+    /// is not linked in — usually a build error rather than a runtime concern.
     public static var runtimeVersion: String? {
         guard let ptr = flm_runtime_version_string() else { return nil }
         return String(cString: ptr)
@@ -253,9 +202,22 @@ public final class FoundryLocal: @unchecked Sendable {
         }
     }
 
-    private static func defaultTransportIdentifier(appName: String) -> String {
-        let bundle = Bundle.main.bundleIdentifier ?? "app"
-        return "\(bundle).foundrylocal.\(appName).downloads"
+    private func loadModelOptions(
+        executionProvider: String?,
+        providerOptions: [String: String]?
+    ) -> String {
+        var payload: [String: Any] = [:]
+        if let executionProvider { payload["execution_provider"] = executionProvider }
+        if let providerOptions, !providerOptions.isEmpty { payload["provider_options"] = providerOptions }
+        return payload.jsonString() ?? "{}"
+    }
+}
+
+private final class ProgressCallbackBox: @unchecked Sendable {
+    let callback: (Progress) -> Void
+
+    init(_ callback: @escaping (Progress) -> Void) {
+        self.callback = callback
     }
 }
 

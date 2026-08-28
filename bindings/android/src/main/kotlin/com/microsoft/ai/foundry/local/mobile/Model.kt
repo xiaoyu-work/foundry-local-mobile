@@ -9,15 +9,13 @@ import com.microsoft.ai.foundry.local.mobile.internal.NativeBridge
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * A handle for one catalog model — a flat model, an ONNX Runtime package, or
- * a specific package variant. Use [isPackage] to distinguish, or upcast to
- * [ModelPackage] when you know a package is expected.
+ * A handle for one model.
  *
  * Models are [AutoCloseable]. `close()` releases the handle but leaves the
  * on-disk files intact.
  */
-public open class Model internal constructor(
-    protected val handle: Long,
+public class Model internal constructor(
+    private val handle: Long,
 ) : AutoCloseable {
 
     private val closed = AtomicBoolean(false)
@@ -36,11 +34,9 @@ public open class Model internal constructor(
      * properties for a live read, or call [refresh] to invalidate the
      * snapshot.
      *
-     * The cache is invalidated automatically after [load], [unload] and
-     * [delete]. Explicit [refresh] is only needed when an out-of-band change
-     * — a manual filesystem edit, another process — has made the cache
-     * stale. Note that this applies to [info] only; see [refresh] for why
-     * it does not extend to [ModelPackage.variants].
+     * The cache is invalidated automatically after [load] and [unload].
+     * Explicit [refresh] is only needed when an out-of-band change — a manual
+     * filesystem edit, another process — has made the cache stale.
      */
     public val info: ModelInfo
         get() {
@@ -54,24 +50,12 @@ public open class Model internal constructor(
         }
 
     /**
-     * Drop cached ABI reads and force a re-decode on the next access. On
-     * [Model] this clears [info]; [ModelPackage] overrides it to also clear
-     * [ModelPackage.variants].
+     * Drop cached ABI reads and force a re-decode on the next access.
      *
-     * Called automatically after [load], [unload], [delete],
-     * [ModelPackage.selectVariant] and [ModelPackage.selectBestVariant]; an
-     * explicit call is only useful when something outside the SDK's control
-     * has invalidated the cache.
-     *
-     * For [info] that works: the ABI re-queries the runtime on every call.
-     * For [ModelPackage.variants] it does not. The core scans a package
-     * directory once, when the model handle first resolves a package, and
-     * holds that snapshot until the model is deleted; the variants ABI
-     * re-serialises it rather than re-reading disk. Refreshing therefore
-     * re-decodes the same bytes. To observe a download that completed
-     * elsewhere, obtain a new model handle from the manager.
+     * Called automatically after [load] and [unload]; an explicit call is only
+     * useful when something outside the SDK's control has invalidated the cache.
      */
-    public open fun refresh() {
+    public fun refresh() {
         cachedInfo = null
     }
 
@@ -85,23 +69,19 @@ public open class Model internal constructor(
     public val path: String?
         get() = NativeBridge.modelGetPath(requireHandle()).ifEmpty { null }
 
-    /** `true` if this handle refers to a model package (as opposed to a flat model). */
-    public val isPackage: Boolean get() = NativeBridge.modelIsPackage(requireHandle())
-
     /**
      * Load the model into memory.
      *
-     * The model's files must already be on the device — obtain the model with
-     * [FoundryLocal.addModelSource], which handles both the bundled and hosted
-     * URL cases. `load` never fetches on demand; loading a model whose files
-     * are absent throws [NotImplementedException] pointing at the source API.
+     * The model's files must already be on the device. `load` never fetches on
+     * demand; it only maps an existing model into memory.
      */
     public suspend fun load(
         executionProvider: String? = null,
+        providerOptions: Map<String, String>? = null,
         device: FlmDevice? = null,
         onProgress: ((Progress) -> Unit)? = null,
     ) {
-        val opts = JsonCodec.encodeLoadOptions(executionProvider, device)
+        val opts = JsonCodec.encodeLoadOptions(executionProvider, providerOptions, device)
         JobBridge.awaitResult(onProgress = onProgress) { corr ->
             NativeBridge.modelLoadAsync(requireHandle(), opts, corr)
         }
@@ -116,17 +96,6 @@ public open class Model internal constructor(
         refresh()
     }
 
-    /** Delete the model's files from the local cache. Unloads first if loaded. */
-    public suspend fun delete() {
-        JobBridge.awaitResult { corr ->
-            NativeBridge.modelDeleteAsync(requireHandle(), corr)
-        }
-        refresh()
-    }
-
-    /** Cast to [ModelPackage] if this is a package handle; returns `null` otherwise. */
-    public fun asPackage(): ModelPackage? = if (isPackage) ModelPackage(requireHandle()) else null
-
     /**
      * Create a chat session bound to this loaded model. The caller owns the
      * result and must [ChatSession.close] it — either explicitly, via
@@ -138,16 +107,16 @@ public open class Model internal constructor(
 
     /**
      * Create a speech-to-text session bound to this loaded model. See
-     * [createChatSession] for lifetime management notes; the scoped
-     * one-shot helper is [withAudioSession].
+     * [createChatSession] for lifetime management notes; the scoped one-shot
+     * helper is [withAudioSession].
      */
     public fun createAudioSession(options: AudioOptions = AudioOptions()): AudioSession =
         AudioSession(this, options)
 
     /**
      * Create an embedding session bound to this loaded model. See
-     * [createChatSession] for lifetime management notes; the scoped
-     * one-shot helper is [withEmbeddingSession].
+     * [createChatSession] for lifetime management notes; the scoped one-shot
+     * helper is [withEmbeddingSession].
      */
     public fun createEmbeddingSession(options: EmbeddingOptions = EmbeddingOptions()): EmbeddingSession =
         EmbeddingSession(this, options)
@@ -165,7 +134,7 @@ public open class Model internal constructor(
         if (!closed.get()) close()
     }
 
-    protected fun requireHandle(): Long {
+    private fun requireHandle(): Long {
         check(!closed.get()) { "Model has been closed" }
         return handle
     }
@@ -173,103 +142,7 @@ public open class Model internal constructor(
     internal companion object {
         fun wrap(handle: Long): Model {
             require(handle != 0L) { "Invalid model handle" }
-            return if (NativeBridge.modelIsPackage(handle)) ModelPackage(handle) else Model(handle)
+            return Model(handle)
         }
-    }
-}
-
-/**
- * A model package handle. Extends [Model] with variant enumeration, imperative
- * selection and pre-download estimation. Instances are returned by
- * [Catalog.getModel] or [Catalog.getModelById] whenever the underlying entry
- * is a package.
- *
- * Prefer expressing variant policy declaratively on the source: pass
- * [VariantConstraints] to [ModelSource.Remote] or [ModelSource.Bundled] and
- * the SDK scores the manifest before any weights transfer. The imperative
- * methods on this class are for apps that need to inspect the manifest, run a
- * post-download re-selection, or manage multiple variants in parallel.
- */
-public class ModelPackage internal constructor(handle: Long) : Model(handle) {
-
-    @Volatile
-    private var cachedVariants: PackageVariants? = null
-
-    /**
-     * Snapshot of the package's variants, scored against this device.
-     *
-     * Cached after the first read to avoid a JSON decode on every access.
-     * The cache is invalidated automatically by [selectVariant] and
-     * [selectBestVariant] because those change [PackageVariants.selectedVariantId];
-     * call [refresh] for an unconditional re-read.
-     *
-     * `downloadSizeBytes` excludes shared assets that were already on disk
-     * when the package was first scanned. It is fixed for the lifetime of
-     * this handle — it does not shrink as a download progresses, because
-     * the core does not re-stat the directory. See [refresh].
-     */
-    public val variants: PackageVariants
-        get() {
-            requireHandle()
-            return cachedVariants ?: synchronized(this) {
-                cachedVariants ?: JsonCodec.decode(
-                    PackageVariants.serializer(),
-                    NativeBridge.packageGetVariantsJson(requireHandle()),
-                ).also { cachedVariants = it }
-            }
-        }
-
-    override fun refresh() {
-        super.refresh()
-        cachedVariants = null
-    }
-
-    /**
-     * Pin the package to a specific variant. Subsequent load calls on this
-     * package handle act on it.
-     */
-    public fun selectVariant(variantId: String) {
-        NativeBridge.packageSelectVariant(requireHandle(), variantId)
-        refresh()
-    }
-
-    /**
-     * Let the SDK pick the best variant for this device using the device
-     * profile, the variants' compatibility scores and any [constraints].
-     * Returns the id of the winning variant.
-     *
-     * When a [ModelSource]'s own `constraints` were set this has already run
-     * once as part of `addModelSource`; call it again only when the app needs
-     * to override that decision at runtime.
-     */
-    public fun selectBestVariant(constraints: VariantConstraints? = null): String {
-        val id = NativeBridge.packageSelectBestVariant(
-            requireHandle(),
-            JsonCodec.encodeVariantConstraints(constraints),
-        )
-        refresh()
-        return id
-    }
-
-    /**
-     * Obtain a standalone handle for one variant. Useful for apps that want to
-     * manage several variants in parallel (e.g. an NPU variant downloading in
-     * the background while a CPU variant serves requests).
-     */
-    public fun variant(variantId: String): Model {
-        val handle = NativeBridge.packageGetVariant(requireHandle(), variantId)
-        return Model.wrap(handle)
-    }
-
-    /**
-     * Estimate the transfer for [variantIds] before committing. Passing `null`
-     * uses the currently selected variant.
-     */
-    public fun estimateDownload(variantIds: Collection<String>? = null): DownloadEstimate {
-        val json = NativeBridge.packageEstimateDownloadJson(
-            requireHandle(),
-            JsonCodec.encodeVariantIds(variantIds),
-        )
-        return JsonCodec.decode(DownloadEstimate.serializer(), json)
     }
 }

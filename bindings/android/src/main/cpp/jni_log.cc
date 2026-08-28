@@ -1,8 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 //
-// JNI bridge for library-wide entry points: version, log level, runtime path,
-// error retrieval and string free.
+// JNI bridge for library-wide entry points: version, log level and error retrieval.
 
 #include "jni_common.h"
 
@@ -29,13 +28,6 @@ Java_com_microsoft_ai_foundry_local_mobile_internal_NativeBridge_runtimeVersionS
 JNIEXPORT jboolean JNICALL
 Java_com_microsoft_ai_foundry_local_mobile_internal_NativeBridge_isRuntimeAvailable(JNIEnv* /*env*/, jclass) {
   return flm_is_runtime_available() != 0 ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jint JNICALL
-Java_com_microsoft_ai_foundry_local_mobile_internal_NativeBridge_setRuntimeLibraryPath(JNIEnv* env, jclass,
-                                                                                       jstring path) {
-  JStringUtf str(env, path);
-  return static_cast<jint>(flm_set_runtime_library_path(str.c_str_or_null()));
 }
 
 JNIEXPORT jint JNICALL

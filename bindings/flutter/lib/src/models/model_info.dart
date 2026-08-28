@@ -5,11 +5,11 @@ import 'package:meta/meta.dart';
 
 import 'device_profile.dart';
 
-/// The size sentinel used across every progress and estimate struct when a byte
-/// count is not known yet. Mirrors `FLM_UNKNOWN_SIZE`.
+/// The size sentinel used across every progress struct when a byte count is
+/// not known yet. Mirrors `FLM_UNKNOWN_SIZE`.
 const int flmUnknownSize = -1;
 
-/// Metadata about a catalog model (or a model source registered by the app).
+/// Metadata about a model handle.
 ///
 /// Populated from `flm_model_get_info_json`. The raw JSON payload is kept in
 /// [raw] so future ABI additions are visible without a Dart change.
@@ -81,9 +81,11 @@ class ModelInfo {
       supportsToolCalling: json['supports_tool_calling'] as bool? ?? false,
       supportsReasoning: json['supports_reasoning'] as bool? ?? false,
       inputModalities:
-          (json['input_modalities'] as List?)?.cast<String>() ?? const <String>[],
+          (json['input_modalities'] as List?)?.cast<String>() ??
+              const <String>[],
       outputModalities:
-          (json['output_modalities'] as List?)?.cast<String>() ?? const <String>[],
+          (json['output_modalities'] as List?)?.cast<String>() ??
+              const <String>[],
       isPackage: json['is_package'] as bool? ?? false,
       isCached: json['is_cached'] as bool? ?? false,
       isLoaded: json['is_loaded'] as bool? ?? false,

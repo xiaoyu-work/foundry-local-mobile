@@ -4,26 +4,17 @@
 import Foundation
 import FoundryLocalMobile
 
-/// A model, model package or package variant. All three flavours share this handle
-/// type; the ABI disambiguates through ``isPackage``.
+/// A model handle registered with the runtime.
 ///
 /// Sessions are created against a loaded model, so the typical lifecycle is:
 ///
 /// ```swift
-/// let added = try await sdk.addModelSource(
-///     .remote(name: "qwen2.5-0.5b", url: myURL)
-/// ) { p in print("\(p.percent)%") }
-///
-/// // `added.model` is the freshly-minted handle in the common case, nil only
-/// // when the local catalog scan missed the fresh files; in that case fall
-/// // back to the catalog by name.
-/// let model = try await added.model ?? sdk.catalog.model(alias: added.name)
-/// try await model.load()
+/// let model = try await sdk.loadModel(
+///     at: "/path/to/model",
+///     executionProvider: "CoreMLExecutionProvider"
+/// )
 /// let chat = try model.createChatSession()
 /// ```
-///
-/// See ``FoundryLocal/addModelSource(_:progress:)`` for how a model gets on the
-/// device in the first place.
 public final class Model: @unchecked Sendable {
     public let handle: flm_model
     private let released = ManagedAtomicBool()
@@ -62,15 +53,8 @@ public final class Model: @unchecked Sendable {
         return flm_model_is_loaded(handle, &flag) == FLM_OK && flag != 0
     }
 
-    /// Whether this handle refers to a model package (a manifest with multiple
-    /// variants) rather than a single flat model.
-    public var isPackage: Bool {
-        var flag: Int32 = 0
-        return flm_model_is_package(handle, &flag) == FLM_OK && flag != 0
-    }
-
-    /// Absolute on-disk path once cached, or `nil` when the model has not been
-    /// downloaded yet.
+    /// Absolute on-disk path once cached, or `nil` when the model directory is no
+    /// longer present.
     public var cachedPath: String? {
         var out: UnsafeMutablePointer<CChar>?
         guard flm_model_get_path(handle, &out) == FLM_OK, let ptr = out else { return nil }
@@ -83,23 +67,22 @@ public final class Model: @unchecked Sendable {
 
     /// Load the model into memory.
     ///
-    /// The model's files must already be resident on the device — either shipped in
-    /// the app bundle via ``ModelSource/bundled(name:folder:in:subdirectory:constraints:verifyChecksums:)``
-    /// or fetched by ``FoundryLocal/addModelSource(_:progress:)`` from an
-    /// app-controlled URL. `load` does **not** download files on demand: the
-    /// Foundry Local desktop catalog isn't reachable from mobile, so
-    /// `flm_model_download_async` returns `notImplemented` for anything not already
-    /// on disk. Ship your model, or host it yourself, then add it as a model
-    /// source.
+    /// The model's files must already exist at the model path registered with the
+    /// runtime. To create an already-loaded handle from a local directory, prefer
+    /// ``FoundryLocal/loadModel(at:executionProvider:providerOptions:progress:)``.
     ///
     /// - Parameter executionProvider: Optional EP override, e.g. `"CoreMLExecutionProvider"`.
+    /// - Parameter providerOptions: Optional key-value EP configuration, forwarded as
+    ///   `provider_options` to the OGA session. Keys and values are provider-specific
+    ///   (e.g. `["use_fp16": "1"]` for CoreML).
     /// - Parameter device: Optional device placement override.
     public func load(
         executionProvider: String? = nil,
+        providerOptions: [String: String]? = nil,
         device: Device? = nil,
-        progress: (@Sendable (DownloadProgress) -> Void)? = nil
+        progress: (@Sendable (Progress) -> Void)? = nil
     ) async throws {
-        let options = loadOptions(executionProvider: executionProvider, device: device)
+        let options = loadOptions(executionProvider: executionProvider, providerOptions: providerOptions, device: device)
         _ = try await runAsyncJob(
             progress: progress,
             decode: { job in
@@ -127,16 +110,6 @@ public final class Model: @unchecked Sendable {
         )
     }
 
-    /// Remove the model's files from the local cache. Unloads first if loaded.
-    public func delete() async throws {
-        _ = try await runAsyncJob(
-            decode: { _ in () },
-            submit: { [handle] userData, _, onComplete, outJob in
-                flm_model_delete_async(handle, onComplete, userData, outJob)
-            }
-        )
-    }
-
     // MARK: - Sessions
 
     /// Create a chat completion session over this model. The model must already be
@@ -158,9 +131,10 @@ public final class Model: @unchecked Sendable {
 
     // MARK: - Internal helpers
 
-    private func loadOptions(executionProvider: String?, device: Device?) -> String {
+    private func loadOptions(executionProvider: String?, providerOptions: [String: String]?, device: Device?) -> String {
         var payload: [String: Any] = [:]
         if let executionProvider { payload["execution_provider"] = executionProvider }
+        if let providerOptions, !providerOptions.isEmpty { payload["provider_options"] = providerOptions }
         if let device { payload["device"] = device.rawValue }
         return payload.jsonString() ?? "{}"
     }

@@ -15,19 +15,24 @@ import 'chat_session.dart';
 import 'embedding_session.dart';
 import 'error_capture.dart';
 import 'job_runner.dart';
-import 'model_package.dart';
 import 'models/model_info.dart';
 import 'models/progress.dart';
 import 'native_strings.dart';
 
 /// Options passed to [Model.load].
 class LoadOptions {
-  const LoadOptions({this.executionProvider, this.device});
+  const LoadOptions({this.executionProvider, this.providerOptions});
+
   final String? executionProvider;
-  final String? device;
+
+  /// Key-value EP configuration forwarded as `provider_options` to the OGA
+  /// session. Keys and values are provider-specific.
+  final Map<String, String>? providerOptions;
+
   Map<String, Object?> toJson() => <String, Object?>{
         if (executionProvider != null) 'execution_provider': executionProvider,
-        if (device != null) 'device': device,
+        if (providerOptions != null && providerOptions!.isNotEmpty)
+          'provider_options': providerOptions,
       };
 }
 
@@ -39,12 +44,10 @@ class LoadResult {
   const LoadResult({required this.path, required this.bytes});
 
   /// Absolute on-disk path the model was loaded from. Same value as
-  /// [Model.path] once loading has finished, and mirrors `flm_model_get_path`.
+  /// [Model.path] once loading has finished.
   final String path;
 
-  /// Number of bytes now resident in memory for this model. Useful for
-  /// telemetry and for driving `flm_manager_notify_lifecycle` cache decisions
-  /// once several models are loaded.
+  /// Number of bytes now resident in memory for this model.
   final int bytes;
 
   factory LoadResult.fromJson(Map<String, Object?> json) => LoadResult(
@@ -53,15 +56,10 @@ class LoadResult {
       );
 }
 
-/// A model handle owned by the app. Comes from
-/// [FoundryLocal.addModelSource] (the only supported acquisition path on
-/// mobile) or from [Catalog.getModel]/[Catalog.getModelById] for a model that
-/// has already been added.
+/// A model handle owned by the app.
 class Model {
   Model._(this._handle);
 
-  /// Internal factory. Callers should reach models through [Catalog] or
-  /// [FoundryLocal.addModelSource] rather than constructing them directly.
   factory Model.fromHandle(int handle) {
     return Model._(handle);
   }
@@ -92,6 +90,9 @@ class Model {
     }
   }
 
+  /// Metadata for the model.
+  ModelInfo getInfo() => info;
+
   /// Whether the underlying files are fully present on disk.
   bool get isCached {
     _ensureAlive();
@@ -120,7 +121,7 @@ class Model {
     }
   }
 
-  /// Absolute on-disk path, or an empty string when not cached.
+  /// Absolute on-disk path.
   String get path {
     _ensureAlive();
     final bindings = NativeLibrary.instance.bindings;
@@ -138,47 +139,10 @@ class Model {
     }
   }
 
-  /// Whether this handle refers to a model package (as opposed to a flat
-  /// model). Use [asPackage] to get a [ModelPackage] view when it does.
-  bool get isPackage {
-    _ensureAlive();
-    final out = calloc<Int32>();
-    try {
-      final status =
-          NativeLibrary.instance.bindings.flm_model_is_package(_handle, out);
-      checkStatus(status, fallbackMessage: 'flm_model_is_package failed');
-      return out.value != 0;
-    } finally {
-      calloc.free(out);
-    }
-  }
-
-  /// Nullable convenience getter: this handle's [ModelPackage] view when it
-  /// refers to a package, `null` otherwise. Prefer this over [asPackage] when
-  /// the caller wants to branch on package-ness rather than treat "flat
-  /// model" as an exception.
-  ModelPackage? get package => isPackage ? ModelPackage.internal(this) : null;
-
-  /// [ModelPackage] view of this handle. Throws [StateError] if the model is
-  /// not a package. See [package] for a nullable variant.
-  ModelPackage asPackage() {
-    if (!isPackage) {
-      throw StateError('Model ${info.alias} is not a package.');
-    }
-    return ModelPackage.internal(this);
-  }
-
   /// Load the model into memory.
   ///
-  /// Does **not** download on demand: the model must already be present on
-  /// disk (via a bundled or remote [ModelSource] registered through
-  /// [FoundryLocal.addModelSource]). If it is not, this rejects with a
-  /// `FoundryLocalException` carrying `FLM_ERROR_NOT_IMPLEMENTED`. See the
-  /// package README for the model-source flow.
-  ///
-  /// Progress events (weight-mmap, execution-provider warmup, …) are
-  /// delivered to [onProgress] as they arrive. The Future resolves with the
-  /// [LoadResult] the core reports when loading is complete.
+  /// This is primarily useful after [unload]. Models returned by
+  /// [FoundryLocal.loadModel] are already loaded.
   Future<LoadResult> load({
     LoadOptions options = const LoadOptions(),
     void Function(Progress)? onProgress,
@@ -232,20 +196,6 @@ class Model {
     );
   }
 
-  /// Delete the model's files from the cache.
-  Future<void> delete() async {
-    _ensureAlive();
-    await runSimpleJob(
-      (completionPtr, userData, outJob) =>
-          NativeLibrary.instance.bindings.flm_model_delete_async(
-        _handle,
-        completionPtr,
-        userData,
-        outJob,
-      ),
-    );
-  }
-
   /// Create a chat session over this (loaded) model.
   ChatSession createChatSession({ChatSessionOptions? options}) {
     _ensureAlive();
@@ -264,13 +214,16 @@ class Model {
     return EmbeddingSession.create(this);
   }
 
-  /// Release the model handle. The underlying files stay in the cache; call
-  /// [delete] first to remove them.
+  /// Release the model handle. The underlying model files on disk are not
+  /// touched.
   void release() {
     if (_released) return;
     _released = true;
     NativeLibrary.instance.bindings.flm_model_release(_handle);
   }
+
+  /// Release the model handle. Alias for [release].
+  void dispose() => release();
 
   void _ensureAlive() {
     if (_released) throw StateError('Model handle has been released.');

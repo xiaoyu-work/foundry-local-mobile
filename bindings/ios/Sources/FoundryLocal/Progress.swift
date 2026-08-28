@@ -7,15 +7,15 @@ import FoundryLocalMobile
 /// Snapshot of a long-running operation, mirroring `flm_progress`. Progress values from
 /// the ABI are borrowed C strings; every field here is copied out before the callback
 /// returns so the value can safely leave the callback thread.
-public struct DownloadProgress: Sendable, Equatable {
+public struct Progress: Sendable, Equatable {
     public let percent: Float
     public let completedBytes: Int64?
     public let totalBytes: Int64?
     public let bytesPerSecond: Int64?
     public let etaMilliseconds: Int64?
-    /// Named phase — "resolving", "downloading", "verifying", "extracting", "loading".
+    /// Named phase, for example "validating" or "loading".
     public let stage: String
-    /// Item currently being processed, e.g. a variant id. May be empty.
+    /// Item currently being processed. May be empty.
     public let detail: String
 
     init(cValue: flm_progress) {

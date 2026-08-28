@@ -10,16 +10,13 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// Read the model source URL and optional bearer token from local.properties
-// (git-ignored) so a developer can point the sample at their own endpoint
-// without touching source and without checking in a credential.
+// Read the model directory path from local.properties (git-ignored) so a
+// developer can point the sample at their own model without touching source.
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-val defaultModelName: String = localProps.getProperty("flm.sample.modelName", "")
-val defaultModelUrl: String = localProps.getProperty("flm.sample.modelUrl", "")
-val defaultAuthHeader: String = localProps.getProperty("flm.sample.authHeader", "")
+val defaultModelPath: String = localProps.getProperty("flm.sample.modelPath", "")
 
 android {
     namespace = "com.microsoft.ai.foundry.local.samples"
@@ -30,7 +27,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.2.0"
 
         // Ship only the ABIs the binding builds. Otherwise transitive AndroidX
         // native libraries slip x86 into the APK and Android's install-time
@@ -40,13 +37,9 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
 
-        // Non-secret defaults for local.properties keys. A developer who does
-        // not want to type in the URL and header every launch can drop them in
-        // there; empty defaults mean the app starts on the "please configure"
-        // screen instead of trying to hit an unset URL.
-        buildConfigField("String", "DEFAULT_MODEL_NAME", "\"${defaultModelName}\"")
-        buildConfigField("String", "DEFAULT_MODEL_URL",  "\"${defaultModelUrl}\"")
-        buildConfigField("String", "DEFAULT_AUTH_HEADER","\"${defaultAuthHeader}\"")
+        // Default model path from local.properties. Empty means the user
+        // enters the path in the UI.
+        buildConfigField("String", "DEFAULT_MODEL_PATH", "\"${defaultModelPath}\"")
     }
 
     buildTypes {

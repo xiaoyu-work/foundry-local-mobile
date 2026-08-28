@@ -42,13 +42,8 @@ functions:
     - 'flm_.*'
   leaf:
     include:
-      # All flm_* functions are marked FLM_NOEXCEPT and do not call back into Dart, so
-      # they are safe to mark leaf, which lets the VM skip a safepoint per call.
+      # All flm_* functions are marked FLM_NOEXCEPT and do not call back into Dart.
       - 'flm_.*'
-    exclude:
-      # These *do* run callbacks (the transport send is invoked from a job thread that
-      # may end up calling into other flm_* entry points from the callback).
-      - 'flm_set_transport'
 
 structs:
   include:

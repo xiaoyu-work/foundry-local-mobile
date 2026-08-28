@@ -6,14 +6,40 @@
 
 </div>
 
-Foundry Local Mobile brings the [Foundry Local](https://github.com/microsoft/Foundry-Local)
-on-device AI runtime to mobile platforms. It wraps the Foundry Local C++ core in a single,
-FFI-friendly C ABI and layers idiomatic SDKs on top of it, so the same runtime, the same
-model catalog, and the same **ONNX Runtime Model Packages** are available from Kotlin,
-Swift, Dart and TypeScript.
+Foundry Local Mobile is a small C++ core plus four idiomatic SDKs (Kotlin, Swift, Dart,
+TypeScript) that load a local [ONNX Runtime GenAI](https://github.com/microsoft/onnxruntime-genai)
+(OGA) model and run chat inference directly on-device, entirely offline.
+
+> **Naming note.** "Foundry Local Mobile" is this project's name. It is **not** a wrapper
+> around the separate [Microsoft Foundry Local](https://github.com/microsoft/Foundry-Local)
+> desktop runtime, catalog or downloader — that dependency has been removed entirely. The
+> core links directly against the ONNX Runtime GenAI C API.
 
 User data never leaves the device, responses start immediately with zero network latency,
-and your app works offline. No per-token costs, no API keys, no backend to maintain.
+and your app works fully offline. No per-token costs, no API keys, no backend to maintain,
+and no SDK-managed model catalog or download service.
+
+## How it works
+
+The SDK is **path-only**. You supply a local directory containing either:
+
+- a flat OGA model — a directory with `genai_config.json` (plus the model weights,
+  tokenizer, etc.), or
+- a supported `.ortpackage`-style OGA package directory — a directory with a top-level
+  `manifest.json` and no `genai_config.json`, which OGA itself resolves per execution
+  provider.
+
+Getting that directory onto the device (bundled in the app, downloaded by your own code,
+unzipped from your own storage) is entirely up to you. The SDK does not fetch, cache,
+verify or manage models on your behalf.
+
+```kotlin
+val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
+val model = foundry.loadModel(path = "/data/user/0/com.example.app/files/models/qwen3-5")
+
+val chat = model.createChatSession()
+chat.completeStreaming("What is the golden ratio?").collect { delta -> print(delta.text) }
+```
 
 ## Supported targets
 
@@ -24,160 +50,90 @@ and your app works offline. No per-token costs, no API keys, no backend to maint
 | **Flutter** | `foundry_local_mobile` (pub) | Dart — FFI, `Future` + `Stream` |
 | **React Native** | `@foundry-local/react-native` (npm) | TypeScript — `Promise` + async iterators |
 
-All four bindings sit on the **same** native core, so behaviour, model cache layout and
-model-package selection are identical across platforms.
+All four bindings expose the same path-first `loadModel(path, executionProvider,
+providerOptions)` shape and sit on the same native core, so behaviour is identical across
+platforms. Release packaging and on-device validation are at different stages of
+readiness per binding — see [Current maturity](#current-maturity) below.
 
-### Maturity
+## Model directory requirements
 
-The bindings are not equally proven, and it would be misleading to present them as if they
-were. What each one has actually been through:
+`loadModel()` (`flm_manager_load_model_async` in the C ABI) needs a path to a directory
+that is:
 
-| Target | Compiled | Verified on device |
-|---|---|---|
-| **Core (C++ / C ABI)** | Yes — Linux and Android NDK (`arm64-v8a`, `armeabi-v7a`, `x86_64`) | Not on a phone, but exercised end to end against the real Foundry Local runtime, inference included: a real ONNX model is added as a source, loaded, and generates tokens that stream back as deltas with usage counts and session history. Bundled sources: a package is scored against the host's execution providers and the matching variant published into the cache. Remote: the same over HTTP from a credential-gated server — only the winning variant's bytes are requested, digests verified, the app's `Authorization` header on every request, and a second run transfers nothing. Interrupt it and it resumes from the byte it stopped at; cancel it and the job ends cancelled with the partial file kept |
-| **Android** | Yes — AAR builds; JNI exports reconciled against Kotlin declarations in CI | Not yet |
-| **iOS** | Partly — the Foundation subset type-checks against the real C ABI headers under strict concurrency; the UIKit/Network parts need a Mac | No |
-| **Flutter** | Yes — `flutter analyze` clean and the example app builds an APK carrying the core for all three ABIs | Not yet |
-| **React Native** | Yes on Android — the TurboModule compiles against the Kotlin binding in CI, and every method in the codegen'd spec is checked for an implementation. The iOS half is unbuilt: it needs CocoaPods and Xcode | No |
+- **caller-owned** — the SDK never deletes, moves or writes into it, and it must stay
+  present for as long as the model is loaded;
+- **a valid OGA model directory** — either a flat model (`genai_config.json` at the top
+  level) or an OGA package directory (`manifest.json` at the top level, no
+  `genai_config.json`);
+- **on local storage the process can read** — an app-private directory, extracted APK/
+  bundle assets, or external storage the app has permission for.
 
-"Compiled" is a real guarantee and a narrow one: the Android binding's native symbols are
-checked against its Kotlin `external fun` declarations at build time, which turns what
-would otherwise be an `UnsatisfiedLinkError` on a user's phone into a build failure. It
-says nothing about whether the code behaves correctly once it runs. Treat the unchecked
-rows as unproven rather than broken, and please report what you find.
+Optional load options let you pin an execution provider and pass EP-specific options:
 
-The core's end-to-end run is worth reading precisely: the download and packaging paths
-were proved against the genuine runtime on a desktop Linux host with a fixture package,
-and inference separately with a real model whose weights are small and randomly
-initialised, so it emits real tokens that mean nothing. Resume was checked both against a
-server that honours `Range` and one that ignores it — the second is common on plain object
-storage, and the SDK notices the oversized file, discards it and refetches rather than
-committing a corrupt model. No binding has executed on phone hardware.
-
-### Naming a model source
-
-A model source's `name` is not just a label. The runtime picks a session implementation
-from the model's *task* (`chat-completion`, `automatic-speech-recognition`, `embeddings`,
-…), and it learns tasks from the Foundry Local catalog. Name a source after the catalog
-model it actually is — `qwen2.5-0.5b-instruct-generic-cpu:4`, not `my-model` — and the
-task comes with it and inference works. That is the normal case for this SDK: a model
-package is a catalog model the app happens to be shipping or hosting itself.
-
-Give it a name the catalog has never seen and it becomes what upstream's code calls a
-"BYO model": a synthesised entry with an empty task, which `Session::Create` refuses.
-Everything before that still succeeds — the model downloads, verifies, installs, appears
-in the catalog and loads into memory — so the failure surfaces at the last possible
-moment. `flm_session_create` names the cause rather than passing along upstream's blank
-`unsupported model task: `. Nothing in the ABI can set a task; a genuinely custom model
-needs a change upstream.
-
-Verified end to end with a real ONNX GenAI model — real weights and tokenizer, not a
-fixture: prompt templated and tokenized, the ONNX graph executed, 24 tokens sampled and
-detokenized, streamed back as deltas, counted in `usage`, recorded in session history, and
-the model unloaded cleanly afterwards.
-
-### Add model sources before you query the catalog
-
-Foundry Local scans the device for models once — the first time anything asks its catalog
-a question — and keeps that answer for the life of the process. Nothing can make it scan
-again: there is no refresh in its API, and the internal one is reachable only by
-registering an execution provider, which on a phone means downloading a desktop build.
-
-So order matters. Add your model sources first, then query. An app that opens on a "your
-models" screen and adds a source afterwards gets a model that downloaded and installed
-correctly but has no handle and cannot be looked up, because the scan that would have
-found it already ran. `add_model_source` reports this in `model_handle_unavailable`
-rather than leaving a bare zero to interpret.
-
-It costs one launch, not the model: the files are committed, and the next launch scans a
-disk that already holds them. Verified both ways — sources-first works on the first run,
-catalog-first works on the second.
-
-## Why a separate mobile SDK?
-
-Mobile is not just "desktop with a smaller screen". This repo exists because on-device AI
-on phones has constraints that the desktop SDK does not model:
-
-- **Sandboxed storage.** Model caches must live in app-private directories that the OS may
-  evict. The SDK resolves and manages those paths for you.
-- **Metered networks and multi-GB models.** Downloads must be resumable, cancellable,
-  Wi-Fi-aware, and must fetch *only* the model-package variants the device can actually run.
-- **Hard memory ceilings.** iOS jetsam and Android low-memory kills mean models must unload
-  on memory pressure and reload transparently.
-- **App lifecycle.** Inference has to pause and resume as the app moves between foreground
-  and background.
-- **Heterogeneous NPUs.** Qualcomm QNN, Apple Neural Engine and CPU fallbacks are selected
-  per-device from model-package variant metadata.
-
-## Native ONNX Runtime Model Package support
-
-Model packages are a first-class concept in this SDK, not an implementation detail.
-A package bundles multiple build **variants** of the same model — one per execution
-provider / device / compatibility string — behind a single manifest.
-
-Your app can inspect the variants of a package and decide what to download, which is
-exactly what a cross-platform app needs:
-
-Point the SDK at a package manifest and it scores this device against every variant,
-then fetches only the one that device can run:
-
-```dart
-final result = await foundry.addModelSource(
-  const ModelSource.remote(
-    name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
-    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
-    // Your cross-platform policy, applied before anything is transferred.
-    constraints: VariantConstraints(
-      maxDownloadBytes: 800 * 1024 * 1024,
-      allowedDevices: [FlmDevice.npu, FlmDevice.gpu, FlmDevice.cpu],
-    ),
-  ),
-  onProgress: (p) => print('${p.percent}%'),
-);
-
-// What was actually chosen, and what else the package offered.
-for (final v in result.model?.package?.variants ?? const []) {
-  print('${v.id}  ep=${v.executionProvider} device=${v.device} '
-        'size=${v.downloadSizeBytes} compatible=${v.isCompatible} '
-        'reason=${v.incompatibilityReason}');
-}
+```json
+{ "execution_provider": "QNN", "provider_options": { "backend_path": "libQnnHtp.so" } }
 ```
 
-The scoring runs against the manifest before any weights move, so a phone never spends
-bytes on a QNN build it has no NPU for, or an iOS-only CoreML build. Only the selected
-variant's files plus the shared assets it references are fetched — in a package whose
-variants share a tokenizer, that shared file is downloaded once.
+There is no manifest format, digest verification, resumable transfer, or variant-scoring
+step performed by the SDK itself — that all lives with OGA (for package directories) or
+with whatever process put the files on disk.
 
-See [`docs/model-packages.md`](docs/model-packages.md) for the full model.
+## Architecture
 
-## Bring your own model
-
-Models do not have to come from a catalog. Ship one inside your app, or host it on storage
-you control and give the SDK the URL and credentials:
-
-```kotlin
-// Bundled in the app — works offline from first launch.
-val local = foundry.addModelSource(
-    ModelSource.Bundled(
-        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
-        path = extractedModelDir.absolutePath,
-    )
-).model
-
-// Or downloaded from your own storage, with your own credentials.
-val remote = foundry.addModelSource(
-    ModelSource.Remote(
-        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
-        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
-        headers = mapOf("Authorization" to "Bearer $token"),
-    )
-).model
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│  App code                                                                 │
+├──────────────┬──────────────┬───────────────┬─────────────────────────────┤
+│  Kotlin API  │  Swift API   │  Dart API     │  TypeScript API             │
+├──────────────┼──────────────┼───────────────┼─────────────────────────────┤
+│  JNI bridge  │  Swift C     │  dart:ffi     │  TurboModule (reuses the    │
+│  (C++)       │  interop     │  (direct)     │  Kotlin + Swift bindings)   │
+├──────────────┴──────────────┴───────────────┴─────────────────────────────┤
+│  flm_* — flat, FFI-friendly C ABI (version 2)                              │
+│  handles · async jobs · callbacks · JSON metadata                          │
+├───────────────────────────────────────────────────────────────────────────┤
+│  Mobile core (C++20): job pool · device profile · lifecycle                │
+├───────────────────────────────────────────────────────────────────────────┤
+│  ONNX Runtime GenAI (linked directly) — model load · tokenize · generate   │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-When the URL serves a model package, the SDK scores this device against the variants and
-downloads only the one it can run. Downloads resume across restarts and every file is
-verified against its manifest digest. See
-[`docs/model-sources.md`](docs/model-sources.md).
+See [docs/architecture.md](docs/architecture.md) for the full breakdown.
+
+## Current maturity
+
+Be precise about what is proven and what is not:
+
+| Capability | Status |
+|---|---|
+| Load a local OGA model directory (flat or package) | Implemented |
+| Text chat completion, streaming deltas | Implemented — Windows end-to-end tested against the OGA `qwen3-5` fixture model |
+| Multi-turn history (export/restore/undo/clear) | Implemented and Windows E2E-tested |
+| Audio transcription (batch and streaming) | **Not implemented** — returns `FLM_ERROR_NOT_IMPLEMENTED` |
+| Embeddings | **Not implemented** — returns `FLM_ERROR_NOT_IMPLEMENTED` |
+| Multimodal input (image/audio content parts) | **Not implemented / incomplete** |
+| Structured tool-call event parsing | **Not implemented** — the model's raw text is not parsed into structured tool calls; `finish_reason: tool_calls` is never produced today |
+| Android build | Compiles for `arm64-v8a`, `armeabi-v7a`, `x86_64`; on-device E2E not yet proven |
+| iOS build | Compiles against the C ABI; on-device E2E not yet proven |
+| Flutter / React Native | Path-first API surface present; release packaging and device validation in progress |
+
+There is no catalog, no remote model download, no transport layer, and no SDK-managed
+cache deletion anywhere in this SDK — those concerns belong entirely to your app.
+
+## Build summary
+
+The Android/iOS native builds compile the ONNX Runtime GenAI source tree pinned at commit
+[`9d336e4`](https://github.com/microsoft/onnxruntime-genai/commit/9d336e4db4e49eeceda909517b882c0d73cc6c86),
+staged by `scripts/fetch_onnxruntime_genai.sh`.
+
+```bash
+./scripts/fetch_onnxruntime_genai.sh   # stage OGA source into third_party/
+./scripts/build.sh linux               # native core, for local iteration
+./scripts/build.sh android             # arm64-v8a, armeabi-v7a, x86_64
+./scripts/build.sh apple               # XCFramework (macOS host only)
+```
+
+Full details, prerequisites and troubleshooting: [docs/building.md](docs/building.md).
 
 ## Quickstart
 
@@ -189,20 +145,8 @@ verified against its manifest digest. See
 // (lifecycleScope, viewModelScope, or your own).
 val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
 
-// Point the SDK at your model: bundled in the app, or hosted on storage you control.
-val added = foundry.addModelSource(
-    ModelSource.Remote(
-        name = "qwen2.5-0.5b-instruct-generic-cpu:4",
-        url = "https://models.example.com/qwen2.5-0.5b/manifest.json",
-    )
-) { progress -> println("${progress.percent}%") }
-
-// requireModel() throws IllegalStateException with an actionable message on the
-// rare "download succeeded but the catalog missed it" case. Read added.model
-// directly and fall back to catalog.getModel(name) if you want to handle it.
-val model = added.requireModel()
-
-model.load()
+// Point the SDK at a local model directory you already put on disk.
+val model = foundry.loadModel(path = modelDir.absolutePath)
 
 val chat = model.createChatSession()
 chat.completeStreaming("What is the golden ratio?").collect { delta ->
@@ -218,19 +162,8 @@ chat.completeStreaming("What is the golden ratio?").collect { delta ->
 ```swift
 let foundry = try FoundryLocal(config: .init(appName: "my-app"))
 
-// Point the SDK at your model: bundled in the app, or hosted on storage you control.
-let source = ModelSource.remote(
-    name: "qwen2.5-0.5b-instruct-generic-cpu:4",
-    url: URL(string: "https://models.example.com/qwen2.5-0.5b/manifest.json")!
-)
-let result = try await foundry.addModelSource(source) { progress in
-    print("\(progress.percent)%")
-}
-
-// `model` is nil only if the download succeeded but the catalog scan missed the
-// files; look the model up by name through `foundry.catalog` if that happens.
-guard let model = result.model else { return }
-try await model.load()
+// Point the SDK at a local model directory you already put on disk.
+let model = try await foundry.loadModel(at: "/path/to/models/qwen3-5")
 
 let chat = try model.createChatSession()
 for try await delta in chat.completeStreaming("What is the golden ratio?") {
@@ -246,21 +179,12 @@ for try await delta in chat.completeStreaming("What is the golden ratio?") {
 ```dart
 final foundry = await FoundryLocal.create(const FoundryLocalConfig(appName: 'my-app'));
 
-// Point the SDK at your model: bundled in the app, or hosted on storage you control.
-final result = await foundry.addModelSource(
-  const ModelSource.remote(
-    name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
-    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
-  ),
-  onProgress: (p) => print('${p.percent}%'),
-);
-
-final model = result.model!;
-await model.load();
+// Point the SDK at a local model directory you already put on disk.
+final model = await foundry.loadModel('/path/to/models/qwen3-5');
 
 final chat = model.createChatSession();
 await for (final delta in chat.completeStreaming('What is the golden ratio?')) {
-  stdout.write(delta.text);
+  if (delta is TextDelta) stdout.write(delta.text);
 }
 ```
 
@@ -272,15 +196,8 @@ await for (final delta in chat.completeStreaming('What is the golden ratio?')) {
 ```ts
 const foundry = await FoundryLocal.create({ appName: 'my-app' });
 
-// Point the SDK at your model: bundled in the app, or hosted on storage you control.
-const result = await foundry.addModelSource(
-  { kind: 'remote', name: 'qwen2.5-0.5b-instruct-generic-cpu:4',
-    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json' },
-  (p) => console.log(`${p.percent}%`),
-);
-
-const model = result.model!;
-await model.load();
+// Point the SDK at a local model directory you already put on disk.
+const model = await foundry.loadModel('/path/to/models/qwen3-5');
 
 const chat = model.createChatSession();
 for await (const delta of chat.completeStreaming('What is the golden ratio?')) {
@@ -295,7 +212,7 @@ for await (const delta of chat.completeStreaming('What is the golden ratio?')) {
 ```
 core/                 C++ core + flat C ABI (flm_*) that every binding calls
   include/            Public headers — the single source of truth for the ABI
-  src/                Implementation over the Foundry Local flApi function tables
+  src/                Implementation directly over the ONNX Runtime GenAI C API
 bindings/
   android/            Gradle library: JNI bridge + Kotlin API
   ios/                Swift Package: C interop + Swift API
@@ -303,18 +220,27 @@ bindings/
   react-native/       TurboModule (Kotlin + Swift) + TypeScript API
 samples/              Runnable sample apps (Android today; more as bindings mature)
 scripts/              Cross-compilation and packaging scripts
-docs/                 Architecture, model packages, platform notes
+docs/                 Architecture, model directory requirements, platform notes
 ```
 
 ## Documentation
 
 - [Architecture](docs/architecture.md) — how the layers fit together and why
-- [Model sources](docs/model-sources.md) — bundling a model, or downloading from your own storage
-- [Model packages](docs/model-packages.md) — variants, selection, selective download
+- [Model packages](docs/model-packages.md) — flat OGA models vs. OGA package directories
 - [Building from source](docs/building.md) — NDK / Xcode toolchains and packaging
 - [Platform support](docs/platform-support.md) — OS versions, ABIs, accelerators
 
+## Limitations
+
+- No catalog, no remote model download/transport, no SDK-managed cache or cache deletion.
+- Audio transcription, streaming audio, embeddings, multimodal inputs, and structured
+  tool-call event parsing are not implemented or not complete; calls either return
+  `FLM_ERROR_NOT_IMPLEMENTED` or are best-effort text-only.
+- Android and iOS on-device (physical hardware) end-to-end validation is not yet proven;
+  today's proof point is a Windows E2E run against the OGA `qwen3-5` fixture model.
+- Flutter and React Native release packaging and device validation may still be in
+  progress even though their path-first APIs are present.
+
 ## License
 
-MIT — see [LICENSE](LICENSE). Models downloaded through Foundry Local are subject to their
-own license terms.
+MIT — see [LICENSE](LICENSE). Models you load are subject to their own license terms.

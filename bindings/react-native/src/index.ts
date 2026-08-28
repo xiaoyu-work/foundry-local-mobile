@@ -2,8 +2,7 @@
 // Licensed under the MIT License.
 
 export { FoundryLocal } from './FoundryLocal';
-export { Catalog } from './Catalog';
-export { Model, ModelPackage } from './Model';
+export { Model } from './Model';
 export {
   Session,
   ChatSession,
@@ -16,29 +15,14 @@ export {
   type FoundryLocalErrorCode,
 } from './errors';
 export type {
-  // Config
   FoundryLocalConfig,
   LogLevel,
-  // Device profile
   DeviceProfile,
   ExecutionProviderInfo,
   FlmDevice,
   NetworkKind,
   ThermalState,
-  // Model metadata
   ModelInfo,
-  ModelVariant,
-  PackageVariants,
-  DownloadEstimate,
-  VariantConstraints,
-  // Model sources
-  ModelSource,
-  BundledModelSource,
-  RemoteModelSource,
-  ModelSourceResult,
-  // Catalog
-  CatalogFilter,
-  // Sessions and requests
   ChatOptions,
   AudioOptions,
   EmbeddingOptions,
@@ -55,7 +39,6 @@ export type {
   TranscribeResult,
   TranscribeSegment,
   EmbeddingResult,
-  // Streaming
   Delta,
   Progress,
 } from './types';

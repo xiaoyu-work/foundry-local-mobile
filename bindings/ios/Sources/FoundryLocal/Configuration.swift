@@ -18,30 +18,8 @@ public struct FoundryLocalConfig: Sendable {
     /// Defaults to the app's Application Support directory when nil.
     public var appDataDir: String?
 
-    /// Directory the model cache lives in. Defaults to `<appDataDir>/models`.
-    public var modelCacheDir: String?
-
-    /// Directory the core writes its own logs to. Defaults to `<appDataDir>/logs`.
-    public var logsDir: String?
-
     /// Minimum severity forwarded through ``FoundryLocal/logSink``.
     public var logLevel: LogLevel = .warning
-
-    /// Alternate catalog URLs. Empty means "use the Foundry catalog".
-    public var catalogUrls: [String] = []
-
-    /// Azure region hint for the catalog. Ignored when custom URLs are set.
-    public var catalogRegion: String?
-
-    /// Serve only from the local cache. Fails downloads and catalog lookups that need
-    /// the network.
-    public var offline: Bool = false
-
-    /// Concurrent download slots. `0` uses the ABI default (2).
-    public var maxConcurrentDownloads: Int = 0
-
-    /// Allow downloads over a cellular / metered connection.
-    public var downloadOnMeteredNetwork: Bool = false
 
     /// Unload loaded models when the app is backgrounded.
     public var autoUnloadOnBackground: Bool = true
@@ -49,37 +27,18 @@ public struct FoundryLocalConfig: Sendable {
     /// Job-pool thread count. `0` = derive from CPU cores.
     public var jobPoolThreads: Int = 0
 
-    /// Additional runtime-specific options, forwarded verbatim.
-    public var additionalOptions: [String: String] = [:]
-
     public init(
         appName: String,
         appDataDir: String? = nil,
-        modelCacheDir: String? = nil,
-        logsDir: String? = nil,
         logLevel: LogLevel = .warning,
-        catalogUrls: [String] = [],
-        catalogRegion: String? = nil,
-        offline: Bool = false,
-        maxConcurrentDownloads: Int = 0,
-        downloadOnMeteredNetwork: Bool = false,
         autoUnloadOnBackground: Bool = true,
-        jobPoolThreads: Int = 0,
-        additionalOptions: [String: String] = [:]
+        jobPoolThreads: Int = 0
     ) {
         self.appName = appName
         self.appDataDir = appDataDir
-        self.modelCacheDir = modelCacheDir
-        self.logsDir = logsDir
         self.logLevel = logLevel
-        self.catalogUrls = catalogUrls
-        self.catalogRegion = catalogRegion
-        self.offline = offline
-        self.maxConcurrentDownloads = maxConcurrentDownloads
-        self.downloadOnMeteredNetwork = downloadOnMeteredNetwork
         self.autoUnloadOnBackground = autoUnloadOnBackground
         self.jobPoolThreads = jobPoolThreads
-        self.additionalOptions = additionalOptions
     }
 }
 
@@ -97,19 +56,10 @@ extension FoundryLocalConfig {
         var payload: [String: Any] = [
             "app_name": appName,
             "log_level": logLevel.rawValue,
-            "offline": offline,
-            "download_on_metered_network": downloadOnMeteredNetwork,
             "auto_unload_on_background": autoUnloadOnBackground,
         ]
         payload["app_data_dir"] = appDataDir ?? Self.defaultAppDataDir(appName: appName)
-        if let modelCacheDir { payload["model_cache_dir"] = modelCacheDir }
-        if let logsDir { payload["logs_dir"] = logsDir }
-        if !catalogUrls.isEmpty { payload["catalog_urls"] = catalogUrls }
-        if let catalogRegion { payload["catalog_region"] = catalogRegion }
-        if maxConcurrentDownloads > 0 { payload["max_concurrent_downloads"] = maxConcurrentDownloads }
         if jobPoolThreads > 0 { payload["job_pool_threads"] = jobPoolThreads }
-        if !additionalOptions.isEmpty { payload["additional_options"] = additionalOptions }
-
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return String(data: data, encoding: .utf8) ?? "{}"
     }
@@ -121,18 +71,12 @@ extension FoundryLocalConfig {
     /// JSON directly, but declared here to document the wire schema alongside the
     /// full config it derives from.
     struct RuntimeSettings: Encodable {
-        var downloadOnMeteredNetwork: Bool?
-        var maxConcurrentDownloads: Int?
         var logLevel: FoundryLocalConfig.LogLevel?
         var autoUnloadOnBackground: Bool?
-        var offline: Bool?
 
         enum CodingKeys: String, CodingKey {
-            case downloadOnMeteredNetwork = "download_on_metered_network"
-            case maxConcurrentDownloads = "max_concurrent_downloads"
             case logLevel = "log_level"
             case autoUnloadOnBackground = "auto_unload_on_background"
-            case offline
         }
     }
 
@@ -147,15 +91,12 @@ extension FoundryLocalConfig {
                 create: true
             )
         } catch {
-            base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            base = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         }
-        // Sub-directory keyed by app name lets two SDK instances (say, host app and an
-        // extension sharing the container) cohabit without stepping on each other.
         let dir = base.appendingPathComponent("FoundryLocal/\(appName)", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var url = dir
-        // Model caches on iOS are often multi-gigabyte; make sure iCloud doesn't try
-        // to back them up.
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         try? url.setResourceValues(values)

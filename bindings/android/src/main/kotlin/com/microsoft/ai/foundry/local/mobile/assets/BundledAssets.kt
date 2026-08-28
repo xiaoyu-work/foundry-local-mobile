@@ -11,7 +11,8 @@ import java.security.MessageDigest
 
 /**
  * Extract model directories that ship inside the APK's `assets/` tree to a
- * real filesystem path that `flm_manager_add_model_source` can accept.
+ * real filesystem path that [com.microsoft.ai.foundry.local.mobile.FoundryLocal.loadModel]
+ * can accept.
  *
  * Android's `AssetManager.open` returns a stream but never a real path — the
  * files are packed and (unless [android.content.pm.PackageManager.getApplicationInfo]'s
@@ -26,34 +27,12 @@ import java.security.MessageDigest
  *
  * to the app's `build.gradle`. Uncompressed model files can then be mmapped
  * straight out of the APK during copy without going through zlib.
- *
- * ### Atomicity
- *
- * The extraction writes into a sibling `.staging/` directory and renames it
- * onto the target path only after every file has been copied. A crash halfway
- * through leaves a stale staging directory that the next launch cleans up
- * rather than a half-populated model directory that the runtime would try to
- * load.
- *
- * ### Idempotence
- *
- * A `.assets-manifest` file with a digest of the asset tree is written after
- * a successful extraction. On subsequent launches, if the manifest matches
- * the current asset digest, the extraction is skipped. Change the assets
- * (e.g. ship a new model) and the digest changes and the extraction re-runs.
  */
 public object BundledAssets {
 
     private const val MANIFEST_FILE = ".assets-manifest"
     private const val STAGING_SUFFIX = ".staging"
 
-    /**
-     * Extract [assetPath] under `context.assets` to [target], writing a
-     * manifest so the copy is a no-op on subsequent launches.
-     *
-     * @return the [target] path, for convenient chaining.
-     * @throws IllegalArgumentException if [assetPath] is empty.
-     */
     @JvmStatic
     @JvmOverloads
     public fun extractDirectory(
@@ -83,32 +62,21 @@ public object BundledAssets {
 
         if (target.exists()) target.deleteRecursively()
         if (!staging.renameTo(target)) {
-            // Best-effort fallback for file systems where rename fails across
-            // hard-link boundaries. Copy then delete.
             copyDirectory(staging, target)
             staging.deleteRecursively()
         }
         return target
     }
 
-    /**
-     * Convenience: extract to `context.filesDir/models/<name>` and return
-     * that directory. Suitable for the common case of one model per app.
-     */
     @JvmStatic
     public fun extractToFilesDir(context: Context, assetPath: String, name: String): File {
         val target = File(File(context.filesDir, "models"), name)
         return extractDirectory(context, assetPath, target)
     }
 
-    // -----------------------------------------------------------------
-
     private fun copyTree(assets: AssetManager, assetPath: String, dest: File) {
         val children = assets.list(assetPath) ?: emptyArray()
         if (children.isEmpty()) {
-            // Leaf — treat as a file. `list` returns an empty array for both
-            // leaves and empty directories; if reading throws we treat it as
-            // an empty directory.
             try {
                 assets.open(assetPath).use { input ->
                     dest.parentFile?.mkdirs()
@@ -116,7 +84,6 @@ public object BundledAssets {
                 }
                 return
             } catch (_: Throwable) {
-                // Not a file after all — must have been an empty directory.
                 dest.mkdirs()
                 return
             }
@@ -137,10 +104,6 @@ public object BundledAssets {
         }
     }
 
-    /**
-     * SHA-256 over the asset tree's names and sizes. Cheap enough to run on
-     * every launch — hundreds of files add up to milliseconds.
-     */
     private fun digestOfAssets(assets: AssetManager, assetPath: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         digestAssetsInto(assets, assetPath, digest)
@@ -156,9 +119,6 @@ public object BundledAssets {
                     digest.update(fd.length.toString().encodeToByteArray())
                 }
             }.onFailure {
-                // Compressed assets do not expose an offset FD; fall back to
-                // hashing a short-hand of the stream length. The intent is
-                // change detection, not cryptographic assurance.
                 runCatching {
                     assets.open(assetPath).use { s ->
                         val buf = ByteArray(4096)

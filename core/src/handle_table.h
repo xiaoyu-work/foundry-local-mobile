@@ -29,7 +29,6 @@ namespace flm {
 /// model handle is expected fails cleanly instead of reinterpreting memory.
 enum class HandleKind : uint8_t {
   kManager = 1,
-  kCatalog = 2,
   kModel = 3,
   kSession = 4,
   kJob = 5,

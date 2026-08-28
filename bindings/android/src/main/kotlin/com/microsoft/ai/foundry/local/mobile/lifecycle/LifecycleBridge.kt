@@ -23,9 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The core needs foreground/background transitions to auto-unload models
  * before iOS jetsam or Android low-memory kills the process. It needs memory
- * warnings to trim caches. It needs metered/unmetered transitions to pause
- * or resume background downloads. Every one of these ships in the platform,
- * and mapping them is a one-time job.
+ * warnings to trim caches. It also consumes metered/unmetered transitions from
+ * the platform, and mapping them is a one-time job.
  *
  * There is one bridge instance per process, and it multiplexes into every
  * live [FoundryLocal]. Registration is idempotent: if this class is not

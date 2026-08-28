@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 group 'com.microsoft.ai.foundry.local.mobile'
-version '0.1.0'
+version '0.2.0'
 
 buildscript {
     ext.kotlin_version = '1.9.10'
@@ -67,7 +67,17 @@ android {
     externalNativeBuild {
         cmake {
             path 'CMakeLists.txt'
-            version '3.22.1'
+            version '3.31.6'
+        }
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts += [
+                '**/libc++_shared.so',
+                '**/libonnxruntime-genai.so',
+                '**/libonnxruntime.so'
+            ]
         }
     }
 

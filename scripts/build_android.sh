@@ -56,9 +56,6 @@ Options:
 Environment:
   ANDROID_NDK_HOME      Required. Path to the NDK. \$ANDROID_NDK_ROOT is used
                         as a fallback for compatibility with older tooling.
-  FLM_FOUNDRY_LOCAL_INCLUDE_DIR
-                        Passed through to CMake if set; otherwise the CMake
-                        default resolution is used (see fetch_foundry_local.sh).
 
 Exit status:
   0  every requested ABI built successfully
@@ -226,10 +223,6 @@ build_one_abi() {
     if command -v ninja >/dev/null 2>&1; then
         cmake_args+=(-G Ninja)
     fi
-    if [[ -n "${FLM_FOUNDRY_LOCAL_INCLUDE_DIR:-}" ]]; then
-        cmake_args+=(-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR="${FLM_FOUNDRY_LOCAL_INCLUDE_DIR}")
-    fi
-
     cmake "${cmake_args[@]}"
     cmake --build "${build_dir}" --config "${BUILD_TYPE}" --parallel "${JOBS}"
 
@@ -249,6 +242,51 @@ build_one_abi() {
     if [[ -n "${STRIP_BIN}" ]] && is_release_type "${BUILD_TYPE}"; then
         "${STRIP_BIN}" --strip-unneeded "${lib_dst_dir}/libfoundry_local_mobile.so"
     fi
+
+    # ---------- ONNX Runtime GenAI + ONNX Runtime shared libraries ----------
+    # The core dlopens libonnxruntime-genai.so at runtime, which in turn
+    # dlopens libonnxruntime.so. Both must ship in the same jniLibs/<abi>/
+    # directory so Android's class loader can resolve them. The nested OGA
+    # CMake build produces libonnxruntime-genai.so under the build tree and
+    # downloads libonnxruntime.so into ORT_LIB_DIR.
+
+    # 1) libonnxruntime-genai.so — produced by the OGA subdirectory build.
+    local oga_so=""
+    oga_so="$(find "${build_dir}" -name 'libonnxruntime-genai.so' -type f -print -quit 2>/dev/null || true)"
+    if [[ -z "${oga_so}" ]]; then
+        die "libonnxruntime-genai.so not found under ${build_dir}. The OGA subdirectory build may have failed."
+    fi
+    cp "${oga_so}" "${lib_dst_dir}/libonnxruntime-genai.so"
+    if [[ -n "${STRIP_BIN}" ]] && is_release_type "${BUILD_TYPE}"; then
+        "${STRIP_BIN}" --strip-unneeded "${lib_dst_dir}/libonnxruntime-genai.so"
+    fi
+    log "wrote ${lib_dst_dir}/libonnxruntime-genai.so"
+
+    # 2) libonnxruntime.so — the OGA build downloads ONNX Runtime into a
+    #    FetchContent or ORT_HOME directory. Walk up from the OGA .so to
+    #    locate it deterministically.
+    local ort_so=""
+    ort_so="$(find "${build_dir}" -path "*/jni/${abi}/libonnxruntime.so" -type f -print -quit 2>/dev/null || true)"
+    if [[ -z "${ort_so}" ]]; then
+        die "libonnxruntime.so not found under ${build_dir}. ONNX Runtime may not have been fetched by OGA's cmake/ortlib.cmake."
+    fi
+    cp "${ort_so}" "${lib_dst_dir}/libonnxruntime.so"
+    if [[ -n "${STRIP_BIN}" ]] && is_release_type "${BUILD_TYPE}"; then
+        "${STRIP_BIN}" --strip-unneeded "${lib_dst_dir}/libonnxruntime.so"
+    fi
+    log "wrote ${lib_dst_dir}/libonnxruntime.so"
+
+    # 3) Optional provider libraries (e.g. libonnxruntime_providers_*.so).
+    #    Ship them when present so acceleration paths that rely on them work.
+    while IFS= read -r -d '' prov_so; do
+        local prov_name
+        prov_name="$(basename "${prov_so}")"
+        cp "${prov_so}" "${lib_dst_dir}/${prov_name}"
+        if [[ -n "${STRIP_BIN}" ]] && is_release_type "${BUILD_TYPE}"; then
+            "${STRIP_BIN}" --strip-unneeded "${lib_dst_dir}/${prov_name}"
+        fi
+        log "wrote ${lib_dst_dir}/${prov_name} (optional provider)"
+    done < <(find "${build_dir}" -path "*/jni/${abi}/libonnxruntime_providers_*.so" -type f -print0 2>/dev/null || true)
 
     # Ship the STL alongside the library. libfoundry_local_mobile.so links
     # dynamically against libc++_shared.so (see readelf -d), so any consumer
@@ -271,7 +309,10 @@ build_one_abi() {
         fi
     fi
 
+    # 16-KB alignment assertions for all 64-bit native libraries.
     assert_16k_aligned_load_segments "${abi}" "${lib_dst_dir}/libfoundry_local_mobile.so"
+    assert_16k_aligned_load_segments "${abi}" "${lib_dst_dir}/libonnxruntime-genai.so"
+    assert_16k_aligned_load_segments "${abi}" "${lib_dst_dir}/libonnxruntime.so"
 
     log "wrote ${lib_dst_dir}/libfoundry_local_mobile.so"
 }

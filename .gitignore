@@ -18,9 +18,9 @@ compile_commands.json
 CMakeCache.txt
 CMakeFiles/
 
-# Prebuilt / downloaded Foundry Local native artifacts
+# Staged / downloaded ONNX Runtime GenAI source tree
 prebuilt/
-third_party/foundry-local/
+third_party/onnxruntime-genai/
 
 # ---------------------------------------------------------------------------
 # Android

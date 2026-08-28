@@ -4,16 +4,17 @@
 
 import PackageDescription
 
-// The native core ships as an XCFramework. Build it locally with
-// `scripts/build_apple.sh` at the repo root (which invokes CMake +
-// `xcodebuild -create-xcframework` and drops the result at
-// `build/apple/FoundryLocalMobile.xcframework`); then copy or symlink it into
-// `Frameworks/`. Once releases attach a prebuilt artefact, replace the local
-// `binaryTarget` below with `.binaryTarget(name:url:checksum:)`.
+// The native core ships as two XCFrameworks:
 //
-// The XCFramework contains a proper `.framework` bundle per slice with an umbrella
-// header and a module map, so `import FoundryLocalMobile` resolves the flat C ABI
-// in Swift without a bridging header.
+//   1. FoundryLocalMobile.xcframework — the core C ABI library.
+//   2. onnxruntime-genai.xcframework — ONNX Runtime GenAI, which the core
+//      loads at runtime for model inference.
+//
+// Build both locally with `scripts/build_apple.sh` at the repo root (which
+// invokes CMake + `xcodebuild -create-xcframework` and drops the results at
+// `build/apple/`); then copy or symlink them into `Frameworks/`. Once releases
+// attach prebuilt artefacts, replace the local `binaryTarget` entries below
+// with `.binaryTarget(name:url:checksum:)`.
 
 let package = Package(
     name: "FoundryLocal",
@@ -31,9 +32,13 @@ let package = Package(
             name: "FoundryLocalMobile",
             path: "Frameworks/FoundryLocalMobile.xcframework"
         ),
+        .binaryTarget(
+            name: "OnnxRuntimeGenAI",
+            path: "Frameworks/onnxruntime-genai.xcframework"
+        ),
         .target(
             name: "FoundryLocal",
-            dependencies: ["FoundryLocalMobile"],
+            dependencies: ["FoundryLocalMobile", "OnnxRuntimeGenAI"],
             path: "Sources/FoundryLocal",
             swiftSettings: [
                 // Swift 6 strict-concurrency cleanliness is a first-class goal for this

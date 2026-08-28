@@ -1,63 +1,50 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 //
-// Binding to the upstream Foundry Local runtime.
+// ONNX Runtime GenAI wrapper.
 //
-// Upstream exposes its functionality through versioned structs of function pointers
-// reached from three exported symbols. Walking those tables is done exactly once, here,
-// so the rest of the core (and every language binding) sees ordinary C++ calls.
-//
-// The runtime is loaded dynamically rather than link-time bound. On mobile that matters:
-// the app may ship the runtime as a separate download to keep the initial APK/IPA small,
-// and a missing runtime must produce a clear error instead of a startup crash.
+// Replaces the former Foundry Local dynamic loader. The core now links directly against
+// the ONNX Runtime GenAI C API (ort_genai_c.h) at build time, so there is no runtime
+// discovery or version-table walk. The Runtime singleton owns OGA process-wide lifecycle
+// (OgaShutdown) and converts OgaResult errors into flm::Error.
 
 #ifndef FOUNDRY_LOCAL_MOBILE_RUNTIME_H_
 #define FOUNDRY_LOCAL_MOBILE_RUNTIME_H_
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <string_view>
 
 #include "error.h"
-
-// Upstream headers. Provided by the Foundry Local SDK; see docs/building.md.
-#include "foundry_local/foundry_local_c.h"
+#include "ort_genai_c.h"
 
 namespace flm {
 
-/// Owns the loaded runtime library and its API tables. Process-wide singleton.
+/// Thin process-wide singleton around the OGA C API lifecycle.
+///
+/// Construction is a no-op (OGA initialises lazily on first model creation).
+/// Destruction calls OgaShutdown after all models/sessions have been destroyed.
 class Runtime {
  public:
-  /// Load the runtime, or throw Error(FLM_ERROR_NOT_IMPLEMENTED) with a diagnostic that
-  /// names the paths searched. Idempotent and thread-safe.
   static Runtime& Instance();
 
-  /// Explicitly point at the runtime shared library. Must be called before Instance().
-  /// Android bindings use this to pass the value of ApplicationInfo.nativeLibraryDir,
-  /// which is the only reliable way to find a bundled .so across all OEM devices.
-  static void SetLibraryPath(std::string path);
+  /// Always true when linked against OGA.
+  static bool IsAvailable() noexcept { return true; }
 
-  /// Whether the runtime loaded successfully, without throwing.
-  static bool IsAvailable() noexcept;
-
-  const flApi& api() const noexcept { return *api_; }
-  const flCatalogApi& catalog_api() const noexcept { return *catalog_api_; }
-  const flConfigurationApi& config_api() const noexcept { return *config_api_; }
-  const flItemApi& item_api() const noexcept { return *item_api_; }
-  const flInferenceApi& inference_api() const noexcept { return *inference_api_; }
-  const flModelApi& model_api() const noexcept { return *model_api_; }
-
+  /// OGA version string. Populated lazily from a compiled-in constant.
   const std::string& version() const noexcept { return version_; }
 
-  /// Convert an upstream flStatus* into an Error and release it. No-op when null.
-  /// Every upstream call site funnels through this so error mapping stays in one place.
-  /// `operation` is folded into the message, so callers may compose it with the model or
-  /// alias involved without needing a separate buffer to keep alive.
-  void Check(flStatus* status, std::string_view operation) const;
+  /// Check an OgaResult* and throw Error if non-null. Destroys the result.
+  void Check(OgaResult* result, std::string_view operation) const;
 
-  /// Same, but returns the status code instead of throwing. For destructors and
-  /// best-effort cleanup paths.
-  flm_status CheckNoThrow(flStatus* status) const noexcept;
+  /// Same, but returns a status code instead of throwing. For destructors.
+  flm_status CheckNoThrow(OgaResult* result) const noexcept;
+
+  /// Increment/decrement the live-object count. OgaShutdown is deferred until all
+  /// objects are destroyed and the Runtime itself is destroyed.
+  void AddRef() const noexcept { live_objects_.fetch_add(1, std::memory_order_relaxed); }
+  void Release() const noexcept { live_objects_.fetch_sub(1, std::memory_order_relaxed); }
 
   ~Runtime();
 
@@ -66,44 +53,31 @@ class Runtime {
   Runtime(const Runtime&) = delete;
   Runtime& operator=(const Runtime&) = delete;
 
-  void LoadLibrary();
-  void ResolveApiTables();
-
-  void* library_handle_ = nullptr;
-  const flApi* api_ = nullptr;
-  const flCatalogApi* catalog_api_ = nullptr;
-  const flConfigurationApi* config_api_ = nullptr;
-  const flItemApi* item_api_ = nullptr;
-  const flInferenceApi* inference_api_ = nullptr;
-  const flModelApi* model_api_ = nullptr;
   std::string version_;
+  mutable std::atomic<int64_t> live_objects_{0};
 };
 
-/// RAII wrapper for an upstream handle released through a table function pointer.
-/// Upstream releases take a non-const pointer and never fail, so this stays minimal.
-template <typename T, typename Releaser>
-class UpstreamHandle {
+/// RAII guard for any Oga* handle that has a matching OgaDestroy* function.
+template <typename T, void (*Destroy)(T*)>
+class OgaHandle {
  public:
-  UpstreamHandle() = default;
-  UpstreamHandle(T* ptr, Releaser releaser) : ptr_(ptr), releaser_(releaser) {}
+  OgaHandle() = default;
+  explicit OgaHandle(T* ptr) : ptr_(ptr) {}
 
-  ~UpstreamHandle() { reset(); }
+  ~OgaHandle() { reset(); }
 
-  UpstreamHandle(UpstreamHandle&& other) noexcept : ptr_(other.ptr_), releaser_(other.releaser_) {
-    other.ptr_ = nullptr;
-  }
-  UpstreamHandle& operator=(UpstreamHandle&& other) noexcept {
+  OgaHandle(OgaHandle&& other) noexcept : ptr_(other.ptr_) { other.ptr_ = nullptr; }
+  OgaHandle& operator=(OgaHandle&& other) noexcept {
     if (this != &other) {
       reset();
       ptr_ = other.ptr_;
-      releaser_ = other.releaser_;
       other.ptr_ = nullptr;
     }
     return *this;
   }
 
-  UpstreamHandle(const UpstreamHandle&) = delete;
-  UpstreamHandle& operator=(const UpstreamHandle&) = delete;
+  OgaHandle(const OgaHandle&) = delete;
+  OgaHandle& operator=(const OgaHandle&) = delete;
 
   T* get() const noexcept { return ptr_; }
   T** put() noexcept {
@@ -113,22 +87,34 @@ class UpstreamHandle {
   explicit operator bool() const noexcept { return ptr_ != nullptr; }
 
   void reset() noexcept {
-    if (ptr_ != nullptr && releaser_ != nullptr) {
-      releaser_(ptr_);
+    if (ptr_ != nullptr) {
+      Destroy(ptr_);
     }
     ptr_ = nullptr;
   }
 
   T* release() noexcept {
-    T* ptr = ptr_;
+    T* p = ptr_;
     ptr_ = nullptr;
-    return ptr;
+    return p;
   }
 
  private:
   T* ptr_ = nullptr;
-  Releaser releaser_ = nullptr;
 };
+
+// Convenience typedefs for every OGA handle type used in the core.
+using OgaConfigHandle = OgaHandle<OgaConfig, OgaDestroyConfig>;
+using OgaModelHandle = OgaHandle<OgaModel, OgaDestroyModel>;
+using OgaTokenizerHandle = OgaHandle<OgaTokenizer, OgaDestroyTokenizer>;
+using OgaTokenizerStreamHandle = OgaHandle<OgaTokenizerStream, OgaDestroyTokenizerStream>;
+using OgaSequencesHandle = OgaHandle<OgaSequences, OgaDestroySequences>;
+using OgaGeneratorParamsHandle = OgaHandle<OgaGeneratorParams, OgaDestroyGeneratorParams>;
+using OgaGeneratorHandle = OgaHandle<OgaGenerator, OgaDestroyGenerator>;
+using OgaMultiModalProcessorHandle = OgaHandle<OgaMultiModalProcessor, OgaDestroyMultiModalProcessor>;
+
+/// Destroy adapter for const char* returned by OGA (OgaDestroyString takes const char*).
+inline void DestroyOgaString(const char* s) { OgaDestroyString(s); }
 
 }  // namespace flm
 

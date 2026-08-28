@@ -18,21 +18,10 @@ export interface FoundryLocalConfig {
   appName: string;
   /** Override the sandbox path (defaults to the app's private data dir). */
   appDataDir?: string;
-  /** Override the model cache path (defaults to `<appDataDir>/models`). */
-  modelCacheDir?: string;
-  logsDir?: string;
   logLevel?: LogLevel;
-  /** Catalog service URLs. Omit to use the Foundry Local defaults. */
-  catalogUrls?: readonly string[];
-  catalogRegion?: string;
-  /** Serve only from the local cache; never touch the catalog service. */
-  offline?: boolean;
-  maxConcurrentDownloads?: number;
-  downloadOnMeteredNetwork?: boolean;
   autoUnloadOnBackground?: boolean;
   /** 0 = derive from the number of CPU cores. */
   jobPoolThreads?: number;
-  additionalOptions?: Readonly<Record<string, string>>;
 }
 
 // -----------------------------------------------------------------------------
@@ -69,7 +58,7 @@ export interface DeviceProfile {
 }
 
 // -----------------------------------------------------------------------------
-// Model / package metadata
+// Model metadata
 // -----------------------------------------------------------------------------
 
 export interface ModelInfo {
@@ -90,137 +79,9 @@ export interface ModelInfo {
   supportsReasoning: boolean;
   inputModalities: readonly string[];
   outputModalities: readonly string[];
-  isPackage: boolean;
   isCached: boolean;
   isLoaded: boolean;
   promptTemplates?: Readonly<Record<string, string>> | null;
-}
-
-export interface ModelVariant {
-  id: string;
-  component: string;
-  executionProvider: string;
-  device: FlmDevice;
-  compatibilityString: string;
-  platform: string;
-  downloadSizeBytes: number;
-  diskSizeBytes: number;
-  sharedAssetRefs: readonly string[];
-  isCompatible: boolean;
-  compatibilityScore: number;
-  isCached: boolean;
-  /** `null` when the variant is compatible. */
-  incompatibilityReason: string | null;
-}
-
-export interface PackageVariants {
-  packageId: string;
-  schemaVersion: string;
-  selectedVariantId: string | null;
-  sharedAssetsBytes: number;
-  variants: readonly ModelVariant[];
-}
-
-export interface DownloadEstimate {
-  downloadBytes: number;
-  diskBytes: number;
-  alreadyCachedBytes: number;
-  availableStorageBytes: number;
-  fitsOnDevice: boolean;
-}
-
-/**
- * Declarative variant selection policy. Applied against the manifest before
- * any bytes transfer, so a phone never pays for a variant it cannot run.
- *
- * These four keys are the entire vocabulary the core honours. Anything else
- * is silently ignored — do not invent additional constraints, and do not
- * assume "and" semantics beyond what is documented here.
- */
-export interface VariantConstraints {
-  /** Skip variants whose selected files exceed this many bytes. */
-  maxDownloadBytes?: number;
-  /** Restrict placement. Omit or empty to mean "any device". */
-  allowedDevices?: readonly FlmDevice[];
-  /** Break ties on download size rather than the compatibility score. */
-  preferSmallest?: boolean;
-  /** Only consider variants whose files are already on disk. */
-  requireCached?: boolean;
-}
-
-// -----------------------------------------------------------------------------
-// Model source (discriminated union)
-// -----------------------------------------------------------------------------
-
-interface ModelSourceCommon {
-  /**
-   * Name the model is registered under, and the thing that decides whether it
-   * can run. The runtime picks a session implementation from the model's task,
-   * and it learns tasks from the Foundry Local catalog. Name the source after
-   * the catalog model it actually is — say
-   * `qwen2.5-0.5b-instruct-generic-cpu:4` rather than `my-model` — and the task
-   * comes with it. A name the catalog has never seen still downloads, installs
-   * and loads, but creating a session on it will fail.
-   */
-  name: string;
-  /**
-   * Whether a partial download already on disk should be resumed. Defaults
-   * to `true`. Set `false` to force a fresh fetch.
-   */
-  resume?: boolean;
-  /**
-   * Whether each file's SHA-256 is verified after download. Defaults to
-   * `true`.
-   */
-  verifyChecksums?: boolean;
-  /**
-   * Variant policy applied when the source resolves to an ONNX Runtime
-   * model package. Ignored for a flat model.
-   */
-  constraints?: VariantConstraints;
-}
-
-export interface BundledModelSource extends ModelSourceCommon {
-  kind: 'bundled';
-  /** Absolute filesystem path to the model directory already on the device. */
-  path: string;
-  /**
-   * Copy the model into the SDK's cache instead of linking to `path`. The
-   * default links, so the app keeps owning those files and must keep them
-   * where they are; copy when it cannot promise that. For a package only the
-   * selected variant is copied.
-   */
-  copyIntoCache?: boolean;
-}
-
-export interface RemoteModelSource extends ModelSourceCommon {
-  kind: 'remote';
-  /** URL to a package manifest or flat file index. */
-  url: string;
-  /** Sent verbatim on every request the transport makes for this source. */
-  headers?: Readonly<Record<string, string>>;
-}
-
-/**
- * How a model is supplied. See `docs/model-sources.md`.
- *
- * The `kind` field discriminates the two shapes. `addModelSource` is the only
- * acquisition path on mobile — the catalog is for listing and inspecting
- * what is already on the device, not for downloading.
- */
-export type ModelSource = BundledModelSource | RemoteModelSource;
-
-// -----------------------------------------------------------------------------
-// Catalog
-// -----------------------------------------------------------------------------
-
-export interface CatalogFilter {
-  task?: string;
-  cachedOnly?: boolean;
-  loadedOnly?: boolean;
-  maxSizeBytes?: number;
-  /** Defaults to `true` — exclude models with no runnable variant. */
-  compatibleOnly?: boolean;
 }
 
 // -----------------------------------------------------------------------------
@@ -407,34 +268,4 @@ export interface Progress {
   etaMs: number;
   stage: string | null;
   detail: string | null;
-}
-
-// -----------------------------------------------------------------------------
-// addModelSource result
-// -----------------------------------------------------------------------------
-
-/**
- * Outcome of a successful {@link FoundryLocal.addModelSource}. The model's
- * files are on disk at {@link ModelSourceResult.path} regardless of whether
- * {@link ModelSourceResult.model} is populated.
- *
- * `model` is the ready-to-use handle the core minted inside the same job. It
- * is `null` when Foundry Local had already scanned the device for models
- * before this source was added: that scan runs once, on the first catalog
- * query of the process, and cannot be repeated, so the model stays invisible
- * for this run and `catalog.getModel(result.name)` fails for the same reason.
- * `handleUnavailableReason` explains it. Add model sources before querying the
- * catalog and it does not happen. The download succeeded either way — the
- * files at `path` are committed and the next launch picks them up.
- */
-export interface ModelSourceResult {
-  name: string;
-  path: string;
-  variantId: string | null;
-  bytesDownloaded: number;
-  bytesReused: number;
-  wasCached: boolean;
-  model: import('./Model').Model | null;
-  /** Why `model` is null, straight from the core. `null` when `model` is present. */
-  handleUnavailableReason: string | null;
 }

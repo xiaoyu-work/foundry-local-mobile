@@ -15,8 +15,6 @@
 -keep class com.microsoft.ai.foundry.local.mobile.internal.NativeBridge { *; }
 -keep class com.microsoft.ai.foundry.local.mobile.internal.NativeProgress { *; }
 -keep class com.microsoft.ai.foundry.local.mobile.internal.NativeDelta { *; }
--keep class com.microsoft.ai.foundry.local.mobile.internal.NativeHttpRequest { *; }
--keep class com.microsoft.ai.foundry.local.mobile.transport.HttpTransport { *; }
 
 # Keep all @JvmStatic and native methods on the bridge.
 -keepclassmembers class * {

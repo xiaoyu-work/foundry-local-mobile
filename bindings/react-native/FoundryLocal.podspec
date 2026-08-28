@@ -38,12 +38,15 @@ Pod::Spec.new do |s|
     "../ios/Sources/FoundryLocal/**/*.swift",
   ]
 
-  # The native core (flat C ABI + ONNX Runtime) is delivered as an
-  # XCFramework. Consumers must build it once with
-  # `scripts/build_apple.sh` and copy or symlink the result into
+  # The native core (flat C ABI + ONNX Runtime) is delivered as two
+  # XCFrameworks. Consumers must build them once with
+  # `scripts/build_apple.sh` and copy or symlink the results into
   # `bindings/ios/Frameworks/`. Same expectation as the standalone Swift
   # Package — see `bindings/ios/Frameworks/README.md`.
-  s.vendored_frameworks = "../ios/Frameworks/FoundryLocalMobile.xcframework"
+  s.vendored_frameworks = [
+    "../ios/Frameworks/FoundryLocalMobile.xcframework",
+    "../ios/Frameworks/onnxruntime-genai.xcframework",
+  ]
 
   # Match the Swift binding's compilation environment (`Package.swift`
   # enables the same upcoming features). Keeps behaviour identical whether a

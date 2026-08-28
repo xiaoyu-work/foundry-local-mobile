@@ -106,13 +106,13 @@ final class JobBox: @unchecked Sendable {
 final class AsyncCallContext<Value: Sendable>: @unchecked Sendable {
     let continuation: ContinuationBox<Value>
     let jobBox: JobBox
-    let progress: (@Sendable (DownloadProgress) -> Void)?
+    let progress: (@Sendable (Progress) -> Void)?
     let decode: @Sendable (flm_job) throws -> Value
 
     init(
         continuation: ContinuationBox<Value>,
         jobBox: JobBox,
-        progress: (@Sendable (DownloadProgress) -> Void)?,
+        progress: (@Sendable (Progress) -> Void)?,
         decode: @escaping @Sendable (flm_job) throws -> Value
     ) {
         self.continuation = continuation
@@ -124,11 +124,11 @@ final class AsyncCallContext<Value: Sendable>: @unchecked Sendable {
 
 /// C-compatible progress callback. Reads the context via `takeUnretainedValue` (this
 /// callback may fire many times, so it must not consume the retained reference), unpacks
-/// the `flm_progress` struct into ``DownloadProgress`` and forwards.
+/// the `flm_progress` struct into ``Progress`` and forwards.
 private let _flm_swift_progress_bridge: flm_progress_callback = { _, progressPtr, userData in
     guard let userData, let progressPtr else { return 0 }
     let context = Unmanaged<AnyObject>.fromOpaque(userData).takeUnretainedValue()
-    let progress = DownloadProgress(cValue: progressPtr.pointee)
+    let progress = Progress(cValue: progressPtr.pointee)
 
     // The context is one of the AsyncCallContext<T> generics. We keep the progress
     // forward abstract via a small protocol conformance to avoid a generic dance.
@@ -141,11 +141,11 @@ private let _flm_swift_progress_bridge: flm_progress_callback = { _, progressPtr
 /// Protocol implemented by any context that wants progress deltas dispatched to it.
 /// Lets the C bridge stay non-generic without losing type safety.
 protocol ProgressForwarding: AnyObject {
-    func forwardProgress(_ progress: DownloadProgress)
+    func forwardProgress(_ progress: Progress)
 }
 
 extension AsyncCallContext: ProgressForwarding {
-    func forwardProgress(_ progress: DownloadProgress) {
+    func forwardProgress(_ progress: Progress) {
         self.progress?(progress)
     }
 }
@@ -164,7 +164,7 @@ extension AsyncCallContext: ProgressForwarding {
 /// callback still fires (with FLM_ERROR_CANCELLED) and does the actual work of
 /// resuming the continuation and releasing the job.
 func runAsyncJob<Value: Sendable>(
-    progress: (@Sendable (DownloadProgress) -> Void)? = nil,
+    progress: (@Sendable (Progress) -> Void)? = nil,
     decode: @escaping @Sendable (flm_job) throws -> Value,
     submit: @escaping @Sendable (
         _ userData: UnsafeMutableRawPointer,

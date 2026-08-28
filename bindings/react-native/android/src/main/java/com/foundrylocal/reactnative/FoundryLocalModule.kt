@@ -10,15 +10,12 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.module.annotations.ReactModule
 import com.microsoft.ai.foundry.local.mobile.AudioOptions
 import com.microsoft.ai.foundry.local.mobile.AudioSession
-import com.microsoft.ai.foundry.local.mobile.Catalog
-import com.microsoft.ai.foundry.local.mobile.CatalogFilter
 import com.microsoft.ai.foundry.local.mobile.ChatMessage
 import com.microsoft.ai.foundry.local.mobile.ChatOptions
 import com.microsoft.ai.foundry.local.mobile.ChatRequest
 import com.microsoft.ai.foundry.local.mobile.ChatSession
 import com.microsoft.ai.foundry.local.mobile.Delta
 import com.microsoft.ai.foundry.local.mobile.DeviceProfile
-import com.microsoft.ai.foundry.local.mobile.DownloadEstimate
 import com.microsoft.ai.foundry.local.mobile.EmbeddingOptions
 import com.microsoft.ai.foundry.local.mobile.EmbeddingSession
 import com.microsoft.ai.foundry.local.mobile.FinishReason
@@ -29,14 +26,10 @@ import com.microsoft.ai.foundry.local.mobile.FoundryLocalException
 import com.microsoft.ai.foundry.local.mobile.LogLevel
 import com.microsoft.ai.foundry.local.mobile.Model
 import com.microsoft.ai.foundry.local.mobile.ModelInfo
-import com.microsoft.ai.foundry.local.mobile.ModelPackage
-import com.microsoft.ai.foundry.local.mobile.ModelSource
-import com.microsoft.ai.foundry.local.mobile.PackageVariants
 import com.microsoft.ai.foundry.local.mobile.Session
 import com.microsoft.ai.foundry.local.mobile.Tool
 import com.microsoft.ai.foundry.local.mobile.ToolResult
 import com.microsoft.ai.foundry.local.mobile.TranscribeRequest
-import com.microsoft.ai.foundry.local.mobile.VariantConstraints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +40,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -74,9 +66,8 @@ import java.util.concurrent.ConcurrentHashMap
  * Kotlin binding at `com.microsoft.ai.foundry.local.mobile.*`. As a result
  * the module has to keep track of only three things:
  *
- * 1. Slot-id maps for the four handle families (manager, catalog, model,
- *    session), so JS-visible numeric handles route back to their Kotlin
- *    objects.
+ * 1. Slot-id maps for the three handle families (manager, model, session),
+ *    so JS-visible numeric handles route back to their Kotlin objects.
  *
  * 2. A supervised coroutine scope for the `suspend` and streaming calls the
  *    JS side turns into TurboModule promises and event streams.
@@ -110,7 +101,6 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
     }
 
     private val managers = HandleRegistry<FoundryLocal>()
-    private val catalogs = HandleRegistry<Catalog>()
     private val models = HandleRegistry<Model>()
     private val sessions = HandleRegistry<Session>()
 
@@ -124,7 +114,6 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         subscriptions.clear()
         sessions.releaseAll().forEach { runCatching { it.close() } }
         models.releaseAll().forEach { runCatching { it.close() } }
-        catalogs.releaseAll() // borrowed from FoundryLocal; do not close
         managers.releaseAll().forEach { runCatching { it.close() } }
         scope.cancel()
         super.invalidate()
@@ -162,11 +151,6 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         return JSON.encodeToString(DeviceProfile.serializer(), profile)
     }
 
-    override fun managerGetCatalog(managerId: Double): Double {
-        val catalog = managers.require(managerId.toInt(), "Manager").catalog
-        return catalogs.register(catalog).toDouble()
-    }
-
     // -------------------------------------------------------------------------
     // Manager-instance runtime probes (Kotlin binding exposes these on the
     // instance; the RN TS layer routes them through the active manager).
@@ -186,85 +170,33 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
     }
 
     // -------------------------------------------------------------------------
-    // Add model source
+    // Load model
     // -------------------------------------------------------------------------
 
-    override fun addModelSource(
+    override fun loadModel(
         managerId: Double,
-        sourceJson: String,
-        subscriptionId: String,
+        modelPath: String,
+        optionsJson: String?,
         promise: Promise,
     ) {
         val instance = managers.require(managerId.toInt(), "Manager")
-        val source = decodeSource(sourceJson)
-        val job = scope.launch {
-            try {
-                val result = instance.addModelSource(source) { progress ->
-                    reactContext.emit(EventNames.PROGRESS, EventPayloads.progress(subscriptionId, progress))
-                }
-                val modelId = result.model?.let { models.register(it) } ?: 0
-                val json = buildJsonObject {
-                    put("name", result.name)
-                    put("path", result.path)
-                    put("variant_id", result.variantId ?: "")
-                    put("bytes_downloaded", result.bytesDownloaded)
-                    put("bytes_reused", result.bytesReused)
-                    put("was_cached", result.wasCached)
-                    put("model_handle", modelId)
-                    result.handleUnavailableReason?.let { put("model_handle_unavailable", it) }
-                }.toString()
-                subscriptions.remove(subscriptionId)
-                promise.resolve(json)
-            } catch (ce: CancellationException) {
-                subscriptions.remove(subscriptionId)
-                rejectFromCancellation(promise, ce)
-            } catch (t: Throwable) {
-                subscriptions.remove(subscriptionId)
-                rejectFromThrowable(promise, t)
-            }
-        }
-        subscriptions[subscriptionId] = job
-    }
-
-    // -------------------------------------------------------------------------
-    // Catalog
-    // -------------------------------------------------------------------------
-
-    override fun catalogListModels(catalogId: Double, filterJson: String?, promise: Promise) {
-        val catalog = catalogs.require(catalogId.toInt(), "Catalog")
+        val (ep, providerOptions, _) = decodeLoadOptions(optionsJson)
         launchPromise(promise) {
-            val filter = filterJson?.let { decodeCatalogFilter(it) }
-            encodeModelList(catalog.listModels(filter))
+            val model = instance.loadModel(modelPath, ep, providerOptions)
+            val modelId = models.register(model)
+            encodeLoadedModel(modelId, model)
         }
     }
 
-    override fun catalogListCachedModels(catalogId: Double): String {
-        val catalog = catalogs.require(catalogId.toInt(), "Catalog")
-        return encodeModelList(catalog.listCachedModels())
-    }
-
-    override fun catalogGetModel(catalogId: Double, alias: String, promise: Promise) {
-        val catalog = catalogs.require(catalogId.toInt(), "Catalog")
-        launchPromise(promise) { models.register(catalog.getModel(alias)).toDouble() }
-    }
-
-    override fun catalogGetModelById(catalogId: Double, modelId: String, promise: Promise) {
-        val catalog = catalogs.require(catalogId.toInt(), "Catalog")
-        launchPromise(promise) { models.register(catalog.getModelById(modelId)).toDouble() }
-    }
-
-    override fun catalogGetCacheSizeBytes(catalogId: Double): Double {
-        val catalog = catalogs.require(catalogId.toInt(), "Catalog")
-        return catalog.cacheSizeBytes.toDouble()
-    }
-
-    private fun encodeModelList(list: List<ModelInfo>): String =
-        buildJsonObject {
-            put(
-                "models",
-                JSON.encodeToJsonElement(ListSerializer(ModelInfo.serializer()), list),
-            )
+    private fun encodeLoadedModel(modelId: Int, model: Model): String {
+        val info = JSON.encodeToJsonElement(ModelInfo.serializer(), model.info).jsonObject
+        return buildJsonObject {
+            put("model_handle", modelId)
+            info.forEach { (key, value) -> put(key, value) }
+            put("path", model.path ?: "")
+            put("is_loaded", model.isLoaded)
         }.toString()
+    }
 
     // -------------------------------------------------------------------------
     // Model
@@ -272,9 +204,6 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
 
     override fun modelGetInfo(modelId: Double): String =
         JSON.encodeToString(ModelInfo.serializer(), models.require(modelId.toInt(), "Model").info)
-
-    override fun modelIsPackage(modelId: Double): Boolean =
-        models.require(modelId.toInt(), "Model").isPackage
 
     override fun modelIsCached(modelId: Double): Boolean =
         models.require(modelId.toInt(), "Model").isCached
@@ -292,10 +221,10 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         promise: Promise,
     ) {
         val model = models.require(modelId.toInt(), "Model")
-        val (ep, device) = decodeLoadOptions(optionsJson)
+        val (ep, providerOptions, device) = decodeLoadOptions(optionsJson)
         val job = scope.launch {
             try {
-                model.load(ep, device) { progress ->
+                model.load(ep, providerOptions, device) { progress ->
                     reactContext.emit(EventNames.PROGRESS, EventPayloads.progress(subscriptionId, progress))
                 }
                 subscriptions.remove(subscriptionId)
@@ -316,48 +245,9 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         launchPromise(promise) { model.unload(); null }
     }
 
-    override fun modelDelete(modelId: Double, promise: Promise) {
-        val model = models.require(modelId.toInt(), "Model")
-        launchPromise(promise) { model.delete(); null }
-    }
-
     override fun modelRelease(modelId: Double) {
         models.release(modelId.toInt())?.close()
     }
-
-    // -------------------------------------------------------------------------
-    // Package
-    // -------------------------------------------------------------------------
-
-    override fun packageGetVariants(modelId: Double): String =
-        JSON.encodeToString(PackageVariants.serializer(), requirePackage(modelId.toInt()).variants)
-
-    override fun packageSelectVariant(modelId: Double, variantId: String) {
-        requirePackage(modelId.toInt()).selectVariant(variantId)
-    }
-
-    override fun packageSelectBestVariant(modelId: Double, constraintsJson: String?): String {
-        val constraints = constraintsJson?.let { decodeVariantConstraints(it) }
-        return requirePackage(modelId.toInt()).selectBestVariant(constraints)
-    }
-
-    override fun packageGetVariant(modelId: Double, variantId: String): Double {
-        val model = requirePackage(modelId.toInt()).variant(variantId)
-        return models.register(model).toDouble()
-    }
-
-    override fun packageEstimateDownload(modelId: Double, variantIdsJson: String?): String {
-        val ids = variantIdsJson?.let { raw ->
-            (runCatching { JSON.parseToJsonElement(raw) }.getOrNull() as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-        }
-        val estimate = requirePackage(modelId.toInt()).estimateDownload(ids)
-        return JSON.encodeToString(DownloadEstimate.serializer(), estimate)
-    }
-
-    private fun requirePackage(modelId: Int): ModelPackage =
-        (models.require(modelId, "Model") as? ModelPackage)
-            ?: throw IllegalStateException("Model $modelId is not a package")
 
     // -------------------------------------------------------------------------
     // Sessions
@@ -693,19 +583,9 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         return FoundryLocalConfig(
             appName = o["app_name"]?.jsonPrimitive?.contentOrNull ?: "app",
             appDataDir = o["app_data_dir"]?.jsonPrimitive?.contentOrNull,
-            modelCacheDir = o["model_cache_dir"]?.jsonPrimitive?.contentOrNull,
-            logsDir = o["logs_dir"]?.jsonPrimitive?.contentOrNull,
             logLevel = logLevelFromString(o["log_level"]?.jsonPrimitive?.contentOrNull),
-            catalogUrls = (o["catalog_urls"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
-            catalogRegion = o["catalog_region"]?.jsonPrimitive?.contentOrNull,
-            offline = o["offline"]?.jsonPrimitive?.booleanOrNull ?: false,
-            maxConcurrentDownloads = o["max_concurrent_downloads"]?.jsonPrimitive?.intOrNull ?: 2,
-            downloadOnMeteredNetwork = o["download_on_metered_network"]?.jsonPrimitive?.booleanOrNull ?: false,
             autoUnloadOnBackground = o["auto_unload_on_background"]?.jsonPrimitive?.booleanOrNull ?: true,
             jobPoolThreads = o["job_pool_threads"]?.jsonPrimitive?.intOrNull ?: 0,
-            additionalOptions = (o["additional_options"] as? JsonObject)
-                ?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull ?: "" }
-                ?: emptyMap(),
         )
     }
 
@@ -723,61 +603,6 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
     private fun logLevelFromInt(v: Int): LogLevel =
         LogLevel.values().firstOrNull { it.nativeValue == v } ?: LogLevel.WARNING
 
-    private fun decodeSource(json: String): ModelSource {
-        val o = JSON.parseToJsonElement(json).jsonObject
-        val name = o["name"]?.jsonPrimitive?.contentOrNull ?: ""
-        val resume = o["resume"]?.jsonPrimitive?.booleanOrNull ?: true
-        val verifyChecksums = o["verify_checksums"]?.jsonPrimitive?.booleanOrNull ?: true
-        val constraints = (o["constraints"] as? JsonObject)?.let { decodeVariantConstraintsObject(it) }
-        return when (o["kind"]?.jsonPrimitive?.contentOrNull) {
-            "bundled" -> ModelSource.Bundled(
-                name = name,
-                path = o["path"]?.jsonPrimitive?.contentOrNull ?: "",
-                copyIntoCache = o["copy_into_cache"]?.jsonPrimitive?.booleanOrNull ?: false,
-                resume = resume,
-                verifyChecksums = verifyChecksums,
-                constraints = constraints,
-            )
-            "remote" -> ModelSource.Remote(
-                name = name,
-                url = o["url"]?.jsonPrimitive?.contentOrNull ?: "",
-                headers = (o["headers"] as? JsonObject)
-                    ?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull ?: "" }
-                    ?: emptyMap(),
-                resume = resume,
-                verifyChecksums = verifyChecksums,
-                constraints = constraints,
-            )
-            else -> throw IllegalArgumentException("Unknown model source kind")
-        }
-    }
-
-    private fun decodeCatalogFilter(json: String): CatalogFilter {
-        val o = JSON.parseToJsonElement(json).jsonObject
-        return CatalogFilter(
-            task = o["task"]?.jsonPrimitive?.contentOrNull,
-            cachedOnly = o["cached_only"]?.jsonPrimitive?.booleanOrNull ?: false,
-            loadedOnly = o["loaded_only"]?.jsonPrimitive?.booleanOrNull ?: false,
-            maxSizeBytes = o["max_size_bytes"]?.jsonPrimitive?.longOrNull,
-            compatibleOnly = o["compatible_only"]?.jsonPrimitive?.booleanOrNull ?: true,
-        )
-    }
-
-    private fun decodeVariantConstraints(json: String): VariantConstraints =
-        decodeVariantConstraintsObject(JSON.parseToJsonElement(json).jsonObject)
-
-    private fun decodeVariantConstraintsObject(o: JsonObject): VariantConstraints {
-        val devices = (o["allowed_devices"] as? JsonArray)
-            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(::deviceFromName) }
-            ?.toSet()
-        return VariantConstraints(
-            maxDownloadBytes = o["max_download_bytes"]?.jsonPrimitive?.longOrNull,
-            allowedDevices = devices,
-            preferSmallest = o["prefer_smallest"]?.jsonPrimitive?.booleanOrNull ?: false,
-            requireCached = o["require_cached"]?.jsonPrimitive?.booleanOrNull ?: false,
-        )
-    }
-
     private fun deviceFromName(name: String): FlmDevice? = when (name.lowercase()) {
         "cpu" -> FlmDevice.CPU
         "gpu" -> FlmDevice.GPU
@@ -785,12 +610,14 @@ class FoundryLocalModule(private val reactContext: ReactApplicationContext) :
         else -> null
     }
 
-    private fun decodeLoadOptions(json: String?): Pair<String?, FlmDevice?> {
-        if (json.isNullOrBlank()) return Pair(null, null)
+    private fun decodeLoadOptions(json: String?): Triple<String?, Map<String, String>?, FlmDevice?> {
+        if (json.isNullOrBlank()) return Triple(null, null, null)
         val o = JSON.parseToJsonElement(json).jsonObject
         val ep = o["execution_provider"]?.jsonPrimitive?.contentOrNull
+        val providerOptions = (o["provider_options"] as? JsonObject)
+            ?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull ?: "" }
         val device = o["device"]?.jsonPrimitive?.contentOrNull?.let(::deviceFromName)
-        return Pair(ep, device)
+        return Triple(ep, providerOptions, device)
     }
 
     private fun decodeChatOptions(o: JsonObject): ChatOptions = ChatOptions(

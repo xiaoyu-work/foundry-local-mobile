@@ -7,8 +7,8 @@
 // subclass) and the Swift binding at `bindings/ios/Sources/FoundryLocal/`.
 // Owns:
 //
-//   * Four handle registries (managers, catalogs, models, sessions) mirroring
-//     the Kotlin binding's `HandleRegistry` pattern: JS sees a stable `Int`
+//   * Three handle registries (managers, models, sessions) mirroring the
+//     Kotlin binding's `HandleRegistry` pattern: JS sees a stable `Int`
 //     slot id, native holds the object with retain semantics.
 //   * A subscription table mapping JS-supplied `subscriptionId`s to their
 //     backing `Task`, so `cancelSubscription` from JS translates into
@@ -129,7 +129,6 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
     @objc public weak var host: RNFoundryLocalEmitting?
 
     private let managers = HandleRegistry<FoundryLocal>()
-    private let catalogs = HandleRegistry<Catalog>()
     private let models = HandleRegistry<Model>()
     private let sessions = HandleRegistry<AnyObject>()  // ChatSession | AudioSession | EmbeddingSession
 
@@ -145,7 +144,7 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
     /// Called when RN tears down the module (Reload, app exit). Drops
     /// subscriptions and every native handle in the reverse order they were
     /// created — sessions first (they reference models), then models, then
-    /// catalogs (borrowed, do not close), then managers.
+    /// managers.
     @objc public func invalidate() {
         subscriptionsLock.lock()
         let tasks = Array(subscriptions.values)
@@ -159,7 +158,6 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
             (s as? EmbeddingSession)?.close()
         }
         for m in models.releaseAll() { m.close() }
-        _ = catalogs.releaseAll()  // borrowed from the manager; do not close
         for mgr in managers.releaseAll() { mgr.close() }
     }
 
@@ -279,11 +277,8 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
         let manager = try managers.require(managerId.intValue, kind: "Manager")
         let update = try decodeSettings(configJson)
         try manager.updateSettings(
-            downloadOnMeteredNetwork: update.downloadOnMeteredNetwork,
-            maxConcurrentDownloads: update.maxConcurrentDownloads,
             logLevel: update.logLevel,
-            autoUnloadOnBackground: update.autoUnloadOnBackground,
-            offline: update.offline
+            autoUnloadOnBackground: update.autoUnloadOnBackground
         )
     }
 
@@ -292,12 +287,6 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
         let profile = try manager.deviceProfile()
         let data = try rnJSONEncoder.encode(profile)
         return String(data: data, encoding: .utf8) ?? "{}"
-    }
-
-    @objc public func managerGetCatalog(managerId: NSNumber) throws -> NSNumber {
-        let manager = try managers.require(managerId.intValue, kind: "Manager")
-        let id = catalogs.register(manager.catalog)
-        return NSNumber(value: id)
     }
 
     // Version / runtime probes are static on the Swift binding (unlike Kotlin
@@ -324,129 +313,39 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
         try FoundryLocal.setLogLevel(logLevelFromInt(level.intValue))
     }
 
-    // MARK: - Add model source
+    // MARK: - Load model
 
-    @objc public func addModelSource(
+    @objc public func loadModel(
         managerId: NSNumber,
-        sourceJson: String,
-        subscriptionId: String,
+        modelPath: String,
+        optionsJson: String?,
         resolve: @escaping RCTPromiseResolveBlock,
         reject: @escaping RCTPromiseRejectBlock
     ) {
         let mgrId = managerId.intValue
-        let task = Task { [weak self] in
+        Task { [weak self] in
             guard let self = self else { return }
             do {
                 let manager = try self.managers.require(mgrId, kind: "Manager")
-                let source = try self.decodeSource(sourceJson)
-                let result = try await manager.addModelSource(source) { progress in
-                    self.emitProgress(subscriptionId, progress)
-                }
-                let modelSlot = result.model.map { self.models.register($0) } ?? 0
-                var payload: [String: Any] = [
-                    "name": result.name,
-                    "path": result.path,
-                    "variant_id": result.variantId ?? "",
-                    "bytes_downloaded": result.bytesDownloaded,
-                    "bytes_reused": result.bytesReused,
-                    "was_cached": result.wasCached,
-                    "model_handle": modelSlot,
-                ]
-                if let reason = result.handleUnavailableReason {
-                    payload["model_handle_unavailable"] = reason
-                }
-                self.removeSubscription(subscriptionId)
+                let (ep, providerOptions, _) = try self.decodeLoadOptions(optionsJson)
+                let model = try await manager.loadModel(
+                    at: modelPath,
+                    executionProvider: ep,
+                    providerOptions: providerOptions,
+                    progress: nil
+                )
+                let modelId = self.models.register(model)
+                let info = try model.info()
+                let data = try rnJSONEncoder.encode(info)
+                var payload = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                payload["model_handle"] = modelId
+                payload["path"] = model.cachedPath ?? modelPath
+                payload["is_loaded"] = model.isLoaded
                 resolve(self.jsonString(payload))
-            } catch is CancellationError {
-                self.removeSubscription(subscriptionId)
-                self.fail(reject, FoundryLocalError(code: .cancelled, message: "cancelled"))
-            } catch {
-                self.removeSubscription(subscriptionId)
-                self.fail(reject, error)
-            }
-        }
-        storeSubscription(subscriptionId, task: task)
-    }
-
-    // MARK: - Catalog
-
-    @objc public func catalogListModels(
-        catalogId: NSNumber,
-        filterJson: String?,
-        resolve: @escaping RCTPromiseResolveBlock,
-        reject: @escaping RCTPromiseRejectBlock
-    ) {
-        let catId = catalogId.intValue
-        Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let catalog = try self.catalogs.require(catId, kind: "Catalog")
-                let filter = try self.decodeCatalogFilter(filterJson)
-                let models = try await catalog.listModels(filter)
-                resolve(try self.encodeModelList(models))
             } catch {
                 self.fail(reject, error)
             }
         }
-    }
-
-    @objc public func catalogListCachedModels(catalogId: NSNumber) throws -> String {
-        let catalog = try catalogs.require(catalogId.intValue, kind: "Catalog")
-        return try encodeModelList(try catalog.cachedModels())
-    }
-
-    @objc public func catalogGetModel(
-        catalogId: NSNumber,
-        alias: String,
-        resolve: @escaping RCTPromiseResolveBlock,
-        reject: @escaping RCTPromiseRejectBlock
-    ) {
-        let catId = catalogId.intValue
-        Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let catalog = try self.catalogs.require(catId, kind: "Catalog")
-                let model = try await catalog.model(alias: alias)
-                let id = self.models.register(model)
-                resolve(NSNumber(value: id))
-            } catch {
-                self.fail(reject, error)
-            }
-        }
-    }
-
-    @objc public func catalogGetModelById(
-        catalogId: NSNumber,
-        modelId: String,
-        resolve: @escaping RCTPromiseResolveBlock,
-        reject: @escaping RCTPromiseRejectBlock
-    ) {
-        let catId = catalogId.intValue
-        Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let catalog = try self.catalogs.require(catId, kind: "Catalog")
-                let model = try await catalog.model(id: modelId)
-                let id = self.models.register(model)
-                resolve(NSNumber(value: id))
-            } catch {
-                self.fail(reject, error)
-            }
-        }
-    }
-
-    @objc public func catalogGetCacheSizeBytes(catalogId: NSNumber) throws -> NSNumber {
-        let catalog = try catalogs.require(catalogId.intValue, kind: "Catalog")
-        return NSNumber(value: catalog.cacheSizeBytes)
-    }
-
-    private func encodeModelList(_ list: [ModelInfo]) throws -> String {
-        // Match the Kotlin binding's wire format: an object with a `models`
-        // array. Swift's `catalog.listModels()` and `catalog.cachedModels()`
-        // both return `[ModelInfo]` directly, so we wrap here to give the JS
-        // side a single shape.
-        let data = try rnJSONEncoder.encode(["models": list])
-        return String(data: data, encoding: .utf8) ?? "{\"models\":[]}"
     }
 
     // MARK: - Model
@@ -456,11 +355,6 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
         let info = try model.info()
         let data = try rnJSONEncoder.encode(info)
         return String(data: data, encoding: .utf8) ?? "{}"
-    }
-
-    @objc public func modelIsPackage(modelId: NSNumber) throws -> NSNumber {
-        let model = try models.require(modelId.intValue, kind: "Model")
-        return NSNumber(value: model.isPackage)
     }
 
     @objc public func modelIsCached(modelId: NSNumber) throws -> NSNumber {
@@ -490,8 +384,8 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
             guard let self = self else { return }
             do {
                 let model = try self.models.require(mId, kind: "Model")
-                let (ep, device) = try self.decodeLoadOptions(optionsJson)
-                try await model.load(executionProvider: ep, device: device) { progress in
+                let (ep, providerOptions, device) = try self.decodeLoadOptions(optionsJson)
+                try await model.load(executionProvider: ep, providerOptions: providerOptions, device: device) { progress in
                     self.emitProgress(subscriptionId, progress)
                 }
                 self.removeSubscription(subscriptionId)
@@ -523,58 +417,8 @@ public final class RNFoundryLocalCore: NSObject, @unchecked Sendable {
         }
     }
 
-    @objc public func modelDelete(
-        modelId: NSNumber,
-        resolve: @escaping RCTPromiseResolveBlock,
-        reject: @escaping RCTPromiseRejectBlock
-    ) {
-        let mId = modelId.intValue
-        Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let model = try self.models.require(mId, kind: "Model")
-                try await model.delete()
-                resolve(NSNull())
-            } catch { self.fail(reject, error) }
-        }
-    }
-
     @objc public func modelRelease(modelId: NSNumber) {
         models.release(modelId.intValue)?.close()
-    }
-
-    // MARK: - Package
-
-    @objc public func packageGetVariants(modelId: NSNumber) throws -> String {
-        let model = try models.require(modelId.intValue, kind: "Model")
-        let variants = try model.variants()
-        let data = try rnJSONEncoder.encode(variants)
-        return String(data: data, encoding: .utf8) ?? "{}"
-    }
-
-    @objc public func packageSelectVariant(modelId: NSNumber, variantId: String) throws {
-        let model = try models.require(modelId.intValue, kind: "Model")
-        try model.selectVariant(variantId)
-    }
-
-    @objc public func packageSelectBestVariant(modelId: NSNumber, constraintsJson: String?) throws -> String {
-        let model = try models.require(modelId.intValue, kind: "Model")
-        let constraints = try decodeVariantConstraints(constraintsJson)
-        return try model.selectBestVariant(constraints)
-    }
-
-    @objc public func packageGetVariant(modelId: NSNumber, variantId: String) throws -> NSNumber {
-        let model = try models.require(modelId.intValue, kind: "Model")
-        let variantModel = try model.variant(variantId)
-        return NSNumber(value: models.register(variantModel))
-    }
-
-    @objc public func packageEstimateDownload(modelId: NSNumber, variantIdsJson: String?) throws -> String {
-        let model = try models.require(modelId.intValue, kind: "Model")
-        let ids = decodeStringArray(variantIdsJson)
-        let estimate = try model.estimateDownload(variantIds: ids)
-        let data = try rnJSONEncoder.encode(estimate)
-        return String(data: data, encoding: .utf8) ?? "{}"
     }
 
     // MARK: - Sessions
@@ -1024,36 +868,22 @@ extension RNFoundryLocalCore {
         return FoundryLocalConfig(
             appName: (o["app_name"] as? String) ?? "app",
             appDataDir: o["app_data_dir"] as? String,
-            modelCacheDir: o["model_cache_dir"] as? String,
-            logsDir: o["logs_dir"] as? String,
             logLevel: logLevelFromString(o["log_level"] as? String),
-            catalogUrls: (o["catalog_urls"] as? [String]) ?? [],
-            catalogRegion: o["catalog_region"] as? String,
-            offline: (o["offline"] as? Bool) ?? false,
-            maxConcurrentDownloads: (o["max_concurrent_downloads"] as? Int) ?? 0,
-            downloadOnMeteredNetwork: (o["download_on_metered_network"] as? Bool) ?? false,
             autoUnloadOnBackground: (o["auto_unload_on_background"] as? Bool) ?? true,
-            jobPoolThreads: (o["job_pool_threads"] as? Int) ?? 0,
-            additionalOptions: (o["additional_options"] as? [String: String]) ?? [:]
+            jobPoolThreads: (o["job_pool_threads"] as? Int) ?? 0
         )
     }
 
     fileprivate struct SettingsUpdate {
-        let downloadOnMeteredNetwork: Bool?
-        let maxConcurrentDownloads: Int?
         let logLevel: FoundryLocalConfig.LogLevel?
         let autoUnloadOnBackground: Bool?
-        let offline: Bool?
     }
 
     fileprivate func decodeSettings(_ json: String) throws -> SettingsUpdate {
         let o = try parseObject(json)
         return SettingsUpdate(
-            downloadOnMeteredNetwork: o["download_on_metered_network"] as? Bool,
-            maxConcurrentDownloads: o["max_concurrent_downloads"] as? Int,
             logLevel: (o["log_level"] as? String).flatMap { FoundryLocalConfig.LogLevel(rawValue: $0) },
-            autoUnloadOnBackground: o["auto_unload_on_background"] as? Bool,
-            offline: o["offline"] as? Bool
+            autoUnloadOnBackground: o["auto_unload_on_background"] as? Bool
         )
     }
 
@@ -1078,103 +908,13 @@ extension RNFoundryLocalCore {
         }
     }
 
-    fileprivate func decodeSource(_ json: String) throws -> ModelSource {
-        let o = try parseObject(json)
-        let name = (o["name"] as? String) ?? ""
-        let resume = (o["resume"] as? Bool) ?? true
-        let verifyChecksums = (o["verify_checksums"] as? Bool) ?? true
-        let constraints = try decodeVariantConstraintsAny(o["constraints"])
-        let kind = o["kind"] as? String
-        switch kind {
-        case "bundled":
-            let path = (o["path"] as? String) ?? ""
-            let copyIntoCache = (o["copy_into_cache"] as? Bool) ?? false
-            return .bundled(
-                name: name,
-                path: path,
-                copyIntoCache: copyIntoCache,
-                constraints: constraints,
-                resume: resume,
-                verifyChecksums: verifyChecksums
-            )
-        case "remote":
-            guard let urlString = o["url"] as? String, let url = URL(string: urlString) else {
-                throw FoundryLocalError(code: .invalidArgument, message: "ModelSource.remote requires a valid url")
-            }
-            let headers = (o["headers"] as? [String: String]) ?? [:]
-            return .remote(
-                name: name,
-                url: url,
-                headers: headers,
-                constraints: constraints,
-                resume: resume,
-                verifyChecksums: verifyChecksums
-            )
-        default:
-            throw FoundryLocalError(code: .invalidArgument, message: "Unknown model source kind '\(kind ?? "")'")
-        }
-    }
-
-    fileprivate func decodeCatalogFilter(_ json: String?) throws -> CatalogFilter {
-        // Match the RN Kotlin module's default: when JS supplies no filter,
-        // compatibleOnly is true. The Swift binding's own default is false,
-        // but callers reaching us through the RN JS layer expect
-        // Kotlin-compatible semantics.
-        guard let json, !json.isEmpty else {
-            return CatalogFilter(compatibleOnly: true)
-        }
-        let o = try parseObject(json)
-        return CatalogFilter(
-            task: o["task"] as? String,
-            cachedOnly: (o["cached_only"] as? Bool) ?? false,
-            loadedOnly: (o["loaded_only"] as? Bool) ?? false,
-            maxSizeBytes: (o["max_size_bytes"] as? NSNumber)?.int64Value,
-            compatibleOnly: (o["compatible_only"] as? Bool) ?? true
-        )
-    }
-
-    fileprivate func decodeVariantConstraints(_ json: String?) throws -> VariantConstraints {
-        guard let json, !json.isEmpty else { return VariantConstraints() }
-        let o = try parseObject(json)
-        return try decodeVariantConstraintsAny(o)
-    }
-
-    fileprivate func decodeVariantConstraintsAny(_ raw: Any?) throws -> VariantConstraints {
-        guard let dict = raw as? [String: Any] else { return VariantConstraints() }
-        let maxDownloadBytes = (dict["max_download_bytes"] as? NSNumber)?.int64Value
-        let devices: Set<Device>
-        if let names = dict["allowed_devices"] as? [String] {
-            var set = Set<Device>()
-            for name in names {
-                if let d = Device(rawValue: name.lowercased()) { set.insert(d) }
-            }
-            devices = set
-        } else {
-            devices = []
-        }
-        return VariantConstraints(
-            maxDownloadBytes: maxDownloadBytes,
-            allowedDevices: devices,
-            preferSmallest: (dict["prefer_smallest"] as? Bool) ?? false,
-            requireCached: (dict["require_cached"] as? Bool) ?? false
-        )
-    }
-
-    fileprivate func decodeStringArray(_ json: String?) -> [String]? {
-        guard let json, !json.isEmpty,
-              let data = json.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [String] else {
-            return nil
-        }
-        return array
-    }
-
-    fileprivate func decodeLoadOptions(_ json: String?) throws -> (String?, Device?) {
-        guard let json, !json.isEmpty else { return (nil, nil) }
+    fileprivate func decodeLoadOptions(_ json: String?) throws -> (String?, [String: String]?, Device?) {
+        guard let json, !json.isEmpty else { return (nil, nil, nil) }
         let o = try parseObject(json)
         let ep = o["execution_provider"] as? String
+        let providerOptions = o["provider_options"] as? [String: String]
         let device: Device? = (o["device"] as? String).flatMap { Device(rawValue: $0.lowercased()) }
-        return (ep, device)
+        return (ep, providerOptions, device)
     }
 
     fileprivate func decodeChatOptions(_ o: [String: Any]) -> ChatSessionOptions {
@@ -1388,4 +1128,3 @@ extension RNFoundryLocalCore {
         }
     }
 }
-

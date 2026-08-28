@@ -22,6 +22,7 @@ target_link_libraries(hello_flm PRIVATE foundry_local_mobile)
 # this whole example is here to prevent.
 if(MSVC)
     target_compile_options(hello_flm PRIVATE /W4 /WX)
+    target_compile_definitions(hello_flm PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(hello_flm PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()

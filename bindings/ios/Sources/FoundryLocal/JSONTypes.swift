@@ -4,8 +4,8 @@
 // Codable models for the JSON payloads the ABI shuttles across `char**` out-params
 // and completion callbacks. The shapes here follow the schemas documented on
 // `flm_manager_get_device_profile_json`, `flm_model_get_info_json`,
-// `flm_package_get_variants_json`, `flm_package_estimate_download_json` and the job
-// result JSONs listed on `flm_job_take_result_json`.
+// `flm_manager_load_model_async`, `flm_model_load_async` and the job result JSONs
+// listed on `flm_job_take_result_json`.
 //
 // The ABI is uniformly snake_case, so the shared JSONDecoder is configured with
 // `keyDecodingStrategy = .convertFromSnakeCase` and the JSONEncoder with
@@ -34,8 +34,7 @@ nonisolated(unsafe) let flmJSONEncoder: JSONEncoder = {
 // MARK: - Device profile
 
 /// SoC / accelerator / runtime-state snapshot, mirroring
-/// `flm_manager_get_device_profile_json`. Used by the SDK to score variants; apps that
-/// run their own download policy read the same profile.
+/// `flm_manager_get_device_profile_json`.
 public struct DeviceProfile: Codable, Sendable {
     public let platform: String
     public let osVersion: String?
@@ -79,8 +78,8 @@ public struct DeviceProfile: Codable, Sendable {
     }
 }
 
-/// Compute device a model variant targets. Values match `flm_device` but this is the
-/// idiomatic Swift enum apps see on `ModelVariant.device`.
+/// Compute device type. Values match `flm_device` but this is the idiomatic Swift enum
+/// apps see on model metadata and session APIs.
 public enum Device: String, Codable, Sendable {
     case unknown, cpu, gpu, npu
 }
@@ -107,126 +106,19 @@ public struct ModelInfo: Codable, Sendable {
     public let supportsReasoning: Bool?
     public let inputModalities: [String]?
     public let outputModalities: [String]?
-    public let isPackage: Bool?
     public let isCached: Bool?
     public let isLoaded: Bool?
     public let promptTemplates: [String: String]?
 }
 
-// MARK: - Model package variants
-
-/// Enumeration of the variants of a model package, plus device-scored metadata used
-/// for selection. Mirrors `flm_package_get_variants_json`.
-public struct PackageVariants: Codable, Sendable {
-    public let packageId: String
-    public let schemaVersion: String?
-    public let selectedVariantId: String?
-    public let sharedAssetsBytes: Int64?
-    public let variants: [ModelVariant]
-}
-
-/// One variant of a model package.
-public struct ModelVariant: Codable, Sendable, Identifiable, Equatable {
-    public let id: String
-    public let component: String?
-    public let executionProvider: String
-    public let device: Device
-    public let compatibilityString: String?
-    public let platform: String
-    public let downloadSizeBytes: Int64
-    public let diskSizeBytes: Int64
-    public let sharedAssetRefs: [String]
-    public let isCompatible: Bool
-    public let compatibilityScore: Int
-    public let isCached: Bool
-    public let incompatibilityReason: String?
-
-    public static func == (lhs: ModelVariant, rhs: ModelVariant) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
-/// Estimate returned by `flm_package_estimate_download_json`.
-public struct DownloadEstimate: Codable, Sendable {
-    public let downloadBytes: Int64
-    public let diskBytes: Int64
-    public let alreadyCachedBytes: Int64
-    public let availableStorageBytes: Int64
-    public let fitsOnDevice: Bool
-}
-
 // MARK: - Job results
 
-/// Payload of `flm_catalog_list_models_async`.
-struct CatalogListResult: Decodable {
-    let models: [ModelInfo]
-}
-
-/// Payload of `flm_catalog_get_model_async`.
-struct CatalogGetResult: Decodable {
+/// Payload of `flm_manager_load_model_async`.
+struct LoadModelPayload: Decodable {
     let modelHandle: UInt64
 }
 
-/// JSON DTO for `flm_manager_add_model_source_async`. The public
-/// ``AddModelSourceResult`` wraps this and swaps the raw handle for a
-/// ready-to-use ``Model``.
-struct AddModelSourcePayload: Decodable {
-    let name: String
-    let path: String
-    let variantId: String?
-    let bytesDownloaded: Int64
-    let bytesReused: Int64
-    let wasCached: Bool
-    /// Ready-to-use model handle, or `0` (`FLM_INVALID_HANDLE`) when Foundry
-    /// Local had already scanned the device before this source was added. `0`
-    /// still means the transfer succeeded.
-    let modelHandle: UInt64
-    /// Why ``modelHandle`` is `0`, in the core's own words.
-    let modelHandleUnavailable: String?
-}
-
-/// Result of ``FoundryLocal/addModelSource(_:progress:)``. The download itself
-/// has completed by the time this is returned — the files are on disk at
-/// ``path`` — but variant selection, checksum verification and the local
-/// catalog scan all ran inside the same job.
-///
-/// In the common case ``model`` is a ready-to-use handle minted inside that
-/// same job, so acquisition is one round trip: no follow-up
-/// `flm_catalog_get_model_async` is needed.
-///
-/// ``model`` is `nil` when Foundry Local had already scanned the device for
-/// models before this source was added. That scan runs once, on the first
-/// catalog query of the process, and cannot be repeated — so the model stays
-/// invisible for this run, and looking it up by ``name`` fails for the same
-/// reason. ``handleUnavailableReason`` explains it. Add model sources before
-/// querying the catalog and it does not happen; the files are committed
-/// regardless and the next launch picks them up.
-public struct AddModelSourceResult: Sendable {
-    /// Resolved model name (the `name` field from the ``ModelSource``).
-    public let name: String
-    /// Directory the model's files landed at.
-    public let path: String
-    /// Selected variant id when the source was a package, `nil` otherwise.
-    /// (The ABI reports `""` for the non-package case; we normalise that
-    /// to `nil` so a caller can just check `if let variantId`.)
-    public let variantId: String?
-    /// Bytes newly transferred during this call.
-    public let bytesDownloaded: Int64
-    /// Bytes reused from previously-cached shared assets.
-    public let bytesReused: Int64
-    /// `true` when every file was already on disk before this call and no
-    /// transfer was needed.
-    public let wasCached: Bool
-    /// Ready-to-use model handle, or `nil` in the handle-less case documented
-    /// on this type.
-    public let model: Model?
-    /// Why ``model`` is `nil`, straight from the core. `nil` when ``model`` is present.
-    public let handleUnavailableReason: String?
-}
-
-/// Payload of `flm_model_load_async`. `flm_model_download_async` returns the same
-/// shape, but the idiomatic Swift API no longer surfaces the download call — see
-/// ``Model/load`` and the README's model-sources section.
+/// Payload of `flm_model_load_async`.
 public struct LoadResult: Decodable, Sendable {
     public let path: String
     public let bytes: Int64

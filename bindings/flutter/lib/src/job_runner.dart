@@ -157,8 +157,6 @@ class JobRunner {
       ctx.ref.on_delta = nullptr;
     }
 
-    ctx.ref.on_send = nullptr;
-
     final completionListener = NativeCallable<raw.flm_completion_callback_native>
         .listener(_onCompletion);
     _completionListener = completionListener;

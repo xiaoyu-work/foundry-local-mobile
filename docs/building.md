@@ -14,38 +14,39 @@ If you only want to try the SDK from an app, use the published binary packages i
 
 | Tool | Minimum | Notes |
 |---|---|---|
-| CMake | 3.22 | The core sets `cmake_minimum_required(3.22)`. |
+| CMake | 3.26 | Required by the pinned ONNX Runtime GenAI source build. |
 | A C++20 compiler | GCC 13 / Clang 15 / MSVC 19.36 | The core is C++20 and uses `<filesystem>`. |
-| Git | any recent version | The fetch step clones the upstream SDK. |
+| Git | any recent version | The fetch step clones the ONNX Runtime GenAI source tree. |
 | Android NDK | r26+ (verified r27c) | Required only for the Android cross-build. `ANDROID_NDK_HOME` must point at it. |
 | Xcode | 15.0+ | Required only for the Apple cross-build. Full Xcode, not just the command-line tools. |
 | Ninja *(optional)* | any | Detected automatically; the build falls back to Unix Makefiles / Xcode. |
 | Dart / Flutter *(optional)* | Flutter 3.19+ (Dart 3.3+) | Only needed to build the Flutter binding. |
 | Node *(optional)* | 20 LTS | Only needed to build the React Native binding. |
-| Java + Android SDK *(optional)* | JDK 17 + platforms;android-35, build-tools;35.0.0, ndk;27.0.12077973, cmake;3.22.1 | Only needed to build the Android AAR (Gradle). See [Build the Android AAR](#build-the-android-aar). |
+| Java + Android SDK *(optional)* | JDK 17 + platforms;android-35, build-tools;35.0.0, ndk;27.0.12077973, cmake;3.31.6 | Only needed to build the Android AAR (Gradle). See [Build the Android AAR](#build-the-android-aar). |
 
-The upstream Foundry Local SDK headers are **not** vendored in this repository; they are
-staged by `scripts/fetch_foundry_local.sh` (see below).
+The upstream ONNX Runtime GenAI source tree is **not** vendored in this repository; it is
+staged by `scripts/fetch_onnxruntime_genai.sh` (see below).
 
 ## One-time setup
 
 ```bash
-# 1. Stage the upstream Foundry Local SDK headers into third_party/.
-./scripts/fetch_foundry_local.sh
+# 1. Stage the ONNX Runtime GenAI source into third_party/.
+./scripts/fetch_onnxruntime_genai.sh
 
 # 2. (Optional) Point the fetch script at a checkout you already have on disk.
-./scripts/fetch_foundry_local.sh --local /path/to/your/Foundry-Local
+./scripts/fetch_onnxruntime_genai.sh --local /path/to/your/onnxruntime-genai
 
 # 3. (Optional) Pin a specific upstream ref (tag, branch or commit).
-./scripts/fetch_foundry_local.sh --ref cli-preview-0.10.2
+./scripts/fetch_onnxruntime_genai.sh --ref 9d336e4db4e49eeceda909517b882c0d73cc6c86
 ```
 
-The staging destination (`third_party/foundry-local/include/`) is one of two paths the
-core's `CMakeLists.txt` probes, so no `-D` flag is needed after this. To point CMake at a
-custom location instead, pass `-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR=/absolute/path` to
-`cmake` and skip the fetch step.
+The staging destination (`third_party/onnxruntime-genai/`) is auto-detected by
+the core's `CMakeLists.txt`, so no `-D` flag is needed after this. To point CMake at a
+custom location instead, pass `-DFLM_ORT_GENAI_ROOT=/absolute/path` to
+`cmake` and skip the fetch step. Alternatively, install the onnxruntime-genai
+package and set `onnxruntime-genai_DIR` to its CMake config directory.
 
-`fetch_foundry_local.sh` is idempotent. Running it twice does nothing on the second
+`fetch_onnxruntime_genai.sh` is idempotent. Running it twice does nothing on the second
 call unless `--force` or `--ref <new-ref>` is passed. `--verify` checks the recorded
 SHA-256 without re-fetching.
 
@@ -70,7 +71,7 @@ Options exposed on the CMake command line:
 |---|---|---|
 | `-DFLM_BUILD_SHARED=ON\|OFF` | `ON` | Build a shared library. `OFF` produces a static archive with `FLM_STATIC` defined. |
 | `-DFLM_BUILD_EXAMPLES=ON\|OFF` | `OFF` | Build the native example programs under `core/examples/`. |
-| `-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR=<path>` | *(auto)* | Absolute path to `Foundry-Local/sdk_v2/cpp/include`. Overrides the fetch-staged location. |
+| `-DFLM_ORT_GENAI_ROOT=<path>` | *(auto)* | Path to the ONNX Runtime GenAI source tree. Overrides the fetch-staged location. |
 | `-DCMAKE_BUILD_TYPE=<type>` | *(unset)* | Standard CMake build type. Use `Release` or `RelWithDebInfo` for anything you ship. |
 
 Output: `build/linux/libfoundry_local_mobile.so` (or `.dylib`, `.dll`).
@@ -91,12 +92,18 @@ build/android/
 └── jniLibs/
     ├── arm64-v8a/
     │   ├── libc++_shared.so
+    │   ├── libonnxruntime.so
+    │   ├── libonnxruntime-genai.so
     │   └── libfoundry_local_mobile.so
     ├── armeabi-v7a/
     │   ├── libc++_shared.so
+    │   ├── libonnxruntime.so
+    │   ├── libonnxruntime-genai.so
     │   └── libfoundry_local_mobile.so
     └── x86_64/
         ├── libc++_shared.so
+        ├── libonnxruntime.so
+        ├── libonnxruntime-genai.so
         └── libfoundry_local_mobile.so
 ```
 
@@ -145,6 +152,11 @@ build/apple/FoundryLocalMobile.xcframework/
 ├── ios-arm64/FoundryLocalMobile.framework/
 ├── ios-arm64_x86_64-simulator/FoundryLocalMobile.framework/
 └── [macos-arm64_x86_64/FoundryLocalMobile.framework/]  (only with --macos)
+
+build/apple/onnxruntime-genai.xcframework/
+├── ios-arm64/onnxruntime-genai.framework/
+├── ios-arm64_x86_64-simulator/onnxruntime-genai.framework/
+└── [macos-arm64_x86_64/onnxruntime-genai.framework/]  (only with --macos)
 ```
 
 Each framework contains the public headers under `Headers/foundry_local_mobile/` and a
@@ -167,7 +179,7 @@ $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
     "platforms;android-35" \
     "build-tools;35.0.0" \
     "ndk;27.0.12077973" \
-    "cmake;3.22.1"
+    "cmake;3.31.6"
 
 yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
 ```
@@ -186,9 +198,12 @@ cd bindings/android
 ./gradlew assembleRelease
 ```
 
-Output: `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar`
-(~2.3 MB). The AAR ships all three ABIs, each with `libfoundry_local_mobile.so`,
-`libfoundry_local_mobile_jni.so`, and `libc++_shared.so`.
+Output: `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar`.
+The AAR ships all three ABIs, each with `libfoundry_local_mobile.so`,
+`libfoundry_local_mobile_jni.so`, `libonnxruntime-genai.so`, `libonnxruntime.so`,
+and `libc++_shared.so` — the OGA/ORT shared libraries are required at run time
+alongside the core, since the core links against them dynamically (see
+`bindings/android/src/main/cpp/CMakeLists.txt`).
 
 The Gradle wrapper (`bindings/android/gradlew` + `gradle/wrapper/`) pins the exact
 Gradle distribution AGP 8.5.2 needs; a system-wide Gradle install is not required.
@@ -208,7 +223,7 @@ run `./scripts/build_android.sh` and point `sourceSets.main.jniLibs.srcDirs` at
 ./scripts/build.sh android    # all three ABIs
 ./scripts/build.sh apple      # XCFramework (macOS only)
 ./scripts/build.sh all        # fetch + android + apple (apple skipped on non-macOS)
-./scripts/build.sh clean      # delete build/ and third_party/foundry-local/
+./scripts/build.sh clean      # delete build/ and third_party/onnxruntime-genai/
 ```
 
 Flags after `--` are forwarded to the underlying script:
@@ -235,9 +250,9 @@ README for the exact command.
 
 `samples/android/` is a Compose app that consumes the Android binding through
 the same Maven coordinate a released customer app would use. It exercises the
-full public API end to end: initialise the SDK, add a remote model source,
-show the selected variant and the alternatives, download with progress and a
-working cancel, load, and stream a chat completion.
+public API end to end: initialise the SDK, load a model from a local
+directory path entered in the UI (or pushed to the device with `adb push`),
+and stream a chat completion.
 
 ```bash
 cd samples/android
@@ -246,20 +261,17 @@ cd samples/android
 
 Output: `samples/android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The sample reads `flm.sample.modelName`, `flm.sample.modelUrl` and
-`flm.sample.authHeader` from the sample's `local.properties` (git-ignored)
-so a developer can point it at a private manifest and credential without
-touching source. See `samples/android/README.md` for the full flow.
+See `samples/android/README.md` for the full flow. The sample does not
+download or manage models itself — you push a model directory onto the
+device and point the sample at its path.
 
 ## Build the Flutter example
 
 `bindings/flutter/example/` is the pub-style example app that pins the
 plugin as `foundry_local_mobile: { path: ../ }` and consumes it strictly
-through the public `foundry_local_mobile.dart` barrel. It exercises the
-same end-to-end flow as `samples/android/`: register a remote model
-source, show the chosen variant and the alternatives, download with a
-progress bar and a working cancel button, load, and stream a chat
-completion.
+through the public `foundry_local_mobile.dart` barrel. It exercises the same
+path-only flow: point the app at a local model directory, load it, and
+stream a chat completion.
 
 ```bash
 export ANDROID_NDK_HOME=$HOME/android-ndk-r27c
@@ -269,25 +281,22 @@ flutter build apk --debug
 
 Output: `bindings/flutter/example/build/app/outputs/flutter-apk/app-debug.apk`.
 
-Configure the model URL and auth header at build time with `--dart-define`:
+Configure the model path at build time with `--dart-define`:
 
 ```bash
-flutter run \
-  --dart-define=FLM_MODEL_URL=https://models.example.com/qwen2.5-0.5b/manifest.json \
-  --dart-define=FLM_MODEL_AUTH="Bearer …" \
-  --dart-define=FLM_MODEL_NAME=qwen2.5-0.5b-instruct-generic-cpu:4
+flutter run --dart-define=FLM_MODEL_PATH=/absolute/path/to/model
 ```
 
-Anything left off the command line stays editable in the app's first
-screen; credentials are held only in widget state, so nothing that a
-`git add -A` habit could sweep in ever lands on disk.
+`FLM_MODEL_PATH` is optional; if left off, the path can be typed on the
+example's first screen.
 
-Two details that trip up a first-time Flutter binding consumer, both
-carried by the example's own configuration but worth being aware of when
-copying the setup into a real app:
-
-- **Manifest needs `<uses-permission android:name="android.permission.INTERNET"/>`.** Flutter's default `flutter create` template does not include it. Remote model sources reach out through the plugin's transport, so without this line the download step throws instead of running. The example adds it in `android/app/src/main/AndroidManifest.xml`.
-- **`ndkVersion` needs to be pinned in the app.** The plugin's `ExternalNativeBuild` requires NDK 26.1.10909125; Flutter's default `flutter.ndkVersion` points at an older release. Leaving the pin off surfaces as a Gradle warning on every build and, on some SDK combinations, a full configure failure. The example pins it explicitly in `android/app/build.gradle`.
+One detail that trips up a first-time Flutter binding consumer, carried by
+the example's own configuration but worth being aware of when copying the
+setup into a real app: **`ndkVersion` needs to be pinned in the app.** The
+plugin's `ExternalNativeBuild` requires NDK 26.1.10909125; Flutter's default
+`flutter.ndkVersion` points at an older release. Leaving the pin off surfaces
+as a Gradle warning on every build and, on some SDK combinations, a full
+configure failure. The example pins it explicitly in `android/app/build.gradle`.
 
 ## Where artifacts land
 
@@ -302,12 +311,12 @@ copying the setup into a real app:
 
 ## Troubleshooting
 
-**`Foundry Local headers not found. Run scripts/fetch_foundry_local.sh…`**
-The CMake configure emits this when neither the fetch-staged path nor a sibling
-`Foundry-Local/` checkout has `sdk_v2/cpp/include/foundry_local/foundry_local_c.h`. Run
-`./scripts/fetch_foundry_local.sh`. If you already have a checkout somewhere unusual,
-run `./scripts/fetch_foundry_local.sh --local /path/to/Foundry-Local` or configure with
-`-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR=/absolute/path`.
+**`Cannot find ort_genai_c.h. Run scripts/fetch_onnxruntime_genai.sh…`**
+The CMake configure emits this when neither the fetch-staged path nor a
+`FLM_ORT_GENAI_ROOT` setting points at a directory containing `src/ort_genai_c.h`. Run
+`./scripts/fetch_onnxruntime_genai.sh`. If you already have a checkout somewhere unusual,
+run `./scripts/fetch_onnxruntime_genai.sh --local /path/to/onnxruntime-genai` or configure with
+`-DFLM_ORT_GENAI_ROOT=/absolute/path`.
 
 **`ANDROID_NDK_HOME is not set.`**
 The Android cross-build requires the NDK. Install it with `sdkmanager --install
@@ -390,6 +399,8 @@ task with a JNI symbol reconciliation step that catches Kotlin ↔ JNI drift. Th
 (`.github/workflows/release.yml`) builds every platform artifact on a `v*.*.*` tag and
 attaches them to the GitHub Release.
 
-Neither workflow runs end-to-end inference: the Foundry Local runtime library is the
-part the core `dlopen`s at run time on device and is not distributed as a public
-package. The build itself is the useful signal.
+Neither workflow runs end-to-end inference: CI builds ONNX Runtime GenAI from source
+(staged by `scripts/fetch_onnxruntime_genai.sh`) and links it into the core, but it does
+not load a real model or generate tokens on a CI runner. The build itself is the useful
+signal; the current end-to-end proof point for text chat and streaming is a manual
+Windows run against the OGA `qwen3-5` fixture model, not an automated CI job.

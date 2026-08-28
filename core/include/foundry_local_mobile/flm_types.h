@@ -29,7 +29,7 @@ extern "C" {
 #endif
 
 /** ABI version. Bumped when the meaning of existing entries changes (never for additions). */
-#define FLM_API_VERSION 1
+#define FLM_API_VERSION 2
 
 /* -------------------------------------------------------------------------
  * Handles
@@ -53,9 +53,8 @@ extern "C" {
 typedef uint64_t flm_handle;
 #define FLM_INVALID_HANDLE ((flm_handle)0)
 
-typedef flm_handle flm_manager;  ///< Root object. Owns the runtime, cache and job pool.
-typedef flm_handle flm_catalog;  ///< Model catalog. Borrowed from a manager.
-typedef flm_handle flm_model;    ///< A catalog model, a model package, or a package variant.
+typedef flm_handle flm_manager;  ///< Root object. Owns the runtime, model registry and job pool.
+typedef flm_handle flm_model;    ///< A model loaded from a caller-owned directory.
 typedef flm_handle flm_session;  ///< An inference session bound to a loaded model.
 typedef flm_handle flm_job;      ///< An in-flight asynchronous operation.
 
@@ -214,9 +213,6 @@ typedef enum flm_lifecycle_event {
  * callback returns. A binding that hands the raw pointer to another thread, queue or
  * isolate and reads it there is reading freed memory. Copy everything you need out
  * before returning — which, on the streaming delta path, means copying per token.
- *
- * The one exception is flm_http_request: the core blocks until the request completes,
- * so that struct and its strings stay valid until you report completion for it.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -251,54 +247,11 @@ typedef void(FLM_CALLBACK* flm_log_callback)(flm_log_level level, const char* ta
                                              void* user_data);
 
 /* -------------------------------------------------------------------------
- * HTTP transport
+ * HTTP transport — REMOVED
  *
- * The core never performs HTTP itself. It plans downloads — which manifest to read,
- * which variant matches this device, which files and shared assets that implies, what
- * each must hash to — and hands each individual request to a transport supplied by the
- * platform binding.
- *
- * That split is not incidental. A model download is hundreds of megabytes to several
- * gigabytes, which on a phone means it *must* survive the app being backgrounded, and
- * the only APIs that can do that are URLSession background sessions on Apple platforms
- * and WorkManager/DownloadManager on Android. A socket loop inside C++ is suspended and
- * then killed. Delegating also means the app's certificate pinning, proxy configuration,
- * Android Network Security Config and VPN routing all apply automatically, and that
- * credentials — which usually need refreshing — stay in the app's own code.
+ * The SDK no longer performs downloads. Models are loaded from caller-owned
+ * directories; there is no transport layer.
  * ------------------------------------------------------------------------- */
-
-/** A single HTTP request the transport must perform. */
-typedef struct flm_http_request {
-  uint32_t version;              ///< FLM_API_VERSION.
-  uint64_t request_id;           ///< Echo this back to every flm_transport_report_* call.
-  const char* url;               ///< Absolute URL, already resolved against the source's base.
-  const char* method;            ///< "GET" or "HEAD".
-  const char* headers_json;      ///< JSON object of request headers. Never NULL; may be "{}".
-  const char* destination_path;  ///< Write the body here. NULL means deliver it in memory.
-  int64_t offset;                ///< Resume offset in bytes; 0 for a fresh request. When > 0, send a
-                                 ///< `Range: bytes=<offset>-` header AND append to destination_path.
-                                 ///< Opening the file truncating would silently corrupt the model.
-  int64_t expected_bytes;        ///< Expected body size, or FLM_UNKNOWN_SIZE.
-} flm_http_request;
-
-/**
- * Begin a request. Must return immediately, having started the work elsewhere; the core
- * calls this from a job thread and expects to be notified through
- * flm_transport_report_complete().
- *
- * Return 0 if the request was accepted, non-zero to fail it immediately.
- */
-typedef int32_t(FLM_CALLBACK* flm_transport_send)(const flm_http_request* request, void* user_data);
-
-/** Cancel an in-flight request. The transport must still report completion. */
-typedef void(FLM_CALLBACK* flm_transport_cancel)(uint64_t request_id, void* user_data);
-
-typedef struct flm_transport {
-  uint32_t version;  ///< FLM_API_VERSION.
-  flm_transport_send send;
-  flm_transport_cancel cancel;
-  void* user_data;
-} flm_transport;
 
 #ifdef __cplusplus
 }  // extern "C"

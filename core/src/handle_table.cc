@@ -11,7 +11,6 @@ namespace {
 const char* KindName(HandleKind kind) noexcept {
   switch (kind) {
     case HandleKind::kManager: return "manager";
-    case HandleKind::kCatalog: return "catalog";
     case HandleKind::kModel: return "model";
     case HandleKind::kSession: return "session";
     case HandleKind::kJob: return "job";

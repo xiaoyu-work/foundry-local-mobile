@@ -18,7 +18,7 @@ Usage:
   build.sh <command> [target] [-- forwarded-args…]
 
 Commands:
-  fetch                 Stage the Foundry Local SDK headers (scripts/fetch_foundry_local.sh).
+  fetch                 Stage the ONNX Runtime GenAI source (scripts/fetch_onnxruntime_genai.sh).
   android [target]      Build the core for Android ABIs (scripts/build_android.sh).
                         Default target is 'all' (arm64-v8a + armeabi-v7a + x86_64).
                         A specific ABI (arm64-v8a, x86_64, ...) may be given
@@ -27,7 +27,7 @@ Commands:
                         Needs a JDK 17 and either \$ANDROID_HOME or
                         \$ANDROID_SDK_ROOT pointing at an SDK with
                         platforms/android-35, build-tools/35.0.0,
-                        ndk/27.0.12077973 and cmake/3.22.1 installed.
+                        ndk/27.0.12077973 and cmake/3.31.6 installed.
                         Forwarded arguments become extra ./gradlew arguments,
                         e.g. \`-- --stacktrace\` or \`-- assembleDebug\`.
   apple                 Build the core as an Apple XCFramework (scripts/build_apple.sh).
@@ -36,14 +36,14 @@ Commands:
                         by CI and by developers to sanity-check changes without
                         an emulator or a device.
   all                   fetch + android all + apple (apple is skipped on non-macOS).
-  clean                 Remove build/ and third_party/foundry-local/.
+  clean                 Remove build/ and third_party/onnxruntime-genai/.
 
 Any arguments after \`--\` are forwarded to the underlying script, e.g.
 
   build.sh android arm64-v8a -- --build-type Debug --platform 28
   build.sh apple -- --macos --clean
 
-Environment mirrors the individual scripts; see fetch_foundry_local.sh,
+Environment mirrors the individual scripts; see fetch_onnxruntime_genai.sh,
 build_android.sh, build_apple.sh.
 
 EOF
@@ -76,7 +76,7 @@ elif [[ $# -gt 0 ]]; then
 fi
 
 run_fetch() {
-    "${SCRIPT_DIR}/fetch_foundry_local.sh" "${FORWARDED[@]}"
+    "${SCRIPT_DIR}/fetch_onnxruntime_genai.sh" "${FORWARDED[@]}"
 }
 
 run_android() {
@@ -98,7 +98,7 @@ run_android_binding() {
     if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
         printf '[build] error: set ANDROID_HOME (or ANDROID_SDK_ROOT) to an SDK '\
 'containing platforms/android-35, build-tools/35.0.0, ndk/27.0.12077973 and '\
-'cmake/3.22.1. See docs/building.md.\n' >&2
+'cmake/3.31.6. See docs/building.md.\n' >&2
         exit 1
     fi
     local -a gradle_args=(--no-daemon --console=plain)
@@ -132,7 +132,7 @@ run_linux() {
 }
 
 run_clean() {
-    rm -rf "${REPO_ROOT}/build" "${REPO_ROOT}/third_party/foundry-local"
+    rm -rf "${REPO_ROOT}/build" "${REPO_ROOT}/third_party/onnxruntime-genai"
 }
 
 case "${COMMAND}" in

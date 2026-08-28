@@ -10,8 +10,8 @@ import { TurboModuleRegistry } from 'react-native';
  *
  * ## Handles
  *
- * Every `number` returned from a `*Create` / `*GetCatalog` / `catalogGetModel`
- * / `sessionCreate` call is **this binding's own registry slot id**, not the
+ * Every `number` returned from a `*Create` / `loadModel` / `sessionCreate`
+ * call is **this binding's own registry slot id**, not the
  * underlying `flm_handle` from the C ABI. The native side (Kotlin on Android,
  * Swift on iOS) keeps a `HandleRegistry` that mints small sequential ids
  * starting at 1; the id going across the bridge is that slot number and
@@ -64,7 +64,6 @@ export interface Spec extends TurboModule {
   managerRelease(managerId: number): void;
   managerUpdateSettings(managerId: number, configJson: string): void;
   managerGetDeviceProfile(managerId: number): string;
-  managerGetCatalog(managerId: number): number;
 
   /**
    * SDK version, runtime version and runtime availability. Routed through a
@@ -74,43 +73,22 @@ export interface Spec extends TurboModule {
    * like a property.
    */
   managerVersion(managerId: number): string;
-  /** Foundry Local runtime version, or empty string when the runtime is absent. */
+  /** ONNX Runtime GenAI version, or empty string when the runtime is absent. */
   managerRuntimeVersion(managerId: number): string;
   managerIsRuntimeAvailable(managerId: number): boolean;
   managerSetLogLevel(managerId: number, level: number): void;
 
-  // ---------------------------------------------------------------------------
-  // Add model source (streaming + result)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Fetch/install a model source. `sourceJson` is a serialised `ModelSource`.
-   * Progress events flow to `subscriptionId`. Resolves with the completion
-   * JSON `{ name, path, variant_id, bytes_downloaded, bytes_reused,
-   * was_cached, model_handle }` — the TypeScript wrapper decodes it.
-   */
-  addModelSource(
+  loadModel(
     managerId: number,
-    sourceJson: string,
-    subscriptionId: string,
+    modelPath: string,
+    optionsJson: string | null,
   ): Promise<string>;
-
-  // ---------------------------------------------------------------------------
-  // Catalog
-  // ---------------------------------------------------------------------------
-
-  catalogListModels(catalogId: number, filterJson: string | null): Promise<string>;
-  catalogListCachedModels(catalogId: number): string;
-  catalogGetModel(catalogId: number, alias: string): Promise<number>;
-  catalogGetModelById(catalogId: number, modelId: string): Promise<number>;
-  catalogGetCacheSizeBytes(catalogId: number): number;
 
   // ---------------------------------------------------------------------------
   // Model
   // ---------------------------------------------------------------------------
 
   modelGetInfo(modelId: number): string;
-  modelIsPackage(modelId: number): boolean;
   modelIsCached(modelId: number): boolean;
   modelIsLoaded(modelId: number): boolean;
   modelGetPath(modelId: number): string;
@@ -120,22 +98,7 @@ export interface Spec extends TurboModule {
     subscriptionId: string,
   ): Promise<void>;
   modelUnload(modelId: number): Promise<void>;
-  modelDelete(modelId: number): Promise<void>;
   modelRelease(modelId: number): void;
-
-  // ---------------------------------------------------------------------------
-  // Package
-  // ---------------------------------------------------------------------------
-
-  packageGetVariants(modelId: number): string;
-  packageSelectVariant(modelId: number, variantId: string): void;
-  /** Returns the id of the selected variant. */
-  packageSelectBestVariant(modelId: number, constraintsJson: string | null): string;
-  packageGetVariant(modelId: number, variantId: string): number;
-  packageEstimateDownload(
-    modelId: number,
-    variantIdsJson: string | null,
-  ): string;
 
   // ---------------------------------------------------------------------------
   // Sessions (chat / audio / embedding)

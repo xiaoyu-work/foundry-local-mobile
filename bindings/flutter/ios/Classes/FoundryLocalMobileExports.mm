@@ -26,7 +26,6 @@ void* FoundryLocalMobile_KeepSymbols(int index) {
         (void*)&flm_string_free,
         (void*)&flm_set_log_callback,
         (void*)&flm_set_log_level,
-        (void*)&flm_set_runtime_library_path,
         (void*)&flm_is_runtime_available,
         (void*)&flm_last_error_message,
         (void*)&flm_last_error_detail_json,
@@ -36,24 +35,10 @@ void* FoundryLocalMobile_KeepSymbols(int index) {
         (void*)&flm_manager_create,
         (void*)&flm_manager_shutdown,
         (void*)&flm_manager_release,
-        (void*)&flm_manager_get_catalog,
         (void*)&flm_manager_get_device_profile_json,
         (void*)&flm_manager_notify_lifecycle,
         (void*)&flm_manager_update_settings,
-        (void*)&flm_manager_add_model_source_async,
-
-        // Transport ----------------------------------------------------------
-        (void*)&flm_set_transport,
-        (void*)&flm_transport_report_progress,
-        (void*)&flm_transport_report_body,
-        (void*)&flm_transport_report_complete,
-
-        // Catalog ------------------------------------------------------------
-        (void*)&flm_catalog_list_models_async,
-        (void*)&flm_catalog_get_model_async,
-        (void*)&flm_catalog_get_model_by_id_async,
-        (void*)&flm_catalog_list_cached_models_json,
-        (void*)&flm_catalog_get_cache_size_bytes,
+        (void*)&flm_manager_load_model_async,
 
         // Model --------------------------------------------------------------
         (void*)&flm_model_release,
@@ -61,18 +46,8 @@ void* FoundryLocalMobile_KeepSymbols(int index) {
         (void*)&flm_model_is_cached,
         (void*)&flm_model_is_loaded,
         (void*)&flm_model_get_path,
-        (void*)&flm_model_download_async,
         (void*)&flm_model_load_async,
         (void*)&flm_model_unload_async,
-        (void*)&flm_model_delete_async,
-        (void*)&flm_model_is_package,
-
-        // Model packages -----------------------------------------------------
-        (void*)&flm_package_get_variants_json,
-        (void*)&flm_package_select_variant,
-        (void*)&flm_package_select_best_variant,
-        (void*)&flm_package_get_variant,
-        (void*)&flm_package_estimate_download_json,
 
         // Sessions -----------------------------------------------------------
         (void*)&flm_session_create,
@@ -96,12 +71,10 @@ void* FoundryLocalMobile_KeepSymbols(int index) {
         (void*)&flm_job_release,
         (void*)&flm_job_wait,
 
-        // Dart bridge trampolines (in the same static library, otherwise ffi
-        // could not resolve them either). -----------------------------------
+        // Dart bridge trampolines -------------------------------------------
         (void*)&flm_dart_bridge_progress,
         (void*)&flm_dart_bridge_delta,
         (void*)&flm_dart_bridge_complete,
-        (void*)&flm_dart_bridge_send,
         (void*)&flm_dart_bridge_free_progress,
         (void*)&flm_dart_bridge_free_delta,
         (void*)&flm_dart_bridge_free_string,

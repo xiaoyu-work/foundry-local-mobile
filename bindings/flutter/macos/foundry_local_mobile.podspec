@@ -3,7 +3,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'foundry_local_mobile'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'On-device AI for Flutter via Microsoft Foundry Local.'
   s.description      = <<-DESC
 Flutter FFI plugin providing streaming chat, tool calling, speech-to-text and
@@ -13,8 +13,9 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
   s.license          = { :type => 'MIT', :file => '../LICENSE' }
   s.author           = { 'Microsoft' => 'foundrylocal@microsoft.com' }
 
-  s.platform         = :osx, '10.15'
-  s.osx.deployment_target = '10.15'
+  # macOS 12.0 matches the Swift binding's minimum.
+  s.platform         = :osx, '12.0'
+  s.osx.deployment_target = '12.0'
   s.swift_version    = '5.9'
 
   s.source           = { :path => '.' }
@@ -46,6 +47,13 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
   s.dependency 'FlutterMacOS'
   s.frameworks       = 'Foundation'
 
+  # The core links against ONNX Runtime GenAI at runtime. Vendor the
+  # XCFrameworks built by `scripts/build_apple.sh --macos`.
+  s.vendored_frameworks = [
+    '../../../bindings/ios/Frameworks/FoundryLocalMobile.xcframework',
+    '../../../bindings/ios/Frameworks/onnxruntime-genai.xcframework',
+  ]
+
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++20',
@@ -54,7 +62,7 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
       '"${PODS_TARGET_SRCROOT}/../../../core/include"',
       '"${PODS_TARGET_SRCROOT}/../../../core/src"',
       '"${PODS_TARGET_SRCROOT}/../../../core/third_party/nlohmann/include"',
-      '"${PODS_TARGET_SRCROOT}/../../../third_party/foundry-local/include"',
+      '"${PODS_TARGET_SRCROOT}/../../../third_party/onnxruntime-genai/src"',
       '"${PODS_TARGET_SRCROOT}/../src"'
     ].join(' '),
     'GCC_PREPROCESSOR_DEFINITIONS' => 'FLM_STATIC=1',

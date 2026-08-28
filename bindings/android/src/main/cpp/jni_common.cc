@@ -23,8 +23,6 @@ constexpr const char* kLogTag = "FoundryLocalMobile";
 std::atomic<JavaVM*> g_vm{nullptr};
 CachedClasses g_cache{};
 
-// FindClass at runtime, then upgrade the local ref to a global one so the ID
-// survives across JNI calls.
 jclass FindAndGlobalize(JNIEnv* env, const char* name) noexcept {
   jclass local = env->FindClass(name);
   if (local == nullptr) {
@@ -39,20 +37,12 @@ jclass FindAndGlobalize(JNIEnv* env, const char* name) noexcept {
 
 }  // namespace
 
-// -------------------------------------------------------------------------
-// VM access
-// -------------------------------------------------------------------------
-
 JavaVM* GetJavaVM() noexcept { return g_vm.load(std::memory_order_acquire); }
-
 void SetJavaVM(JavaVM* vm) noexcept { g_vm.store(vm, std::memory_order_release); }
 
 VmScope::VmScope() noexcept {
   JavaVM* vm = GetJavaVM();
-  if (vm == nullptr) {
-    return;
-  }
-  // Fast path: already attached, no cleanup needed.
+  if (vm == nullptr) return;
   void* env_ptr = nullptr;
   jint rc = vm->GetEnv(&env_ptr, JNI_VERSION_1_6);
   if (rc == JNI_OK && env_ptr != nullptr) {
@@ -60,14 +50,9 @@ VmScope::VmScope() noexcept {
     return;
   }
   if (rc == JNI_EDETACHED) {
-    // AttachCurrentThreadAsDaemon so a stuck attach never blocks JVM exit.
-    // The Android NDK's C++ JavaVM binding takes JNIEnv** here; do not cast
-    // to void** — the previous reinterpret_cast tripped clang's strict
-    // parameter-type checks in the r27 toolchain.
     JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("flm-callback"), nullptr};
     JNIEnv* attached = nullptr;
-    if (vm->AttachCurrentThreadAsDaemon(&attached,
-                                        static_cast<void*>(&args)) == JNI_OK) {
+    if (vm->AttachCurrentThreadAsDaemon(&attached, static_cast<void*>(&args)) == JNI_OK) {
       env_ = attached;
       detach_on_destroy_ = true;
     }
@@ -75,18 +60,12 @@ VmScope::VmScope() noexcept {
 }
 
 VmScope::~VmScope() noexcept {
-  if (!detach_on_destroy_) {
-    return;
-  }
+  if (!detach_on_destroy_) return;
   JavaVM* vm = GetJavaVM();
   if (vm != nullptr) {
     vm->DetachCurrentThread();
   }
 }
-
-// -------------------------------------------------------------------------
-// String helpers
-// -------------------------------------------------------------------------
 
 JStringUtf::JStringUtf(JNIEnv* env, jstring str) noexcept : env_(env), str_(str) {
   if (env != nullptr && str != nullptr) {
@@ -123,22 +102,13 @@ jstring ToJString(JNIEnv* env, std::string_view utf8) noexcept {
   if (env == nullptr) {
     return nullptr;
   }
-  // NewStringUTF wants a null-terminated string.
   std::string tmp(utf8);
   return env->NewStringUTF(tmp.c_str());
 }
 
-// -------------------------------------------------------------------------
-// Errors
-// -------------------------------------------------------------------------
-
 void ThrowFoundryLocalException(JNIEnv* env, flm_status status, const char* message,
                                 const char* detail_json) noexcept {
-  if (env == nullptr) return;
-  if (env->ExceptionCheck()) {
-    // Preserve the pending Java exception.
-    return;
-  }
+  if (env == nullptr || env->ExceptionCheck()) return;
 
   const CachedClasses& c = Cached();
   jclass cls = c.exception_base;
@@ -160,7 +130,6 @@ void ThrowFoundryLocalException(JNIEnv* env, flm_status status, const char* mess
 
 void ThrowIfError(JNIEnv* env, flm_status status) noexcept {
   if (status == FLM_OK) return;
-  // Capture eagerly, because the next JNI call may reset the thread-local state.
   const char* msg = flm_last_error_message();
   const char* detail = flm_last_error_detail_json();
   std::string msg_copy = msg != nullptr ? std::string(msg) : std::string();
@@ -169,10 +138,6 @@ void ThrowIfError(JNIEnv* env, flm_status status) noexcept {
                              msg_copy.empty() ? nullptr : msg_copy.c_str(),
                              detail_copy.empty() ? nullptr : detail_copy.c_str());
 }
-
-// -------------------------------------------------------------------------
-// Cache
-// -------------------------------------------------------------------------
 
 const CachedClasses& Cached() noexcept { return g_cache; }
 
@@ -202,14 +167,6 @@ bool InitCache(JNIEnv* env) noexcept {
         "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJJJI)V");
   }
 
-  g_cache.native_http_request = FindAndGlobalize(
-      env, "com/microsoft/ai/foundry/local/mobile/internal/NativeHttpRequest");
-  if (g_cache.native_http_request != nullptr) {
-    g_cache.native_http_request_ctor = env->GetMethodID(
-        g_cache.native_http_request, "<init>",
-        "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJ)V");
-  }
-
   g_cache.native_callbacks = FindAndGlobalize(env,
                                               "com/microsoft/ai/foundry/local/mobile/internal/NativeCallbacks");
   if (g_cache.native_callbacks != nullptr) {
@@ -221,16 +178,6 @@ bool InitCache(JNIEnv* env) noexcept {
         "(JLcom/microsoft/ai/foundry/local/mobile/internal/NativeDelta;)I");
     g_cache.on_completion = env->GetStaticMethodID(
         g_cache.native_callbacks, "dispatchCompletion", "(JILjava/lang/String;)V");
-  }
-
-  g_cache.transport_dispatcher = FindAndGlobalize(
-      env, "com/microsoft/ai/foundry/local/mobile/transport/TransportDispatcher");
-  if (g_cache.transport_dispatcher != nullptr) {
-    g_cache.transport_send = env->GetStaticMethodID(
-        g_cache.transport_dispatcher, "dispatchSend",
-        "(Lcom/microsoft/ai/foundry/local/mobile/internal/NativeHttpRequest;)I");
-    g_cache.transport_cancel = env->GetStaticMethodID(
-        g_cache.transport_dispatcher, "dispatchCancel", "(J)V");
   }
 
   return g_cache.exception_base != nullptr && g_cache.native_callbacks != nullptr;
@@ -249,17 +196,12 @@ void ReleaseCache(JNIEnv* env) noexcept {
   drop(g_cache.exception_base);
   drop(g_cache.native_progress);
   drop(g_cache.native_delta);
-  drop(g_cache.native_http_request);
   drop(g_cache.native_callbacks);
-  drop(g_cache.transport_dispatcher);
   g_cache = CachedClasses{};
 }
 
 }  // namespace flm_android
 
-// -------------------------------------------------------------------------
-// JNI_OnLoad / JNI_OnUnload
-// -------------------------------------------------------------------------
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
   flm_android::SetJavaVM(vm);
 
@@ -268,8 +210,6 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_ERR;
   }
   if (!flm_android::InitCache(env)) {
-    // The Kotlin side will surface a clearer error the first time it tries to
-    // call a JNI method; don't abort loading here.
     FLM_LOG_WARN("FoundryLocalMobile", "JNI_OnLoad: some classes/methods could not be cached");
   }
   return JNI_VERSION_1_6;

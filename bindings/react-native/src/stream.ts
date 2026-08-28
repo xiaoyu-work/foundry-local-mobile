@@ -67,7 +67,7 @@ export function wireProgress(
 
 interface StreamOptions {
   subscriptionId: string;
-  /** Optional progress hook — for downloads embedded in a streaming call. */
+  /** Optional progress hook for long-running native operations. */
   onProgress?: (p: Progress) => void;
   /**
    * Starts the native operation. Must resolve when the native side has

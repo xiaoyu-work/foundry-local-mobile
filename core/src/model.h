@@ -6,25 +6,23 @@
 
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 
 #include "job.h"
-#include "manager.h"
-#include "model_package.h"
 #include "runtime.h"
 #include "third_party/json.h"
 
 namespace flm {
 
-/// A catalog model, a model package, or one variant of a package.
+class Manager;
+
+/// A model backed directly by ONNX Runtime GenAI.
 ///
-/// The three cases share an interface deliberately: app code that does not care about
-/// packages treats every model the same way, while code that does care calls the
-/// package-specific accessors. `is_package()` distinguishes them.
-class Model {
+/// Owns OgaModel, OgaTokenizer and metadata derived from the filesystem path and
+/// genai_config.json. Model path is always caller-owned; the SDK never deletes it.
+class Model : public std::enable_shared_from_this<Model> {
  public:
-  Model(std::shared_ptr<Manager> manager, flModel* upstream, bool owns_upstream);
+  Model(std::shared_ptr<Manager> manager, const std::string& path, const std::string& name);
   ~Model();
 
   Model(const Model&) = delete;
@@ -32,55 +30,68 @@ class Model {
 
   nlohmann::json GetInfo() const;
   std::string GetId() const;
-
-  /// The model's task, e.g. "chat-completion". Empty for a model the catalog has never
-  /// heard of, which is every model an app supplies itself — see Session's constructor.
   std::string GetTask() const;
   std::string GetPath() const;
   bool IsCached() const;
   bool IsLoaded() const;
 
-  nlohmann::json Download(const nlohmann::json& options, JobContext& context);
   nlohmann::json Load(const nlohmann::json& options, JobContext& context);
+  nlohmann::json Reload(JobContext& context);
   void Unload();
-  void Delete();
 
-  /* --- Model package support --- */
+  /// Acquire a shared lease on the OGA model and tokenizer. While the lease is held,
+  /// the model cannot be unloaded. Returns nullptr if the model is not loaded.
+  class InferenceLease {
+   public:
+    InferenceLease() = default;
+    InferenceLease(std::shared_ptr<Model> model, std::unique_lock<std::mutex> lock,
+                   OgaModel* oga_model, OgaTokenizer* oga_tokenizer);
 
-  /// Whether this model is a package. Determined from catalog metadata when available,
-  /// and from the on-disk layout once downloaded.
-  bool IsPackage() const;
+    InferenceLease(InferenceLease&&) = default;
+    InferenceLease& operator=(InferenceLease&&) = default;
 
-  /// The parsed package, scored against the current device. Throws
-  /// Error(FLM_ERROR_INVALID_STATE) when this model is not a package.
-  const ModelPackage& GetPackage() const;
+    InferenceLease(const InferenceLease&) = delete;
+    InferenceLease& operator=(const InferenceLease&) = delete;
 
-  void SelectVariant(const std::string& variant_id);
-  std::string SelectBestVariant(const nlohmann::json& constraints);
-  std::shared_ptr<Model> GetVariantModel(const std::string& variant_id);
-  nlohmann::json EstimateDownload(const std::optional<std::vector<std::string>>& variant_ids) const;
+    OgaModel* oga_model() const noexcept { return oga_model_; }
+    OgaTokenizer* oga_tokenizer() const noexcept { return oga_tokenizer_; }
+    explicit operator bool() const noexcept { return oga_model_ != nullptr; }
 
-  flModel* upstream() const noexcept { return upstream_; }
+   private:
+    std::shared_ptr<Model> model_;
+    std::unique_lock<std::mutex> lock_;
+    OgaModel* oga_model_ = nullptr;
+    OgaTokenizer* oga_tokenizer_ = nullptr;
+  };
+
+  /// Acquire a shared lease preventing Unload while OGA operations run.
+  /// Throws FLM_ERROR_INVALID_STATE if the model is not loaded.
+  InferenceLease AcquireInferenceLease();
+
   const std::shared_ptr<Manager>& manager() const noexcept { return manager_; }
 
  private:
-  /// Parse the package manifest on first use. Package metadata may come from the catalog
-  /// before download and from disk afterwards, so this is re-evaluated when the cache
-  /// state changes.
-  void EnsurePackageLoaded() const;
-
-  /// Upstream variants (device-optimized builds exposed by the catalog) are surfaced as
-  /// package variants when the model is not a true ORT model package, so callers get one
-  /// consistent selection API either way.
-  std::optional<ModelPackage> BuildPackageFromUpstreamVariants() const;
+  void LoadMetadataFromConfig();
 
   std::shared_ptr<Manager> manager_;
-  flModel* upstream_ = nullptr;
-  bool owns_upstream_ = false;
+  std::string path_;
+  std::string name_;
 
+  // OGA objects — owned, created on Load, destroyed on Unload.
+  OgaModel* oga_model_ = nullptr;
+  OgaTokenizer* oga_tokenizer_ = nullptr;
+  OgaConfig* oga_config_ = nullptr;
+
+  /// Serializes OGA operations for this model and protects handle lifetime.
+  mutable std::mutex oga_mutex_;
+
+  /// Protects metadata_ and loaded_.
   mutable std::mutex mutex_;
-  mutable std::optional<ModelPackage> package_;
-  mutable bool package_checked_ = false;
+
+  nlohmann::json metadata_;
+  nlohmann::json load_options_ = nlohmann::json::object();
+  bool loaded_ = false;
+  std::string execution_provider_;
 };
 
 }  // namespace flm

@@ -11,46 +11,30 @@ import 'package:path_provider/path_provider.dart' as pp;
 
 import 'bindings/bindings.dart' as raw;
 import 'bindings/native_library.dart';
-import 'cancel_token.dart';
-import 'catalog.dart';
 import 'error_capture.dart';
 import 'job_runner.dart';
 import 'lifecycle.dart';
 import 'model.dart';
 import 'models/config.dart';
 import 'models/device_profile.dart';
-import 'models/model_source.dart';
+import 'models/errors.dart';
 import 'models/progress.dart';
 import 'native_strings.dart';
-import 'transport.dart';
 
-/// Root object of the SDK. Owns the manager handle, the catalog, the
-/// transport registration and the app-lifecycle bridge; released by [dispose].
+/// Root object of the SDK. Owns the manager handle and the app-lifecycle
+/// bridge; released by [dispose].
 class FoundryLocal {
   FoundryLocal._({
     required this.config,
     required int managerHandle,
-    required int catalogHandle,
-    required this.transport,
-    required TransportRegistration? transportRegistration,
     required LifecycleBridge lifecycleBridge,
   })  : _managerHandle = managerHandle,
-        _transportRegistration = transportRegistration,
-        _lifecycleBridge = lifecycleBridge,
-        catalog = Catalog.internal(catalogHandle);
+        _lifecycleBridge = lifecycleBridge;
 
   /// Configuration this instance was created with. Read-only after creation.
   final FoundryLocalConfig config;
 
-  /// The HTTP transport that will service every remote download. Installed at
-  /// creation and released when this instance is disposed.
-  final FlmTransport transport;
-
-  /// Model catalog. Shares the manager's lifetime; do not release explicitly.
-  final Catalog catalog;
-
   final int _managerHandle;
-  final TransportRegistration? _transportRegistration;
   final LifecycleBridge _lifecycleBridge;
   bool _disposed = false;
 
@@ -67,7 +51,7 @@ class FoundryLocal {
   static String get sdkVersion =>
       cStringToDart(NativeLibrary.instance.bindings.flm_version_string());
 
-  /// Whether the Foundry Local runtime is present and loadable.
+  /// Whether the ONNX Runtime GenAI runtime is present and loadable.
   static bool get isRuntimeAvailable =>
       NativeLibrary.instance.bindings.flm_is_runtime_available() != 0;
 
@@ -76,48 +60,20 @@ class FoundryLocal {
   /// The plugin fills in `app_data_dir` from `getApplicationSupportDirectory`
   /// unless the caller sets it explicitly, because the core requires a sandbox
   /// path on mobile.
-  ///
-  /// A [FlmTransport] can be supplied; when omitted, [DartHttpTransport] is
-  /// installed. Even apps that do not intend to use remote sources should let
-  /// this default in — the transport is also used to fetch model manifests
-  /// from the app's own storage.
-  static Future<FoundryLocal> create(
-    FoundryLocalConfig config, {
-    FlmTransport? transport,
-  }) async {
+  static Future<FoundryLocal> create(FoundryLocalConfig config) async {
     final bindings = NativeLibrary.instance.bindings;
 
-    // Fill in app_data_dir from the platform if the caller did not.
     var resolvedConfig = config;
     if (config.appDataDir == null) {
       final dir = await pp.getApplicationSupportDirectory();
       resolvedConfig = FoundryLocalConfig(
         appName: config.appName,
         appDataDir: dir.path,
-        modelCacheDir: config.modelCacheDir,
-        logsDir: config.logsDir,
         logLevel: config.logLevel,
-        catalogUrls: config.catalogUrls,
-        catalogRegion: config.catalogRegion,
-        offline: config.offline,
-        maxConcurrentDownloads: config.maxConcurrentDownloads,
-        downloadOnMeteredNetwork: config.downloadOnMeteredNetwork,
         autoUnloadOnBackground: config.autoUnloadOnBackground,
         jobPoolThreads: config.jobPoolThreads,
         additionalOptions: config.additionalOptions,
       );
-    }
-
-    // Install the transport BEFORE creating the manager. The core caches the
-    // installed transport at manager creation time.
-    final FlmTransport effectiveTransport = transport ?? DartHttpTransport();
-    TransportRegistration? registration;
-    try {
-      registration = installTransport(effectiveTransport);
-    } on StateError {
-      // Another transport is already installed; carry on. The caller is
-      // responsible for that setup.
-      registration = null;
     }
 
     late int managerHandle;
@@ -132,29 +88,12 @@ class FoundryLocal {
       }
     });
 
-    final catalogOut = calloc<Uint64>();
-    late int catalogHandle;
-    try {
-      final status =
-          bindings.flm_manager_get_catalog(managerHandle, catalogOut);
-      checkStatus(status,
-          fallbackMessage: 'flm_manager_get_catalog failed');
-      catalogHandle = catalogOut.value;
-    } finally {
-      calloc.free(catalogOut);
-    }
-
     final lifecycleBridge = LifecycleBridge.attach(managerHandle);
-
-    final foundry = FoundryLocal._(
+    return FoundryLocal._(
       config: resolvedConfig,
       managerHandle: managerHandle,
-      catalogHandle: catalogHandle,
-      transport: effectiveTransport,
-      transportRegistration: registration,
       lifecycleBridge: lifecycleBridge,
     );
-    return foundry;
   }
 
   /// Live device profile. Recomputed each time — thermal state and available
@@ -200,35 +139,23 @@ class FoundryLocal {
         .flm_manager_notify_lifecycle(_managerHandle, event.code);
   }
 
-  /// Register a bundled or remote [ModelSource] with the manager and, for a
-  /// remote source, drive the download through the installed transport.
+  /// Validate, load and register a model from a local filesystem path.
   ///
-  /// On mobile this is **the** model-acquisition call — there is no
-  /// "download from catalog" flow.
-  ///
-  /// Returns a [ModelSourceResult] describing the outcome. In the common
-  /// case its [ModelSourceResult.model] is a ready-to-use handle the core
-  /// minted inside the same acquisition job; the caller can go straight to
-  /// `result.model!.load(...)`. In the rare case where the download
-  /// succeeded but the catalog scan missed the freshly-installed files,
-  /// `model` is `null` and the caller can recover with
-  /// `foundry.catalog.getModel(result.name)`. Progress events during the
-  /// download are delivered to [onProgress].
-  ///
-  /// See the plugin README for the recommended `result.model ?? catalog
-  /// lookup` pattern.
-  ///
-  /// Pass a [CancelToken] and call [CancelToken.cancel] later to abort a
-  /// long-running download — the returned Future then completes with a
-  /// [CancelledException]. This is the intended primitive for a UI "cancel"
-  /// button on the download screen.
-  Future<ModelSourceResult> addModelSource(
-    ModelSource source, {
+  /// The returned [Model] is already loaded and ready for session creation.
+  Future<Model> loadModel(
+    String path, {
+    String? executionProvider,
+    Map<String, String>? providerOptions,
     void Function(Progress)? onProgress,
-    CancelToken? cancelToken,
   }) async {
     _ensureAlive();
     final bindings = NativeLibrary.instance.bindings;
+    final options = LoadOptions(
+      executionProvider: executionProvider,
+      providerOptions: providerOptions,
+    );
+    final optionsMap = options.toJson();
+    final optionsJson = optionsMap.isEmpty ? null : jsonEncode(optionsMap);
 
     Sink<Progress>? sink;
     StreamController<Progress>? controller;
@@ -240,55 +167,39 @@ class FoundryLocal {
 
     try {
       final result = await withCString<Future<Map<String, Object?>>>(
-        source.toJsonString(),
-        (sourcePtr) => runProgressJob(
-          abiCall: (progressPtr, completionPtr, userDataPtr, outJob) =>
-              bindings.flm_manager_add_model_source_async(
-            _managerHandle,
-            sourcePtr,
-            progressPtr,
-            completionPtr,
-            userDataPtr,
-            outJob,
+        path,
+        (pathPtr) => withNullableCString<Future<Map<String, Object?>>>(
+          optionsJson,
+          (optionsPtr) => runProgressJob(
+            abiCall: (progressPtr, completionPtr, userDataPtr, outJob) =>
+                bindings.flm_manager_load_model_async(
+              _managerHandle,
+              pathPtr,
+              optionsPtr,
+              progressPtr,
+              completionPtr,
+              userDataPtr,
+              outJob,
+            ),
+            onProgress: sink,
           ),
-          onProgress: sink,
-          cancelToken: cancelToken,
         ),
       );
-      return _parseModelSourceResult(result);
+
+      final handle =
+          (result['model_handle'] as num?)?.toInt() ?? raw.FLM_INVALID_HANDLE;
+      if (handle == raw.FLM_INVALID_HANDLE) {
+        throw buildException(
+          raw.FlmStatus.invalidHandle,
+          message:
+              'No model handle returned for path "$path" from flm_manager_load_model_async.',
+          detail: result,
+        );
+      }
+      return Model.fromHandle(handle);
     } finally {
       await controller?.close();
     }
-  }
-
-  /// Parse the completion payload of `flm_manager_add_model_source_async`
-  /// into a [ModelSourceResult].
-  ///
-  /// The `model_handle` field is documented as an `flm_handle` (uint64) in
-  /// the ABI. Dart `int` is a signed 64-bit integer on the VM, so values up
-  /// to `2^63 - 1` round-trip losslessly through `jsonDecode` — which is far
-  /// beyond any realistic handle slot id. `FLM_INVALID_HANDLE` (0) means no
-  /// handle came back; the core says why in `model_handle_unavailable`, and
-  /// both travel to the caller so it keeps control over what to do next.
-  ModelSourceResult _parseModelSourceResult(Map<String, Object?> json) {
-    final rawHandle = (json['model_handle'] as num?)?.toInt();
-    Model? resolvedModel;
-    if (rawHandle != null && rawHandle != 0) {
-      resolvedModel = Model.fromHandle(rawHandle);
-    }
-    final rawVariant = json['variant_id'] as String?;
-    final rawReason = json['model_handle_unavailable'] as String?;
-    return ModelSourceResult(
-      name: json['name'] as String? ?? '',
-      path: json['path'] as String? ?? '',
-      variantId: (rawVariant == null || rawVariant.isEmpty) ? null : rawVariant,
-      bytesDownloaded: (json['bytes_downloaded'] as num?)?.toInt() ?? 0,
-      bytesReused: (json['bytes_reused'] as num?)?.toInt() ?? 0,
-      wasCached: json['was_cached'] as bool? ?? false,
-      model: resolvedModel,
-      handleUnavailableReason:
-          (rawReason == null || rawReason.isEmpty) ? null : rawReason,
-    );
   }
 
   /// Shut down the manager, cancel in-flight jobs and unload every model.
@@ -309,7 +220,6 @@ class FoundryLocal {
     bindings.flm_manager_shutdown(_managerHandle);
     bindings.flm_manager_release(_managerHandle);
     await _lifecycleBridge.detach();
-    await _transportRegistration?.close();
   }
 
   void _ensureAlive() {

@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  FLM_FOUNDRY_LOCAL_REF: cli-preview-0.10.2
+  OGA_REF: 9d336e4db4e49eeceda909517b882c0d73cc6c86
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
@@ -42,8 +42,8 @@ jobs:
           latest="$(ls -1 "${ndk_root}" | sort -V | tail -n1)"
           echo "ANDROID_NDK_HOME=${ndk_root}/${latest}" >> "$GITHUB_ENV"
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Build all Android ABIs
         run: ./scripts/build_android.sh --build-type Release
@@ -62,7 +62,9 @@ jobs:
 
       - name: Accept Android SDK licences
         if: hashFiles('bindings/android/gradlew') != ''
-        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+        run: |
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6"
 
       - name: Build AAR
         if: hashFiles('bindings/android/gradlew') != ''
@@ -91,20 +93,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Build XCFramework
         run: ./scripts/build_apple.sh --build-type Release
 
-      - name: Zip XCFramework
+      - name: Zip XCFrameworks
         # Bare `zip` preserves symlinks inside the XCFramework, which
         # `actions/upload-artifact` alone does not — critical for iOS
         # dyld_shared_cache resolution.
         run: |
           cd build/apple
           zip -ry "${GITHUB_WORKSPACE}/foundry-local-mobile-apple-xcframework.zip" \
-            FoundryLocalMobile.xcframework
+            FoundryLocalMobile.xcframework \
+            onnxruntime-genai.xcframework
 
       - name: Upload
         uses: actions/upload-artifact@v4

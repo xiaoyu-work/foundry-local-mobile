@@ -91,14 +91,6 @@ class FlmBindings {
   late final _flm_set_log_level =
       _flm_set_log_levelPtr.asFunction<int Function(int)>(isLeaf: true);
 
-  int flm_set_runtime_library_path(ffi.Pointer<ffi.Char> path) =>
-      _flm_set_runtime_library_path(path);
-  late final _flm_set_runtime_library_pathPtr =
-      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>>(
-          'flm_set_runtime_library_path');
-  late final _flm_set_runtime_library_path = _flm_set_runtime_library_pathPtr
-      .asFunction<int Function(ffi.Pointer<ffi.Char>)>(isLeaf: true);
-
   int flm_is_runtime_available() => _flm_is_runtime_available();
   late final _flm_is_runtime_availablePtr =
       _lookup<ffi.NativeFunction<ffi.Int32 Function()>>(
@@ -161,18 +153,6 @@ class FlmBindings {
   late final _flm_manager_release =
       _flm_manager_releasePtr.asFunction<int Function(int)>(isLeaf: true);
 
-  int flm_manager_get_catalog(
-    int manager,
-    ffi.Pointer<ffi.Uint64> out_catalog,
-  ) =>
-      _flm_manager_get_catalog(manager, out_catalog);
-  late final _flm_manager_get_catalogPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64, ffi.Pointer<ffi.Uint64>)>>('flm_manager_get_catalog');
-  late final _flm_manager_get_catalog = _flm_manager_get_catalogPtr
-      .asFunction<int Function(int, ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
   int flm_manager_get_device_profile_json(
     int manager,
     ffi.Pointer<ffi.Pointer<ffi.Char>> out_json,
@@ -208,203 +188,46 @@ class FlmBindings {
       .asFunction<int Function(int, ffi.Pointer<ffi.Char>)>(isLeaf: true);
 
   // ---------------------------------------------------------------------------
-  // Transport
+  // Model loading
   // ---------------------------------------------------------------------------
 
-  int flm_set_transport(ffi.Pointer<flm_transport> transport) =>
-      _flm_set_transport(transport);
-  late final _flm_set_transportPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Pointer<flm_transport>)>>('flm_set_transport');
-  // Deliberately not marked leaf: the core may invoke the transport's `send` from a
-  // job-pool thread which then calls back into flm_transport_report_* on that same
-  // thread. Marking it leaf would misinform the VM about safepoint behaviour.
-  late final _flm_set_transport = _flm_set_transportPtr
-      .asFunction<int Function(ffi.Pointer<flm_transport>)>();
-
-  int flm_transport_report_progress(
-    int request_id,
-    int completed_bytes,
-    int total_bytes,
-  ) =>
-      _flm_transport_report_progress(request_id, completed_bytes, total_bytes);
-  late final _flm_transport_report_progressPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64, ffi.Int64,
-              ffi.Int64)>>('flm_transport_report_progress');
-  late final _flm_transport_report_progress = _flm_transport_report_progressPtr
-      .asFunction<int Function(int, int, int)>(isLeaf: true);
-
-  int flm_transport_report_body(
-    int request_id,
-    ffi.Pointer<ffi.Char> data,
-    int size,
-  ) =>
-      _flm_transport_report_body(request_id, data, size);
-  late final _flm_transport_report_bodyPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64, ffi.Pointer<ffi.Char>,
-              ffi.Size)>>('flm_transport_report_body');
-  late final _flm_transport_report_body = _flm_transport_report_bodyPtr
-      .asFunction<int Function(int, ffi.Pointer<ffi.Char>, int)>(isLeaf: true);
-
-  int flm_transport_report_complete(
-    int request_id,
-    int status_code,
-    ffi.Pointer<ffi.Char> headers_json,
-    ffi.Pointer<ffi.Char> error_message,
-  ) =>
-      _flm_transport_report_complete(
-          request_id, status_code, headers_json, error_message);
-  late final _flm_transport_report_completePtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64, ffi.Int32, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>>('flm_transport_report_complete');
-  late final _flm_transport_report_complete = _flm_transport_report_completePtr
-      .asFunction<
-          int Function(
-              int,
-              int,
-              ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Char>)>(isLeaf: true);
-
-  int flm_manager_add_model_source_async(
+  int flm_manager_load_model_async(
     int manager,
-    ffi.Pointer<ffi.Char> source_json,
+    ffi.Pointer<ffi.Char> model_path,
+    ffi.Pointer<ffi.Char> options_json,
     flm_progress_callback on_progress,
     flm_completion_callback on_complete,
     ffi.Pointer<ffi.Void> user_data,
     ffi.Pointer<ffi.Uint64> out_job,
   ) =>
-      _flm_manager_add_model_source_async(
-          manager, source_json, on_progress, on_complete, user_data, out_job);
-  late final _flm_manager_add_model_source_asyncPtr = _lookup<
+      _flm_manager_load_model_async(
+          manager,
+          model_path,
+          options_json,
+          on_progress,
+          on_complete,
+          user_data,
+          out_job);
+  late final _flm_manager_load_model_asyncPtr = _lookup<
       ffi.NativeFunction<
           ffi.Int32 Function(
               ffi.Uint64,
+              ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Char>,
               flm_progress_callback,
               flm_completion_callback,
               ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>>(
-      'flm_manager_add_model_source_async');
-  late final _flm_manager_add_model_source_async =
-      _flm_manager_add_model_source_asyncPtr.asFunction<
+              ffi.Pointer<ffi.Uint64>)>>('flm_manager_load_model_async');
+  late final _flm_manager_load_model_async =
+      _flm_manager_load_model_asyncPtr.asFunction<
           int Function(
               int,
+              ffi.Pointer<ffi.Char>,
               ffi.Pointer<ffi.Char>,
               flm_progress_callback,
               flm_completion_callback,
               ffi.Pointer<ffi.Void>,
               ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  // ---------------------------------------------------------------------------
-  // Catalog
-  // ---------------------------------------------------------------------------
-
-  int flm_catalog_list_models_async(
-    int catalog,
-    ffi.Pointer<ffi.Char> filter_json,
-    flm_completion_callback on_complete,
-    ffi.Pointer<ffi.Void> user_data,
-    ffi.Pointer<ffi.Uint64> out_job,
-  ) =>
-      _flm_catalog_list_models_async(
-          catalog, filter_json, on_complete, user_data, out_job);
-  late final _flm_catalog_list_models_asyncPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64,
-              ffi.Pointer<ffi.Char>,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>>('flm_catalog_list_models_async');
-  late final _flm_catalog_list_models_async =
-      _flm_catalog_list_models_asyncPtr.asFunction<
-          int Function(
-              int,
-              ffi.Pointer<ffi.Char>,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  int flm_catalog_get_model_async(
-    int catalog,
-    ffi.Pointer<ffi.Char> alias,
-    flm_completion_callback on_complete,
-    ffi.Pointer<ffi.Void> user_data,
-    ffi.Pointer<ffi.Uint64> out_job,
-  ) =>
-      _flm_catalog_get_model_async(
-          catalog, alias, on_complete, user_data, out_job);
-  late final _flm_catalog_get_model_asyncPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64,
-              ffi.Pointer<ffi.Char>,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>>('flm_catalog_get_model_async');
-  late final _flm_catalog_get_model_async = _flm_catalog_get_model_asyncPtr
-      .asFunction<
-          int Function(
-              int,
-              ffi.Pointer<ffi.Char>,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  int flm_catalog_get_model_by_id_async(
-    int catalog,
-    ffi.Pointer<ffi.Char> model_id,
-    flm_completion_callback on_complete,
-    ffi.Pointer<ffi.Void> user_data,
-    ffi.Pointer<ffi.Uint64> out_job,
-  ) =>
-      _flm_catalog_get_model_by_id_async(
-          catalog, model_id, on_complete, user_data, out_job);
-  late final _flm_catalog_get_model_by_id_asyncPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64,
-              ffi.Pointer<ffi.Char>,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>>('flm_catalog_get_model_by_id_async');
-  late final _flm_catalog_get_model_by_id_async =
-      _flm_catalog_get_model_by_id_asyncPtr.asFunction<
-          int Function(
-              int,
-              ffi.Pointer<ffi.Char>,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  int flm_catalog_list_cached_models_json(
-    int catalog,
-    ffi.Pointer<ffi.Pointer<ffi.Char>> out_json,
-  ) =>
-      _flm_catalog_list_cached_models_json(catalog, out_json);
-  late final _flm_catalog_list_cached_models_jsonPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('flm_catalog_list_cached_models_json');
-  late final _flm_catalog_list_cached_models_json =
-      _flm_catalog_list_cached_models_jsonPtr.asFunction<
-          int Function(int, ffi.Pointer<ffi.Pointer<ffi.Char>>)>(isLeaf: true);
-
-  int flm_catalog_get_cache_size_bytes(
-    int catalog,
-    ffi.Pointer<ffi.Int64> out_bytes,
-  ) =>
-      _flm_catalog_get_cache_size_bytes(catalog, out_bytes);
-  late final _flm_catalog_get_cache_size_bytesPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64, ffi.Pointer<ffi.Int64>)>>('flm_catalog_get_cache_size_bytes');
-  late final _flm_catalog_get_cache_size_bytes =
-      _flm_catalog_get_cache_size_bytesPtr
-          .asFunction<int Function(int, ffi.Pointer<ffi.Int64>)>(isLeaf: true);
 
   // ---------------------------------------------------------------------------
   // Model
@@ -459,34 +282,6 @@ class FlmBindings {
   late final _flm_model_get_path = _flm_model_get_pathPtr.asFunction<
       int Function(int, ffi.Pointer<ffi.Pointer<ffi.Char>>)>(isLeaf: true);
 
-  int flm_model_download_async(
-    int model,
-    ffi.Pointer<ffi.Char> options_json,
-    flm_progress_callback on_progress,
-    flm_completion_callback on_complete,
-    ffi.Pointer<ffi.Void> user_data,
-    ffi.Pointer<ffi.Uint64> out_job,
-  ) =>
-      _flm_model_download_async(
-          model, options_json, on_progress, on_complete, user_data, out_job);
-  late final _flm_model_download_asyncPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64,
-              ffi.Pointer<ffi.Char>,
-              flm_progress_callback,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>>('flm_model_download_async');
-  late final _flm_model_download_async = _flm_model_download_asyncPtr.asFunction<
-      int Function(
-          int,
-          ffi.Pointer<ffi.Char>,
-          flm_progress_callback,
-          flm_completion_callback,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
   int flm_model_load_async(
     int model,
     ffi.Pointer<ffi.Char> options_json,
@@ -535,113 +330,6 @@ class FlmBindings {
           flm_completion_callback,
           ffi.Pointer<ffi.Void>,
           ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  int flm_model_delete_async(
-    int model,
-    flm_completion_callback on_complete,
-    ffi.Pointer<ffi.Void> user_data,
-    ffi.Pointer<ffi.Uint64> out_job,
-  ) =>
-      _flm_model_delete_async(model, on_complete, user_data, out_job);
-  late final _flm_model_delete_asyncPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64,
-              flm_completion_callback,
-              ffi.Pointer<ffi.Void>,
-              ffi.Pointer<ffi.Uint64>)>>('flm_model_delete_async');
-  late final _flm_model_delete_async = _flm_model_delete_asyncPtr.asFunction<
-      int Function(
-          int,
-          flm_completion_callback,
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  // ---------------------------------------------------------------------------
-  // Model packages
-  // ---------------------------------------------------------------------------
-
-  int flm_model_is_package(int model, ffi.Pointer<ffi.Int32> out_is_package) =>
-      _flm_model_is_package(model, out_is_package);
-  late final _flm_model_is_packagePtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(
-              ffi.Uint64, ffi.Pointer<ffi.Int32>)>>('flm_model_is_package');
-  late final _flm_model_is_package = _flm_model_is_packagePtr
-      .asFunction<int Function(int, ffi.Pointer<ffi.Int32>)>(isLeaf: true);
-
-  int flm_package_get_variants_json(
-    int package,
-    ffi.Pointer<ffi.Pointer<ffi.Char>> out_json,
-  ) =>
-      _flm_package_get_variants_json(package, out_json);
-  late final _flm_package_get_variants_jsonPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('flm_package_get_variants_json');
-  late final _flm_package_get_variants_json = _flm_package_get_variants_jsonPtr
-      .asFunction<
-          int Function(int, ffi.Pointer<ffi.Pointer<ffi.Char>>)>(isLeaf: true);
-
-  int flm_package_select_variant(
-    int package,
-    ffi.Pointer<ffi.Char> variant_id,
-  ) =>
-      _flm_package_select_variant(package, variant_id);
-  late final _flm_package_select_variantPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64,
-              ffi.Pointer<ffi.Char>)>>('flm_package_select_variant');
-  late final _flm_package_select_variant = _flm_package_select_variantPtr
-      .asFunction<int Function(int, ffi.Pointer<ffi.Char>)>(isLeaf: true);
-
-  int flm_package_select_best_variant(
-    int package,
-    ffi.Pointer<ffi.Char> constraints_json,
-    ffi.Pointer<ffi.Pointer<ffi.Char>> out_variant_id,
-  ) =>
-      _flm_package_select_best_variant(
-          package, constraints_json, out_variant_id);
-  late final _flm_package_select_best_variantPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'flm_package_select_best_variant');
-  late final _flm_package_select_best_variant =
-      _flm_package_select_best_variantPtr.asFunction<
-          int Function(int, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>(isLeaf: true);
-
-  int flm_package_get_variant(
-    int package,
-    ffi.Pointer<ffi.Char> variant_id,
-    ffi.Pointer<ffi.Uint64> out_variant,
-  ) =>
-      _flm_package_get_variant(package, variant_id, out_variant);
-  late final _flm_package_get_variantPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Uint64>)>>('flm_package_get_variant');
-  late final _flm_package_get_variant = _flm_package_get_variantPtr.asFunction<
-      int Function(int, ffi.Pointer<ffi.Char>,
-          ffi.Pointer<ffi.Uint64>)>(isLeaf: true);
-
-  int flm_package_estimate_download_json(
-    int package,
-    ffi.Pointer<ffi.Char> variant_ids_json,
-    ffi.Pointer<ffi.Pointer<ffi.Char>> out_json,
-  ) =>
-      _flm_package_estimate_download_json(
-          package, variant_ids_json, out_json);
-  late final _flm_package_estimate_download_jsonPtr = _lookup<
-      ffi.NativeFunction<
-          ffi.Int32 Function(ffi.Uint64, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-      'flm_package_estimate_download_json');
-  late final _flm_package_estimate_download_json =
-      _flm_package_estimate_download_jsonPtr.asFunction<
-          int Function(int, ffi.Pointer<ffi.Char>,
-              ffi.Pointer<ffi.Pointer<ffi.Char>>)>(isLeaf: true);
 
   // ---------------------------------------------------------------------------
   // Sessions
@@ -987,41 +675,6 @@ final class flm_delta extends ffi.Struct {
   external int finish_reason;
 }
 
-/// C `flm_http_request`.
-final class flm_http_request extends ffi.Struct {
-  @ffi.Uint32()
-  external int version;
-
-  @ffi.Uint64()
-  external int request_id;
-
-  external ffi.Pointer<ffi.Char> url;
-
-  external ffi.Pointer<ffi.Char> method;
-
-  external ffi.Pointer<ffi.Char> headers_json;
-
-  external ffi.Pointer<ffi.Char> destination_path;
-
-  @ffi.Int64()
-  external int offset;
-
-  @ffi.Int64()
-  external int expected_bytes;
-}
-
-/// C `flm_transport`.
-final class flm_transport extends ffi.Struct {
-  @ffi.Uint32()
-  external int version;
-
-  external flm_transport_send send;
-
-  external flm_transport_cancel cancel;
-
-  external ffi.Pointer<ffi.Void> user_data;
-}
-
 // -----------------------------------------------------------------------------
 // Native callback typedefs
 // -----------------------------------------------------------------------------
@@ -1048,14 +701,6 @@ typedef flm_log_callback_native = ffi.Void Function(
     ffi.Pointer<ffi.Void> user_data);
 typedef flm_log_callback = ffi.Pointer<ffi.NativeFunction<flm_log_callback_native>>;
 
-typedef flm_transport_send_native = ffi.Int32 Function(
-    ffi.Pointer<flm_http_request> request, ffi.Pointer<ffi.Void> user_data);
-typedef flm_transport_send = ffi.Pointer<ffi.NativeFunction<flm_transport_send_native>>;
-
-typedef flm_transport_cancel_native = ffi.Void Function(
-    ffi.Uint64 request_id, ffi.Pointer<ffi.Void> user_data);
-typedef flm_transport_cancel = ffi.Pointer<ffi.NativeFunction<flm_transport_cancel_native>>;
-
 // -----------------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------------
@@ -1067,7 +712,7 @@ const int FLM_UNKNOWN_SIZE = -1;
 const int FLM_INVALID_HANDLE = 0;
 
 /// ABI version this file was generated against. Matches `FLM_API_VERSION` in the header.
-const int FLM_API_VERSION = 1;
+const int FLM_API_VERSION = 2;
 
 // -----------------------------------------------------------------------------
 // Enum mirrors

@@ -75,15 +75,15 @@ dependencies {
     // autolinked modules.
     implementation 'com.facebook.react:react-android'
 
-    // The Kotlin binding we're wrapping. It in turn depends on the JNI bridge
-    // to the C ABI, OkHttp and WorkManager — we get all of that transitively.
+    // The Kotlin binding we're wrapping. It also carries the JNI bridge to the
+    // C ABI transitively.
     //
     // NB: the underlying binding module is expected to publish artifact
     // `com.microsoft.ai.foundry.local:foundry-local-mobile`. When the RN
     // module lives in the same repo as the Kotlin binding (as here), consumers
     // can substitute the coordinate for a Gradle project dependency via
     // `dependencySubstitution`.
-    implementation 'com.microsoft.ai.foundry.local:foundry-local-mobile:0.1.0'
+    implementation 'com.microsoft.ai.foundry.local:foundry-local-mobile:0.2.0'
 
     // Coroutines — used to bridge the binding's `suspend`/`Flow` API to
     // TurboModule promises and event streams.

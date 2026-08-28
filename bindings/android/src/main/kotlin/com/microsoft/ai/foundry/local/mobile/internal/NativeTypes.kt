@@ -36,18 +36,3 @@ public class NativeDelta internal constructor(
     @JvmField public val completionTokens: Long,
     @JvmField public val finishReason: Int,
 )
-
-/**
- * Wire-shaped mirror of `flm_http_request`. The transport dispatcher unpacks it
- * into an OkHttp `Request`, honouring [offset], [destinationPath] and the
- * headers JSON.
- */
-public class NativeHttpRequest internal constructor(
-    @JvmField public val requestId: Long,
-    @JvmField public val url: String,
-    @JvmField public val method: String,
-    @JvmField public val headersJson: String,
-    @JvmField public val destinationPath: String?,
-    @JvmField public val offset: Long,
-    @JvmField public val expectedBytes: Long,
-)

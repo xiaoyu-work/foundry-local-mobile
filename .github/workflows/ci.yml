@@ -15,9 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Pin the upstream ref every job stages so a moving branch cannot make CI
-  # flake between two nearby runs.
-  FLM_FOUNDRY_LOCAL_REF: cli-preview-0.10.2
+  # Pin the upstream ONNX Runtime GenAI commit every job stages so a moving
+  # branch cannot make CI flake between two nearby runs.
+  OGA_REF: 9d336e4db4e49eeceda909517b882c0d73cc6c86
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -68,14 +68,14 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Cache CMake FetchContent dependencies
         uses: actions/cache@v4
@@ -151,7 +151,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Android cross-build via the NDK preinstalled on the GitHub-hosted runner.
-  # We do not ship an emulator run: the core dlopens the Foundry Local runtime
+  # We do not ship an emulator run: the core dlopens the OGA runtime
   # library, which is not available on a stock public runner. The build itself
   # is the useful signal.
   # ---------------------------------------------------------------------------
@@ -182,14 +182,14 @@ jobs:
           echo "ANDROID_NDK_HOME=${ndk_root}/${latest}" >> "$GITHUB_ENV"
           echo "Selected NDK: ${ndk_root}/${latest}"
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Cache CMake FetchContent dependencies
         uses: actions/cache@v4
@@ -259,6 +259,18 @@ jobs:
               exit 1
           fi
 
+          oga_so="build/android/jniLibs/${abi}/libonnxruntime-genai.so"
+          if [ ! -f "${oga_so}" ]; then
+              echo "::error::${oga_so} is missing; the core dlopens OGA at runtime"
+              exit 1
+          fi
+
+          ort_so="build/android/jniLibs/${abi}/libonnxruntime.so"
+          if [ ! -f "${ort_so}" ]; then
+              echo "::error::${ort_so} is missing; OGA dlopens ORT at runtime"
+              exit 1
+          fi
+
       - name: Upload native library
         uses: actions/upload-artifact@v4
         with:
@@ -293,7 +305,9 @@ jobs:
       # AGP downloads it via sdkmanager on demand, which needs licences
       # accepted. Do that non-interactively before Gradle sees the project.
       - name: Accept Android SDK licences
-        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+        run: |
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6"
 
       - name: Cache Gradle wrapper and dependency cache
         uses: actions/cache@v4
@@ -304,14 +318,14 @@ jobs:
           key: gradle-android-${{ hashFiles('bindings/android/gradle/wrapper/gradle-wrapper.properties', 'bindings/android/build.gradle.kts', 'bindings/android/settings.gradle.kts') }}
           restore-keys: gradle-android-
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Cache the nested core CMake FetchContent
         # AGP invokes CMake once per ABI under bindings/android/.cxx/, which
@@ -401,7 +415,9 @@ jobs:
           java-version: '17'
 
       - name: Accept Android SDK licences
-        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+        run: |
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6"
 
       - name: Cache Gradle wrapper and dependency cache
         uses: actions/cache@v4
@@ -414,14 +430,14 @@ jobs:
             gradle-android-sample-
             gradle-android-
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Cache the nested core CMake FetchContent
         uses: actions/cache@v4
@@ -443,7 +459,7 @@ jobs:
           libs=$(unzip -l "${apk}" | awk '/lib\/.*\.so$/ {print $4}' | sort -u)
           echo "${libs}"
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            for so in libfoundry_local_mobile.so libfoundry_local_mobile_jni.so libc++_shared.so; do
+            for so in libfoundry_local_mobile.so libfoundry_local_mobile_jni.so libc++_shared.so libonnxruntime-genai.so libonnxruntime.so; do
               if ! grep -qx "lib/${abi}/${so}" <<<"${libs}"; then
                 echo "::error::sample APK missing lib/${abi}/${so}"
                 exit 1
@@ -497,7 +513,9 @@ jobs:
           java-version: '17'
 
       - name: Accept Android SDK licences
-        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+        run: |
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6"
 
       - name: Cache Flutter SDK tarball
         id: cache-flutter
@@ -537,14 +555,14 @@ jobs:
             gradle-flutter-example-
             gradle-android-
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Cache the nested core CMake FetchContent
         # Same rationale as android-binding: AGP invokes CMake once per ABI
@@ -590,7 +608,7 @@ jobs:
           libs=$(unzip -l "${apk}" | awk '/lib\/.*\.so$/ {print $4}' | sort -u)
           echo "${libs}"
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            for so in libfoundry_local_mobile.so libc++_shared.so; do
+            for so in libfoundry_local_mobile.so libc++_shared.so libonnxruntime-genai.so libonnxruntime.so; do
               if ! grep -qx "lib/${abi}/${so}" <<<"${libs}"; then
                 echo "::error::example APK missing lib/${abi}/${so}"
                 exit 1
@@ -653,7 +671,9 @@ jobs:
           java-version: '17'
 
       - name: Accept Android SDK licences
-        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+        run: |
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6"
 
       - name: Cache Gradle wrapper and dependency cache
         uses: actions/cache@v4
@@ -664,14 +684,14 @@ jobs:
           key: gradle-rn-${{ hashFiles('bindings/react-native/android/build.gradle', 'bindings/android/build.gradle.kts') }}
           restore-keys: gradle-rn-
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Install npm dependencies
         working-directory: bindings/react-native
@@ -897,14 +917,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache upstream SDK headers
+      - name: Cache ONNX Runtime GenAI source
         uses: actions/cache@v4
         with:
-          path: third_party/foundry-local
-          key: foundry-local-${{ env.FLM_FOUNDRY_LOCAL_REF }}-v1
+          path: third_party/onnxruntime-genai
+          key: oga-${{ env.OGA_REF }}-v1
 
-      - name: Fetch Foundry Local headers
-        run: ./scripts/fetch_foundry_local.sh --ref "${FLM_FOUNDRY_LOCAL_REF}"
+      - name: Fetch ONNX Runtime GenAI
+        run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Cache CMake FetchContent dependencies
         uses: actions/cache@v4

@@ -160,13 +160,6 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerGetDeviceProfile:(nonnull NSNumber
     return json;
 }
 
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerGetCatalog:(nonnull NSNumber *)managerId) {
-    NSError *error = nil;
-    NSNumber *value = [self.core managerGetCatalogWithManagerId:managerId error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
-}
-
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(managerVersion:(nonnull NSNumber *)managerId) {
     NSError *error = nil;
     NSString *value = [self.core managerVersionWithManagerId:managerId error:&error];
@@ -196,67 +189,19 @@ RCT_EXPORT_METHOD(managerSetLogLevel:(nonnull NSNumber *)managerId
 }
 
 // -----------------------------------------------------------------------------
-// Add model source
+// Load model
 // -----------------------------------------------------------------------------
 
-RCT_EXPORT_METHOD(addModelSource:(nonnull NSNumber *)managerId
-                  sourceJson:(NSString *)sourceJson
-                  subscriptionId:(NSString *)subscriptionId
+RCT_EXPORT_METHOD(loadModel:(nonnull NSNumber *)managerId
+                  modelPath:(NSString *)modelPath
+                  optionsJson:(NSString *)optionsJson
                   resolve:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject) {
-    [self.core addModelSourceWithManagerId:managerId
-                                sourceJson:sourceJson
-                            subscriptionId:subscriptionId
-                                   resolve:resolve
-                                    reject:reject];
-}
-
-// -----------------------------------------------------------------------------
-// Catalog
-// -----------------------------------------------------------------------------
-
-RCT_EXPORT_METHOD(catalogListModels:(nonnull NSNumber *)catalogId
-                  filterJson:(NSString *)filterJson
-                  resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject) {
-    [self.core catalogListModelsWithCatalogId:catalogId
-                                   filterJson:filterJson
-                                      resolve:resolve
-                                       reject:reject];
-}
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(catalogListCachedModels:(nonnull NSNumber *)catalogId) {
-    NSError *error = nil;
-    NSString *json = [self.core catalogListCachedModelsWithCatalogId:catalogId error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return json;
-}
-
-RCT_EXPORT_METHOD(catalogGetModel:(nonnull NSNumber *)catalogId
-                  alias:(NSString *)alias
-                  resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject) {
-    [self.core catalogGetModelWithCatalogId:catalogId
-                                      alias:alias
-                                    resolve:resolve
-                                     reject:reject];
-}
-
-RCT_EXPORT_METHOD(catalogGetModelById:(nonnull NSNumber *)catalogId
-                  modelId:(NSString *)modelId
-                  resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject) {
-    [self.core catalogGetModelByIdWithCatalogId:catalogId
-                                        modelId:modelId
-                                        resolve:resolve
-                                         reject:reject];
-}
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(catalogGetCacheSizeBytes:(nonnull NSNumber *)catalogId) {
-    NSError *error = nil;
-    NSNumber *value = [self.core catalogGetCacheSizeBytesWithCatalogId:catalogId error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
+    [self.core loadModelWithManagerId:managerId
+                            modelPath:modelPath
+                          optionsJson:optionsJson
+                              resolve:resolve
+                               reject:reject];
 }
 
 // -----------------------------------------------------------------------------
@@ -266,13 +211,6 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(catalogGetCacheSizeBytes:(nonnull NSNumbe
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelGetInfo:(nonnull NSNumber *)modelId) {
     NSError *error = nil;
     NSString *value = [self.core modelGetInfoWithModelId:modelId error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
-}
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(modelIsPackage:(nonnull NSNumber *)modelId) {
-    NSError *error = nil;
-    NSNumber *value = [self.core modelIsPackageWithModelId:modelId error:&error];
     if (error) { RaiseFromNSError(error); }
     return value;
 }
@@ -316,62 +254,8 @@ RCT_EXPORT_METHOD(modelUnload:(nonnull NSNumber *)modelId
     [self.core modelUnloadWithModelId:modelId resolve:resolve reject:reject];
 }
 
-RCT_EXPORT_METHOD(modelDelete:(nonnull NSNumber *)modelId
-                  resolve:(RCTPromiseResolveBlock)resolve
-                  reject:(RCTPromiseRejectBlock)reject) {
-    [self.core modelDeleteWithModelId:modelId resolve:resolve reject:reject];
-}
-
 RCT_EXPORT_METHOD(modelRelease:(nonnull NSNumber *)modelId) {
     [self.core modelReleaseWithModelId:modelId];
-}
-
-// -----------------------------------------------------------------------------
-// Package
-// -----------------------------------------------------------------------------
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageGetVariants:(nonnull NSNumber *)modelId) {
-    NSError *error = nil;
-    NSString *value = [self.core packageGetVariantsWithModelId:modelId error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
-}
-
-RCT_EXPORT_METHOD(packageSelectVariant:(nonnull NSNumber *)modelId
-                  variantId:(NSString *)variantId) {
-    NSError *error = nil;
-    [self.core packageSelectVariantWithModelId:modelId variantId:variantId error:&error];
-    if (error) { RCTLogError(@"packageSelectVariant failed: %@", error); }
-}
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageSelectBestVariant:(nonnull NSNumber *)modelId
-                                       constraintsJson:(NSString *)constraintsJson) {
-    NSError *error = nil;
-    NSString *value = [self.core packageSelectBestVariantWithModelId:modelId
-                                                     constraintsJson:constraintsJson
-                                                               error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
-}
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageGetVariant:(nonnull NSNumber *)modelId
-                                       variantId:(NSString *)variantId) {
-    NSError *error = nil;
-    NSNumber *value = [self.core packageGetVariantWithModelId:modelId
-                                                    variantId:variantId
-                                                        error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
-}
-
-RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(packageEstimateDownload:(nonnull NSNumber *)modelId
-                                       variantIdsJson:(NSString *)variantIdsJson) {
-    NSError *error = nil;
-    NSString *value = [self.core packageEstimateDownloadWithModelId:modelId
-                                                     variantIdsJson:variantIdsJson
-                                                              error:&error];
-    if (error) { RaiseFromNSError(error); }
-    return value;
 }
 
 // -----------------------------------------------------------------------------

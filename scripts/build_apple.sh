@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # Build the mobile core for Apple platforms and combine the per-slice frameworks
-# into an XCFramework the iOS binding can consume directly.
+# into XCFrameworks the iOS binding can consume directly.
 #
-# The XCFramework layout is
+# Two XCFrameworks are produced:
 #
 #   <output>/FoundryLocalMobile.xcframework/
 #     ios-arm64/FoundryLocalMobile.framework/
 #     ios-arm64_x86_64-simulator/FoundryLocalMobile.framework/
 #     [macos-arm64_x86_64/FoundryLocalMobile.framework/]  (only with --macos)
+#
+#   <output>/onnxruntime-genai.xcframework/
+#     ios-arm64/onnxruntime-genai.framework/
+#     ios-arm64_x86_64-simulator/onnxruntime-genai.framework/
+#     [macos-arm64_x86_64/onnxruntime-genai.framework/]  (only with --macos)
+#
+# FoundryLocalMobile links against onnxruntime-genai at runtime; both must be
+# shipped together. ONNX Runtime is linked/embedded inside OGA's framework
+# according to OGA's official Apple build setup (static on iOS, dylib on macOS).
 #
 # `lipo` fuses the two simulator arches into one framework binary before
 # xcodebuild -create-xcframework runs, because -create-xcframework refuses to
@@ -142,15 +151,12 @@ build_slice() {
         -DCMAKE_OSX_ARCHITECTURES="${archs}"
         "-D${deployment_var}=${deployment_val}"
         -DFLM_BUILD_SHARED=ON
+        -DBUILD_APPLE_FRAMEWORK=ON
         # Skip CMake's compiler test — for the iOS device SDK CMake sometimes
         # cannot link a stand-alone test binary without a signing identity,
         # which fails even though the real library will build cleanly.
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
     )
-    if [[ -n "${FLM_FOUNDRY_LOCAL_INCLUDE_DIR:-}" ]]; then
-        cmake_args+=(-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR="${FLM_FOUNDRY_LOCAL_INCLUDE_DIR}")
-    fi
-
     # Same reason as log(): keep the configure and build chatter off the
     # stdout this function returns a path on.
     cmake "${cmake_args[@]}" >&2
@@ -211,14 +217,88 @@ MODMAP
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>${FRAMEWORK_NAME}</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>0.1.0</string>
+    <key>CFBundleShortVersionString</key><string>0.2.0</string>
+    <key>CFBundleVersion</key><string>0.2.0</string>
 </dict>
 </plist>
 PLIST
     fi
 
     printf '%s\n' "${framework_dir}"
+}
+
+# Harvest the OGA framework produced by the subdirectory build alongside a
+# given FLM slice. The OGA CMake target produces either a .framework (when
+# BUILD_APPLE_FRAMEWORK=ON and Xcode generator) or a plain dylib/static lib.
+# We wrap it into a .framework suitable for xcframework assembly.
+OGA_FRAMEWORK_NAME="onnxruntime-genai"
+
+harvest_oga_framework() {
+    local slice_id="$1"
+    local build_dir="${OUTPUT_DIR}/cmake/${slice_id}"
+    local install_dir="${OUTPUT_DIR}/install/${slice_id}"
+    local oga_fw_dir="${install_dir}/${OGA_FRAMEWORK_NAME}.framework"
+
+    # Look for a produced .framework first (Xcode + BUILD_APPLE_FRAMEWORK=ON).
+    local produced_oga_fw
+    produced_oga_fw="$(find "${build_dir}" -type d -name "${OGA_FRAMEWORK_NAME}.framework" -print -quit 2>/dev/null || true)"
+    if [[ -n "${produced_oga_fw}" ]]; then
+        rm -rf "${oga_fw_dir}"
+        mkdir -p "$(dirname "${oga_fw_dir}")"
+        cp -R "${produced_oga_fw}" "${oga_fw_dir}"
+        rm -f "${oga_fw_dir}/PkgInfo"
+    else
+        # Fallback: locate a plain dylib or static lib and wrap it.
+        local oga_lib
+        oga_lib="$(find "${build_dir}" -type f \( -name "libonnxruntime-genai.dylib" -o -name "libonnxruntime-genai.a" \) -print -quit 2>/dev/null || true)"
+        if [[ -z "${oga_lib}" ]]; then
+            warn "no onnxruntime-genai library found for ${slice_id}; OGA xcframework will be incomplete"
+            return 1
+        fi
+        rm -rf "${oga_fw_dir}"
+        mkdir -p "${oga_fw_dir}/Headers"
+        cp "${oga_lib}" "${oga_fw_dir}/${OGA_FRAMEWORK_NAME}"
+    fi
+
+    # Headers — ship the public OGA C header.
+    local oga_src_dir="${REPO_ROOT}/third_party/onnxruntime-genai/src"
+    mkdir -p "${oga_fw_dir}/Headers"
+    if [[ -f "${oga_src_dir}/ort_genai_c.h" ]]; then
+        cp "${oga_src_dir}/ort_genai_c.h" "${oga_fw_dir}/Headers/"
+    fi
+    if [[ -f "${oga_src_dir}/ort_genai.h" ]]; then
+        cp "${oga_src_dir}/ort_genai.h" "${oga_fw_dir}/Headers/"
+    fi
+
+    # Module map
+    mkdir -p "${oga_fw_dir}/Modules"
+    cat >"${oga_fw_dir}/Modules/module.modulemap" <<MODMAP
+framework module onnxruntime_genai {
+    header "ort_genai_c.h"
+    export *
+}
+MODMAP
+
+    # Info.plist
+    if [[ ! -f "${oga_fw_dir}/Info.plist" ]]; then
+        cat >"${oga_fw_dir}/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>${OGA_FRAMEWORK_NAME}</string>
+    <key>CFBundleIdentifier</key><string>com.microsoft.onnxruntime-genai</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>${OGA_FRAMEWORK_NAME}</string>
+    <key>CFBundlePackageType</key><string>FMWK</string>
+    <key>CFBundleShortVersionString</key><string>0.5.0</string>
+    <key>CFBundleVersion</key><string>0.5.0</string>
+</dict>
+</plist>
+PLIST
+    fi
+
+    printf '%s\n' "${oga_fw_dir}"
 }
 
 log "building iOS device slice (arm64)"
@@ -228,6 +308,7 @@ IOS_DEVICE_FRAMEWORK="$(build_slice \
     "arm64" \
     "CMAKE_OSX_DEPLOYMENT_TARGET" \
     "${IOS_DEPLOYMENT_TARGET}")"
+IOS_DEVICE_OGA_FRAMEWORK="$(harvest_oga_framework "ios-arm64")"
 
 # Two simulator arches → two builds, then lipo. -create-xcframework will refuse
 # ("Both … represent two equivalent library definitions") if we hand it two
@@ -239,6 +320,8 @@ IOS_SIM_ARM64_FRAMEWORK="$(build_slice \
     "arm64" \
     "CMAKE_OSX_DEPLOYMENT_TARGET" \
     "${IOS_DEPLOYMENT_TARGET}")"
+IOS_SIM_ARM64_OGA_FRAMEWORK="$(harvest_oga_framework "ios-sim-arm64")"
+
 log "building iOS simulator slice (x86_64)"
 IOS_SIM_X86_FRAMEWORK="$(build_slice \
     "ios-sim-x86_64" \
@@ -246,7 +329,9 @@ IOS_SIM_X86_FRAMEWORK="$(build_slice \
     "x86_64" \
     "CMAKE_OSX_DEPLOYMENT_TARGET" \
     "${IOS_DEPLOYMENT_TARGET}")"
+IOS_SIM_X86_OGA_FRAMEWORK="$(harvest_oga_framework "ios-sim-x86_64")"
 
+# --- lipo FLM simulator slices ---
 IOS_SIM_FAT_DIR="${OUTPUT_DIR}/install/ios-sim-fat"
 IOS_SIM_FAT_FRAMEWORK="${IOS_SIM_FAT_DIR}/${FRAMEWORK_NAME}.framework"
 rm -rf "${IOS_SIM_FAT_DIR}"
@@ -258,9 +343,25 @@ lipo -create \
     "${IOS_SIM_X86_FRAMEWORK}/${FRAMEWORK_NAME}" \
     -output "${IOS_SIM_FAT_FRAMEWORK}/${FRAMEWORK_NAME}"
 
+# --- lipo OGA simulator slices ---
+IOS_SIM_FAT_OGA_FRAMEWORK="${IOS_SIM_FAT_DIR}/${OGA_FRAMEWORK_NAME}.framework"
+if [[ -n "${IOS_SIM_ARM64_OGA_FRAMEWORK}" && -n "${IOS_SIM_X86_OGA_FRAMEWORK}" ]]; then
+    cp -R "${IOS_SIM_ARM64_OGA_FRAMEWORK}" "${IOS_SIM_FAT_OGA_FRAMEWORK}"
+    log "lipo-ing OGA simulator arm64 + x86_64 into one binary"
+    lipo -create \
+        "${IOS_SIM_ARM64_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}" \
+        "${IOS_SIM_X86_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}" \
+        -output "${IOS_SIM_FAT_OGA_FRAMEWORK}/${OGA_FRAMEWORK_NAME}"
+fi
+
 XCFRAMEWORK_ARGS=(
     -framework "${IOS_DEVICE_FRAMEWORK}"
     -framework "${IOS_SIM_FAT_FRAMEWORK}"
+)
+
+OGA_XCFRAMEWORK_ARGS=(
+    -framework "${IOS_DEVICE_OGA_FRAMEWORK}"
+    -framework "${IOS_SIM_FAT_OGA_FRAMEWORK}"
 )
 
 if [[ ${INCLUDE_MACOS} -eq 1 ]]; then
@@ -271,7 +372,11 @@ if [[ ${INCLUDE_MACOS} -eq 1 ]]; then
         "arm64;x86_64" \
         "CMAKE_OSX_DEPLOYMENT_TARGET" \
         "${MACOS_DEPLOYMENT_TARGET}")"
+    MACOS_OGA_FRAMEWORK="$(harvest_oga_framework "macos")"
     XCFRAMEWORK_ARGS+=(-framework "${MACOS_FRAMEWORK}")
+    if [[ -n "${MACOS_OGA_FRAMEWORK}" ]]; then
+        OGA_XCFRAMEWORK_ARGS+=(-framework "${MACOS_OGA_FRAMEWORK}")
+    fi
 fi
 
 XCFRAMEWORK_OUT="${OUTPUT_DIR}/${FRAMEWORK_NAME}.xcframework"
@@ -282,4 +387,14 @@ xcodebuild -create-xcframework \
     "${XCFRAMEWORK_ARGS[@]}" \
     -output "${XCFRAMEWORK_OUT}"
 
-log "done. XCFramework at ${XCFRAMEWORK_OUT}"
+OGA_XCFRAMEWORK_OUT="${OUTPUT_DIR}/${OGA_FRAMEWORK_NAME}.xcframework"
+rm -rf "${OGA_XCFRAMEWORK_OUT}"
+
+log "packaging ${OGA_FRAMEWORK_NAME}.xcframework"
+xcodebuild -create-xcframework \
+    "${OGA_XCFRAMEWORK_ARGS[@]}" \
+    -output "${OGA_XCFRAMEWORK_OUT}"
+
+log "done. XCFrameworks at:"
+log "  ${XCFRAMEWORK_OUT}"
+log "  ${OGA_XCFRAMEWORK_OUT}"

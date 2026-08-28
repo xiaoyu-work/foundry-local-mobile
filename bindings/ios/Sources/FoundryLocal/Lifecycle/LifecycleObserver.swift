@@ -3,8 +3,8 @@
 //
 // Bridges platform lifecycle notifications to the ABI's `flm_manager_notify_lifecycle`.
 //
-// The core uses these to unload models under memory pressure, pause downloads on a
-// metered link, and prefer efficiency cores when the device is low-power or hot. Apps
+// The core uses these to unload models under memory pressure and adapt placement when
+// the device is low-power, hot, or on a metered link. Apps
 // almost never call the ABI directly for these transitions — this observer wires the
 // standard `UIApplication`, `ProcessInfo` and `NWPathMonitor` notifications for you.
 

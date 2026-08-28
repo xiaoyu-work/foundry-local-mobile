@@ -12,9 +12,6 @@
 #
 # All CLI flags are forwarded to `build_apple.sh`. Try:
 #   ./build_xcframework.sh --help
-#
-# Environment overrides:
-#   FLM_FOUNDRY_LOCAL_INCLUDE_DIR   Path passed through to the core's CMake.
 
 set -euo pipefail
 
@@ -35,14 +32,23 @@ fi
 # Install into the location Package.swift references.
 SRC_XCFRAMEWORK="${REPO_ROOT}/build/apple/FoundryLocalMobile.xcframework"
 DST_XCFRAMEWORK="${IOS_BINDING_DIR}/Frameworks/FoundryLocalMobile.xcframework"
+SRC_OGA_XCFRAMEWORK="${REPO_ROOT}/build/apple/onnxruntime-genai.xcframework"
+DST_OGA_XCFRAMEWORK="${IOS_BINDING_DIR}/Frameworks/onnxruntime-genai.xcframework"
 
 if [ ! -d "${SRC_XCFRAMEWORK}" ]; then
     echo "error: expected ${SRC_XCFRAMEWORK} to exist after build_apple.sh" >&2
+    exit 1
+fi
+if [ ! -d "${SRC_OGA_XCFRAMEWORK}" ]; then
+    echo "error: expected ${SRC_OGA_XCFRAMEWORK} to exist after build_apple.sh" >&2
     exit 1
 fi
 
 mkdir -p "$(dirname "${DST_XCFRAMEWORK}")"
 rm -rf "${DST_XCFRAMEWORK}"
 cp -R "${SRC_XCFRAMEWORK}" "${DST_XCFRAMEWORK}"
-
 echo "==> installed ${DST_XCFRAMEWORK}"
+
+rm -rf "${DST_OGA_XCFRAMEWORK}"
+cp -R "${SRC_OGA_XCFRAMEWORK}" "${DST_OGA_XCFRAMEWORK}"
+echo "==> installed ${DST_OGA_XCFRAMEWORK}"

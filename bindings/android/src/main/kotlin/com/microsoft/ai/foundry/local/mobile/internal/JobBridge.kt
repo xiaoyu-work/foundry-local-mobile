@@ -89,9 +89,9 @@ internal object JobBridge {
     }
 
     /**
-     * Stream progress from a download-shaped job. Emits [Progress] as it
-     * arrives; completes with the terminal result JSON (or throws) via the
-     * companion suspend variant [awaitResult].
+     * Stream progress from a long-running job. Emits [Progress] as it arrives;
+     * completes with the terminal result JSON (or throws) via the companion
+     * suspend variant [awaitResult].
      */
     fun progressStream(
         start: (correlationId: Long) -> Long,

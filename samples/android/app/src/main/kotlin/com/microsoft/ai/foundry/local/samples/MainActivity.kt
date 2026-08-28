@@ -26,8 +26,6 @@ class MainActivity : ComponentActivity() {
                     SampleScreen(
                         state = state,
                         onPrepare = vm::prepare,
-                        onStartDownload = vm::startDownload,
-                        onCancelDownload = vm::cancelDownload,
                         onLoadAndChat = vm::loadAndChat,
                         onSend = vm::sendTurn,
                     )

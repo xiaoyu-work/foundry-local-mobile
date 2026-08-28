@@ -91,12 +91,16 @@ platform + variant tag.
 
 ## Execution providers
 
-The device profile enumerates every execution provider the platform code can offer,
-scores them by a numeric priority (lower wins), and the runtime overlays whichever ones
-it actually managed to register. Only the intersection is available to model-package
-variant selection.
+The device profile enumerates every execution provider the platform code believes is
+available, scored by a numeric priority (lower wins). This is informational: it is
+reported through `flm_manager_get_device_profile_json` so an app can decide which
+`execution_provider` to pass to `loadModel()`. The SDK does not use this list to
+automatically pick a provider or score model-package variants itself — that decision is
+either made explicitly by the caller, or (for OGA package directories) resolved by OGA
+against whichever provider you pass in.
 
 The lists below are what `FillExecutionProviders` registers on each platform.
+
 
 ### Android — `device_profile_android.cc`
 
@@ -106,8 +110,9 @@ The lists below are what `FillExecutionProviders` registers on each platform.
 | **XNNPACK** | CPU | 20 | Always. The fast CPU path on ARM. |
 | **CPU** | CPU | 30 | Always. Universal fallback. |
 
-Qualcomm SoCs the platform code currently maps to a Hexagon DSP architecture (this is
-what makes an NPU variant either match or reject a device):
+Qualcomm SoCs the platform code currently maps to a Hexagon DSP architecture (reported
+as `dsp_arch` in the device profile, for the app's own use when choosing a QNN
+`execution_provider`/`provider_options`):
 
 | Board prefix | DSP arch | SoC |
 |---|---|---|
@@ -117,17 +122,19 @@ what makes an NPU variant either match or reject a device):
 | `taro` | `v69` | Snapdragon 8 Gen 1 |
 | `lahaina` | `v68` | Snapdragon 888 |
 
-Variants declaring a higher `dsp_arch` than the device has are rejected as
-incompatible; variants declaring a lower one run with a size-of-gap penalty in the
-score. See `ModelPackage::ScoreCompatibilityString` in `core/src/model_package.cc`.
+The `compatibility_string` (e.g. `dsp_arch=v75`) is reported alongside the rest of the
+device profile for the app's own use — for example, to decide which OGA package variant
+to request via `execution_provider`/`provider_options`. The SDK itself does not compare
+this string against anything or reject a model as incompatible; there is no variant
+scoring in the current core (that concept was removed along with the model-package
+catalog layer).
 
 **NNAPI, GPU EPs, VitisAI, OpenVINO.** These are recognised by the shared classifier
-in `core/src/device_profile.cc` (`ClassifyExecutionProvider`) — if the runtime
-registers one, the profile categorises it correctly (NPU or GPU) with a sensible
-priority. **The Android platform code does not currently register them itself**; it
-lists only QNN, XNNPACK and CPU. This is a soft limitation, not an ABI break: any EP
-the runtime adds later shows up automatically through
-`MergeRuntimeExecutionProviders`.
+in `core/src/device_profile.cc` (`ClassifyExecutionProvider`) so that, if a future
+runtime-reported EP list is merged in, the profile categorises it correctly (NPU or GPU)
+with a sensible priority. **The Android platform code does not currently register them
+itself**; it lists only QNN, XNNPACK and CPU, and nothing in the current core calls
+`MergeRuntimeExecutionProviders` to add runtime-discovered providers on top of that list.
 
 ### Apple — `device_profile_apple.cc`
 
@@ -151,51 +158,43 @@ Only the **CPU** EP is registered. Linux and Windows are developer targets, not
 shipping targets, and this keeps the core buildable on a CI runner without an
 emulator or a device.
 
-## Model size and download budgets
+## Model size budgets
 
-The SDK enforces per-device budgets rather than trusting an app to know how big a
-model it can accept. These apply to the mobile acquisition path,
-`flm_manager_add_model_source_async` — either a model bundled into the app (no
-download) or a URL the app itself hosts (subject to these budgets). Cross-platform
-policy is expressed as `VariantConstraints` on the source and applied against the
-manifest *before* any weights transfer; the four supported fields are
-`max_download_bytes`, `allowed_devices`, `prefer_smallest`, `require_cached`, and
-adding others will silently do nothing.
+The SDK enforces a per-device memory budget before loading a model. This applies when
+`flm_manager_load_model_async` is called — the model path is validated and memory
+availability is checked before OGA loads the model. There is no download budget or
+variant-size scoring in this SDK: it never downloads anything, and package-variant
+resolution is delegated to OGA once you specify an `execution_provider`.
 
-The catalog surface (`flm_catalog_list_models_async`, `flm_catalog_get_model_async`)
-still lists and inspects models already on the device, but it is not an acquisition
-path on mobile: the upstream Foundry Local catalog publishes desktop
-CUDA/DirectML/OpenVINO/x64 builds that are not the shape mobile targets need, and
-`flm_model_download_async` on a catalog model returns `FLM_ERROR_NOT_IMPLEMENTED`.
-
-The budget constants live in `core/src/device_profile.cc`:
+The budget constant lives in `core/src/device_profile.cc`:
 
 | Rule | Value | Where |
 |---|---|---|
 | Max model bytes | 45% of available RAM (halved when the device is hot or in low-power mode) | `DeviceProfile::MaxModelBytes` |
-| Max silent download | 50% of free storage | `DeviceProfile::CanDownloadSilently` |
-| Max silent download on a metered link | 20 MB | `DeviceProfile::CanDownloadSilently` |
-| Variant rejected as "too large" | download size × 3 > max model bytes | `ModelPackage::ScoreVariants` |
 | Unknown/failed memory detection | 1 GB budget | `DeviceProfile::MaxModelBytes` |
 
-If detection fails outright the SDK errs on the small side. It is preferable to
-download the CPU int4 variant on a device that could run the NPU one than to load a
-model the OS will kill on activation.
+If detection fails outright the SDK errs on the small side and a model whose on-disk
+size exceeds the budget fails fast with `FLM_ERROR_MEMORY_PRESSURE` rather than loading
+and risking an OS kill.
 
 ## Known limitations
 
-* **Foundry Local runtime is loaded via `dlopen` at run time.** The mobile SDK
-  compiles against the upstream C headers (staged by
-  `scripts/fetch_foundry_local.sh`) but does *not* link the runtime library. That
-  library must be present in the app's linker search path at run time; without it
-  `flm_is_runtime_available()` returns false and every operation that needs the
-  runtime fails with `FLM_ERROR_RUNTIME_UNAVAILABLE`. This is what makes the mobile
-  SDK cross-compilable on a public CI runner without the proprietary runtime binary.
+* **ONNX Runtime GenAI is linked directly into the core, not loaded dynamically.** The
+  core's `CMakeLists.txt` builds OGA from source (staged by
+  `scripts/fetch_onnxruntime_genai.sh`, pinned to commit
+  [`9d336e4`](https://github.com/microsoft/onnxruntime-genai/commit/9d336e4db4e49eeceda909517b882c0d73cc6c86))
+  or against an installed package, and links it in at build time. `flm_is_runtime_available()`
+  is unconditionally true once the library is linked; there is no separate runtime
+  binary the app has to supply, and no `FLM_ERROR_RUNTIME_UNAVAILABLE` path in current
+  builds. The Android/Flutter build does still ship `libonnxruntime-genai.so` and
+  `libonnxruntime.so` as separate shared libraries alongside `libfoundry_local_mobile.so`
+  (see [building.md](building.md#build-the-android-aar)), so all of them must be present
+  in the APK for the app to start.
 * **No NNAPI or Android GPU EP is registered by device detection.** They are
   supported by the classifier if the runtime provides them, but detection does not
   add them proactively. On a device without a Hexagon DSP the shipping EPs are
   XNNPACK and plain CPU.
-* **iOS simulator has no ANE.** CoreML variants match by name but execute on the
+* **iOS simulator has no ANE.** CoreML-targeted models match by name but execute on the
   simulator's CPU. Test NPU code paths on device.
 * **`armeabi-v7a` targets are 32-bit and inherit its address-space cap.** Practical
   ceiling ~2 GB per process on most vendors, less on some. Do not ship gigabyte-plus
@@ -206,12 +205,12 @@ model the OS will kill on activation.
 * **Thermal state, low-power mode and network metering** are pushed down from the
   binding on both platforms (`flm_manager_notify_lifecycle`). If a binding does not
   push them, the core assumes nominal thermal, no low-power mode, and an unknown
-  network, which biases toward smaller variants and prompts before large downloads.
+  network. These signals currently affect only the memory-budget calculation above;
+  there is no download behavior for them to influence.
 
 ## References
 
-* `core/src/device_profile.cc` — the classifier and memory/storage budgets.
+* `core/src/device_profile.cc` — the classifier and the memory budget.
 * `core/src/platform/device_profile_android.cc` — Android detection and EP registration.
 * `core/src/platform/device_profile_apple.cc` — Apple detection and EP registration.
-* `core/src/model_package.cc` — variant scoring and compatibility-string matching.
 * `docs/architecture.md` — the five-layer design this document is a projection of.

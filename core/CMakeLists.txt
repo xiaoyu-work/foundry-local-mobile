@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.26)
 
-project(foundry_local_mobile VERSION 0.1.0 LANGUAGES CXX)
+project(foundry_local_mobile VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,34 +22,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(FLM_BUILD_SHARED "Build the shared library" ON)
 option(FLM_BUILD_EXAMPLES "Build the native example programs" OFF)
 
-# The core needs the upstream Foundry Local C headers to bind its API tables.
-# Point this at <Foundry-Local>/sdk_v2/cpp/include, or let the fallback below find a
-# sibling checkout, which is the common developer layout.
-set(FLM_FOUNDRY_LOCAL_INCLUDE_DIR "" CACHE PATH "Path to the Foundry Local C SDK headers")
-
-if(NOT FLM_FOUNDRY_LOCAL_INCLUDE_DIR)
-    foreach(candidate
-            "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/foundry-local/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../foundry-local/sdk_v2/cpp/include")
-        if(EXISTS "${candidate}/foundry_local/foundry_local_c.h")
-            set(FLM_FOUNDRY_LOCAL_INCLUDE_DIR "${candidate}")
-            break()
-        endif()
-    endforeach()
-endif()
-
-if(NOT FLM_FOUNDRY_LOCAL_INCLUDE_DIR OR NOT EXISTS "${FLM_FOUNDRY_LOCAL_INCLUDE_DIR}/foundry_local/foundry_local_c.h")
-    message(FATAL_ERROR
-        "Foundry Local headers not found. Run scripts/fetch_foundry_local.sh, or configure with "
-        "-DFLM_FOUNDRY_LOCAL_INCLUDE_DIR=<path to Foundry-Local/sdk_v2/cpp/include>.")
-endif()
-message(STATUS "Foundry Local headers: ${FLM_FOUNDRY_LOCAL_INCLUDE_DIR}")
-
-# --------------------------------------------------------------------------
-# Dependencies
-# --------------------------------------------------------------------------
+# Resolve our JSON dependency before adding OGA. Some OGA dependencies also use a
+# FetchContent key named nlohmann_json without creating its namespaced CMake target;
+# resolving ours first prevents that global-key collision in parent builds.
 include(FetchContent)
-
 find_package(nlohmann_json 3.11 QUIET)
 if(NOT nlohmann_json_FOUND)
     FetchContent_Declare(nlohmann_json
@@ -60,23 +36,103 @@ if(NOT nlohmann_json_FOUND)
     FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
+# Path to a staged or checked-out onnxruntime-genai source tree. When set
+# and the directory contains CMakeLists.txt + src/ort_genai_c.h, the tree is
+# added as a subdirectory and built from source. Otherwise an installed
+# package is required (set onnxruntime-genai_DIR to its CMake config dir).
+set(FLM_ORT_GENAI_ROOT "" CACHE PATH
+    "Root of the ONNX Runtime GenAI source tree (contains src/ort_genai_c.h)")
+
+# --------------------------------------------------------------------------
+# Find ONNX Runtime GenAI — installed package or source subdirectory
+# --------------------------------------------------------------------------
+
+# Prefer an installed package when the caller provides one. This keeps incremental
+# builds fast even when a staged source checkout also exists.
+find_package(onnxruntime-genai CONFIG QUIET)
+
+if(onnxruntime-genai_FOUND)
+    message(STATUS "onnxruntime-genai found via find_package: ${onnxruntime-genai_VERSION}")
+    set(FLM_OGA_VERSION_STRING "${onnxruntime-genai_VERSION}")
+    get_target_property(_oga_includes onnxruntime-genai::onnxruntime-genai INTERFACE_INCLUDE_DIRECTORIES)
+    foreach(_dir IN LISTS _oga_includes)
+        if(EXISTS "${_dir}/ort_genai_c.h")
+            set(FLM_OGA_INCLUDE_DIR "${_dir}")
+            break()
+        endif()
+    endforeach()
+else()
+    # Probe the default staging path only when no installed package was selected.
+    if(NOT FLM_ORT_GENAI_ROOT)
+        get_filename_component(_staged "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/onnxruntime-genai" ABSOLUTE)
+        if(EXISTS "${_staged}/src/ort_genai_c.h" AND EXISTS "${_staged}/CMakeLists.txt")
+            set(FLM_ORT_GENAI_ROOT "${_staged}" CACHE PATH "" FORCE)
+            message(STATUS "Auto-detected staged OGA source: ${FLM_ORT_GENAI_ROOT}")
+        endif()
+    endif()
+
+    if(NOT FLM_ORT_GENAI_ROOT
+       OR NOT EXISTS "${FLM_ORT_GENAI_ROOT}/src/ort_genai_c.h"
+       OR NOT EXISTS "${FLM_ORT_GENAI_ROOT}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "ONNX Runtime GenAI was not found.\n"
+            "  Option A: run scripts/fetch_onnxruntime_genai.sh to stage the source tree,\n"
+            "            or set FLM_ORT_GENAI_ROOT to an existing checkout.\n"
+            "  Option B: install onnxruntime-genai and set onnxruntime-genai_DIR to its\n"
+            "            CMake config directory.")
+    endif()
+
+    message(STATUS "Building ONNX Runtime GenAI from source: ${FLM_ORT_GENAI_ROOT}")
+    set(ENABLE_TESTS    OFF CACHE BOOL "" FORCE)
+    set(ENABLE_PYTHON   OFF CACHE BOOL "" FORCE)
+    set(ENABLE_JAVA     OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TELEMETRY OFF CACHE BOOL "" FORCE)
+    set(ENABLE_MODEL_BENCHMARK OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ENGINE_BENCHMARK OFF CACHE BOOL "" FORCE)
+    set(USE_GUIDANCE    OFF CACHE BOOL "" FORCE)
+    set(USE_CUDA        OFF CACHE BOOL "" FORCE)
+    set(USE_TRT_RTX     OFF CACHE BOOL "" FORCE)
+    set(USE_DML         OFF CACHE BOOL "" FORCE)
+    set(USE_WINML       OFF CACHE BOOL "" FORCE)
+
+    add_subdirectory("${FLM_ORT_GENAI_ROOT}" "${CMAKE_BINARY_DIR}/onnxruntime-genai" EXCLUDE_FROM_ALL)
+
+    # The OGA build produces a target; verify it exists.
+    if(NOT TARGET onnxruntime-genai)
+        message(FATAL_ERROR
+            "add_subdirectory of ${FLM_ORT_GENAI_ROOT} did not produce an "
+            "'onnxruntime-genai' target. Check the OGA CMakeLists.txt.")
+    endif()
+    # Create the namespaced alias if the subdirectory build did not.
+    if(NOT TARGET onnxruntime-genai::onnxruntime-genai)
+        add_library(onnxruntime-genai::onnxruntime-genai ALIAS onnxruntime-genai)
+    endif()
+    set(FLM_OGA_INCLUDE_DIR "${FLM_ORT_GENAI_ROOT}/src")
+    if(EXISTS "${FLM_ORT_GENAI_ROOT}/VERSION_INFO")
+        file(STRINGS "${FLM_ORT_GENAI_ROOT}/VERSION_INFO" FLM_OGA_VERSION_STRING LIMIT_COUNT 1)
+    endif()
+endif()
+
+if(NOT FLM_OGA_INCLUDE_DIR)
+    message(FATAL_ERROR "The selected ONNX Runtime GenAI target does not expose ort_genai_c.h")
+endif()
+if(NOT FLM_OGA_VERSION_STRING)
+    set(FLM_OGA_VERSION_STRING "unknown")
+endif()
+
+message(STATUS "OGA headers: ${FLM_OGA_INCLUDE_DIR}")
+
 # --------------------------------------------------------------------------
 # Sources
 # --------------------------------------------------------------------------
 set(FLM_SOURCES
     src/error.cc
     src/encoding.cc
-    src/sha256.cc
     src/handle_table.cc
     src/job.cc
     src/runtime.cc
     src/device_profile.cc
-    src/model_package.cc
-    src/transport.cc
-    src/downloader.cc
-    src/model_source.cc
     src/manager.cc
-    src/catalog.cc
     src/model.cc
     src/session.cc
     src/api.cc
@@ -100,11 +156,18 @@ target_include_directories(foundry_local_mobile
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${FLM_FOUNDRY_LOCAL_INCLUDE_DIR}
+        ${FLM_OGA_INCLUDE_DIR}
 )
 
-target_compile_definitions(foundry_local_mobile PRIVATE FLM_BUILDING_SHARED)
-target_link_libraries(foundry_local_mobile PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(foundry_local_mobile PRIVATE
+    FLM_BUILDING_SHARED
+    FLM_OGA_VERSION_STRING="${FLM_OGA_VERSION_STRING}"
+)
+target_link_libraries(foundry_local_mobile
+    PRIVATE
+        nlohmann_json::nlohmann_json
+        onnxruntime-genai::onnxruntime-genai
+)
 
 if(MSVC)
     target_compile_options(foundry_local_mobile PRIVATE /W4 /permissive-)
@@ -117,18 +180,10 @@ endif()
 # Platform linkage
 # --------------------------------------------------------------------------
 if(ANDROID)
-    # `log` for __android_log_print, `dl` for the runtime loader.
     target_link_libraries(foundry_local_mobile PRIVATE log dl)
-
-    # 16 KB page alignment is required for Android 15+ on 64-bit devices; without it the
-    # library fails to load on newer hardware.
     target_link_options(foundry_local_mobile PRIVATE "-Wl,-z,max-page-size=16384")
 elseif(APPLE)
     target_link_libraries(foundry_local_mobile PRIVATE "-framework Foundation")
-    # The bundle, its binary and the module every Swift caller imports all have
-    # to agree on one name, and that name is FoundryLocalMobile. Without this
-    # CMake names the framework after the target, so build_apple.sh finds no
-    # FoundryLocalMobile.framework to harvest and the XCFramework never builds.
     set_target_properties(foundry_local_mobile PROPERTIES
         OUTPUT_NAME FoundryLocalMobile
         FRAMEWORK TRUE
@@ -141,11 +196,6 @@ elseif(UNIX)
     target_link_libraries(foundry_local_mobile PRIVATE dl pthread)
 endif()
 
-# Restrict the dynamic symbol table to the documented ABI. Hidden visibility alone leaves
-# weak template instantiations exported, which widens the surface beyond what the header
-# declares. Apple uses an unexported-symbols list rather than a version script, and
-# -fvisibility=hidden is already enough there because the framework is not the interposition
-# target Android's flat namespace makes it.
 if(FLM_BUILD_SHARED AND NOT APPLE AND NOT MSVC)
     include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE FLM_HAVE_CHECK_LINKER_FLAG)
     set(FLM_VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/flm.map")

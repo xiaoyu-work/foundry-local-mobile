@@ -1,11 +1,10 @@
-## 0.1.0
+## 0.2.0
 
-Initial release. Dart FFI plugin over the Foundry Local Mobile flat C ABI.
+Path-first release backed directly by ONNX Runtime GenAI.
 
+- Local model loading from caller-owned directories.
 - Streaming chat completion with tool calling.
-- Speech-to-text (batch and streaming).
-- Text embeddings.
-- Model packages: variant enumeration, device-scored selection, selective download.
-- Bundled and remote model sources.
-- Pluggable HTTP transport with a default `dart:io` implementation, and platform
-  method channels for sandbox paths, lifecycle, memory pressure and connectivity.
+- Lifecycle and memory-pressure handling.
+
+Audio transcription, embeddings and multimodal input remain unavailable until
+their direct OGA implementations land.

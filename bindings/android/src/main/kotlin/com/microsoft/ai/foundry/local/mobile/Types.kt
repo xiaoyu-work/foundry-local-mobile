@@ -23,24 +23,11 @@ public data class FoundryLocalConfig(
     val appName: String,
     /** Override the sandbox path (`context.filesDir/foundry` by default). */
     val appDataDir: String? = null,
-    /** Override the model cache path (`<appDataDir>/models` by default). */
-    val modelCacheDir: String? = null,
-    /** Override the logs directory. */
-    val logsDir: String? = null,
     /** Default log level; also settable at runtime via [FoundryLocal.setLogLevel]. */
     val logLevel: LogLevel = LogLevel.WARNING,
-    /** Catalog service URLs. `null` uses the Foundry Local defaults. */
-    val catalogUrls: List<String>? = null,
-    /** Preferred catalog region (e.g. "centralus"). */
-    val catalogRegion: String? = null,
-    /** Serve only from the local cache; never touch the catalog service. */
-    val offline: Boolean = false,
-    val maxConcurrentDownloads: Int = 2,
-    val downloadOnMeteredNetwork: Boolean = false,
     val autoUnloadOnBackground: Boolean = true,
     /** 0 = derive from the number of CPU cores. */
     val jobPoolThreads: Int = 0,
-    val additionalOptions: Map<String, String> = emptyMap(),
 )
 
 public enum class LogLevel(public val nativeValue: Int) {
@@ -73,14 +60,6 @@ public data class DeviceProfile(
      * Concise human-readable summary of the ABI, core count and every
      * currently-available execution provider, e.g.
      * `arm64-v8a, 8 cores, EPs: QNN (NPU), XNNPACK (CPU)`.
-     *
-     * Meant for a debug log or a settings screen — every debug UI wants
-     * exactly this string and every one of them was writing the join by
-     * hand before this property existed. Unavailable providers are elided;
-     * if none is available the summary ends with `EPs: CPU only`.
-     *
-     * The field is a computed property, not a serialized one — it does not
-     * appear in the JSON that [DeviceProfile] is decoded from.
      */
     public val summary: String
         get() {
@@ -98,27 +77,9 @@ public data class ExecutionProviderInfo(
     val name: String,
     /** Placement device this provider targets. */
     val device: FlmDevice,
-    /**
-     * `true` if the provider is registered with the runtime and can be
-     * selected. Providers reported by the runtime but not built or otherwise
-     * disabled for this device are still listed with `available = false` so
-     * a debug UI can render them.
-     */
+    /** `true` if the provider is registered with the runtime and can be selected. */
     val available: Boolean,
-    /**
-     * Scheduling priority the SDK uses when picking a placement for a
-     * variant. **Lower wins** — the ordering encodes "fastest acceptable
-     * placement first" — so `0` is the most-preferred provider and higher
-     * values are progressively worse fallbacks.
-     *
-     * Concrete values from the platform detectors:
-     * `0` for accelerator providers (QNN, NNAPI, CoreML, OpenVINO,
-     * VitisAI), `10` for GPU providers (CUDA, DirectML, Metal, WebGPU,
-     * ROCm), `20` for XNNPACK (the fast ARM CPU path), `30` for the generic
-     * CPU provider, and `100` for providers the SDK does not otherwise
-     * classify. Sort ascending in a debug UI to see the SDK's own preference
-     * order.
-     */
+    /** Lower values are preferred when the SDK ranks providers. */
     val priority: Int,
 )
 
@@ -132,7 +93,7 @@ public enum class NetworkKind {
 }
 
 // -----------------------------------------------------------------------------
-// Model / package metadata
+// Model metadata
 // -----------------------------------------------------------------------------
 
 @Serializable
@@ -154,183 +115,9 @@ public data class ModelInfo(
     @SerialName("supports_reasoning") val supportsReasoning: Boolean = false,
     @SerialName("input_modalities") val inputModalities: List<String> = emptyList(),
     @SerialName("output_modalities") val outputModalities: List<String> = emptyList(),
-    @SerialName("is_package") val isPackage: Boolean = false,
     @SerialName("is_cached") val isCached: Boolean = false,
     @SerialName("is_loaded") val isLoaded: Boolean = false,
     @SerialName("prompt_templates") val promptTemplates: Map<String, String>? = null,
-)
-
-@Serializable
-public data class PackageVariants(
-    @SerialName("package_id") val packageId: String,
-    @SerialName("schema_version") val schemaVersion: String,
-    @SerialName("selected_variant_id") val selectedVariantId: String? = null,
-    @SerialName("shared_assets_bytes") val sharedAssetsBytes: Long = 0,
-    val variants: List<ModelVariant>,
-)
-
-@Serializable
-public data class ModelVariant(
-    val id: String,
-    val component: String = "model",
-    @SerialName("execution_provider") val executionProvider: String,
-    val device: FlmDevice,
-    @SerialName("compatibility_string") val compatibilityString: String = "",
-    val platform: String = "any",
-    @SerialName("download_size_bytes") val downloadSizeBytes: Long,
-    @SerialName("disk_size_bytes") val diskSizeBytes: Long,
-    @SerialName("shared_asset_refs") val sharedAssetRefs: List<String> = emptyList(),
-    @SerialName("is_compatible") val isCompatible: Boolean,
-    @SerialName("compatibility_score") val compatibilityScore: Int = 0,
-    @SerialName("is_cached") val isCached: Boolean = false,
-    @SerialName("incompatibility_reason") val incompatibilityReason: String? = null,
-)
-
-/**
- * Constraints for variant selection. Applied by `flm_package_select_best_variant`
- * and, more importantly for cross-platform apps, honoured by
- * [FoundryLocal.addModelSource] when set on the [ModelSource] itself — the
- * scoring runs against the manifest before any weights transfer, so a phone
- * never spends bytes on a variant it cannot run.
- */
-public data class VariantConstraints(
-    /** Skip variants whose selected files exceed this many bytes. */
-    val maxDownloadBytes: Long? = null,
-    /**
-     * Restrict placement to these devices. `null` and empty set both mean
-     * "any device" — set only when the app needs to force, e.g., NPU-only.
-     */
-    val allowedDevices: Set<FlmDevice>? = null,
-    /**
-     * Break ties on download size rather than the compatibility score. Off
-     * by default; the score already rewards native placements.
-     */
-    val preferSmallest: Boolean = false,
-    /**
-     * Only consider variants whose files are already on disk. Useful for an
-     * offline path or a "no more downloads" preference.
-     */
-    val requireCached: Boolean = false,
-)
-
-@Serializable
-public data class DownloadEstimate(
-    @SerialName("download_bytes") val downloadBytes: Long,
-    @SerialName("disk_bytes") val diskBytes: Long,
-    @SerialName("already_cached_bytes") val alreadyCachedBytes: Long,
-    @SerialName("available_storage_bytes") val availableStorageBytes: Long,
-    @SerialName("fits_on_device") val fitsOnDevice: Boolean,
-)
-
-// -----------------------------------------------------------------------------
-// Model sources
-// -----------------------------------------------------------------------------
-
-/**
- * Where a model comes from when the app supplies its own — bundled inside the
- * APK, or hosted on storage the app controls. See `docs/model-sources.md`.
- */
-public sealed class ModelSource {
-    /**
-     * Name the model is registered under, and the thing that decides whether
-     * it can run. The runtime picks a session implementation from the model's
-     * task, and it learns tasks from the Foundry Local catalog. Name the
-     * source after the catalog model it actually is — say
-     * `qwen2.5-0.5b-instruct-generic-cpu:4` rather than `my-model` — and the
-     * task comes with it. A name the catalog has never seen still downloads,
-     * installs and loads, but [Model.createChatSession] will refuse it.
-     */
-    public abstract val name: String
-
-    /**
-     * Whether a partial download already on disk should be resumed. Defaults
-     * to `true`. Set `false` to force a fresh fetch — the core discards any
-     * partial file and refetches from offset 0.
-     */
-    public abstract val resume: Boolean
-
-    /**
-     * Whether each file's SHA-256 is verified after download and against a
-     * previously downloaded copy. Defaults to `true`. Turning this off makes
-     * an incremental catalog refresh cheaper on device but disables the
-     * corruption check the core normally performs.
-     */
-    public abstract val verifyChecksums: Boolean
-
-    /**
-     * Variant selection policy applied when the source resolves to an ONNX
-     * Runtime model package. The scoring runs against the manifest before any
-     * weights transfer, so declaring `constraints` is the cheapest way to
-     * express a cross-platform preference like "NPU if available, else CPU,
-     * cap at 800 MB". Ignored for a flat model.
-     */
-    public abstract val constraints: VariantConstraints?
-
-    /**
-     * A model already present on the device. The default is to load it in
-     * place: the cache entry links back to [path] instead of copying the
-     * weights, so the app keeps owning those files and must keep them where
-     * they are. Set [copyIntoCache] when it cannot promise that.
-     */
-    public data class Bundled(
-        override val name: String,
-        val path: String,
-        /**
-         * Copy the model into the SDK's cache instead of linking to [path].
-         * Costs a second copy of the weights, and for a package only the
-         * selected variant is copied. Use it when [path] is a staging
-         * directory, shared storage the user can clear, or an OS cache that
-         * may be reclaimed — anywhere the files could vanish under the SDK.
-         */
-        val copyIntoCache: Boolean = false,
-        override val resume: Boolean = true,
-        override val verifyChecksums: Boolean = true,
-        /**
-         * Variant policy for a bundled package. Applied before any files are
-         * touched; a variant not permitted by [constraints] is discarded from
-         * the manifest even if its files were shipped inside the APK.
-         */
-        override val constraints: VariantConstraints? = null,
-    ) : ModelSource()
-
-    /**
-     * A model hosted at a URL. The document is sniffed rather than the URL —
-     * both package manifests and flat file indexes are accepted.
-     */
-    public data class Remote(
-        override val name: String,
-        val url: String,
-        val headers: Map<String, String> = emptyMap(),
-        override val resume: Boolean = true,
-        override val verifyChecksums: Boolean = true,
-        /**
-         * Variant policy applied against the manifest **before** any bytes
-         * transfer. This is the cross-platform way to express "use the NPU
-         * build if you can, up to 800 MB, else fall back to CPU" — the SDK
-         * scores every variant and only fetches the winner plus the shared
-         * assets it references.
-         */
-        override val constraints: VariantConstraints? = null,
-    ) : ModelSource()
-}
-
-// -----------------------------------------------------------------------------
-// Filter for [Catalog.listModels]
-// -----------------------------------------------------------------------------
-
-public data class CatalogFilter(
-    val task: String? = null,
-    val cachedOnly: Boolean = false,
-    val loadedOnly: Boolean = false,
-    val maxSizeBytes: Long? = null,
-    /**
-     * Hide models this device cannot run. Defaults to `true` here, and in the
-     * Swift and Dart bindings, because a mobile app almost never wants to
-     * offer a model the device will refuse to load. The ABI itself treats an
-     * absent `compatible_only` as `false`; the friendlier default belongs to
-     * the bindings, which is why all of them send the key explicitly.
-     */
-    val compatibleOnly: Boolean = true,
 )
 
 // -----------------------------------------------------------------------------
@@ -372,14 +159,7 @@ public data class Progress(
     val stage: String?,
     val detail: String?,
 ) {
-    /**
-     * The same value as [percent] expressed as a fraction in `[0f, 1f]`,
-     * pre-clamped so it can be passed directly to `LinearProgressIndicator`
-     * or an equivalent widget without further validation. The ABI reports
-     * `0..100` and [percent] preserves that; this is a UI helper, not a
-     * wire field, and is deliberately excluded from `equals`, `hashCode`,
-     * `toString` and `copy`.
-     */
+    /** The same value as [percent] expressed as a fraction in `[0f, 1f]`. */
     public val fraction: Float
         get() = (percent / 100f).coerceIn(0f, 1f)
 
@@ -405,10 +185,7 @@ public sealed class Delta {
 
     /**
      * A complete tool call the model wants executed. `argumentsJson` is the
-     * raw JSON payload the model produced — usually a JSON object matching
-     * the tool's declared schema. A runaway model may emit something that
-     * does not match, and deciding what to do about that belongs to the
-     * app; parse defensively.
+     * raw JSON payload the model produced.
      */
     public data class ToolCall(
         val callId: String,
@@ -458,24 +235,12 @@ public sealed class Delta {
 }
 
 public enum class FinishReason(public val nativeValue: Int) {
-    /** The runtime reported no terminal reason (still generating, or unset). */
     NONE(0),
-    /** Natural end of turn or a stop sequence was hit. */
     STOP(1),
-    /** Output token limit was reached. */
     LENGTH(2),
-    /** The model is waiting on tool results. */
     TOOL_CALLS(3),
-    /** Cancelled by the caller. */
     CANCELLED(4),
-    /** Aborted by an error. */
     ERROR(5),
-
-    /**
-     * A reason the runtime returned but this binding does not model. The raw
-     * value is available in [CompleteResult.rawJson]. Never thrown; the SDK
-     * decodes forward-compatibly so a runtime update cannot break callers.
-     */
     UNKNOWN(Int.MIN_VALUE);
 
     public companion object {
@@ -493,51 +258,4 @@ public enum class FinishReason(public val nativeValue: Int) {
             else -> UNKNOWN
         }
     }
-}
-
-// -----------------------------------------------------------------------------
-// Model source result
-// -----------------------------------------------------------------------------
-
-/**
- * Outcome of a successful [FoundryLocal.addModelSource]. The model's files are
- * on disk at [path] regardless of whether [model] is populated.
- *
- * [model] is the ready-to-use handle the core minted inside the same job. It is
- * `null` when Foundry Local had already scanned the device for models before
- * this source was added: that scan happens once, on the first catalog query of
- * the process, and cannot be repeated, so a source added afterwards stays
- * invisible for this run — looking it up by [name] fails for the same reason.
- * [handleUnavailableReason] says so in words. Add model sources before querying
- * the catalog and the case does not arise. The download itself succeeded either
- * way, the files at [path] are committed, and the next launch picks them up.
- */
-public data class ModelSourceResult(
-    val name: String,
-    val path: String,
-    val variantId: String? = null,
-    val bytesDownloaded: Long = 0,
-    val bytesReused: Long = 0,
-    val wasCached: Boolean = false,
-    val model: Model? = null,
-    /** Why [model] is `null`, straight from the core. `null` when [model] is present. */
-    val handleUnavailableReason: String? = null,
-) {
-    /**
-     * Return [model] when the core surfaced a handle, and throw an
-     * [IllegalStateException] otherwise.
-     *
-     * Apps that add their sources before touching the catalog — which is the
-     * documented order, and the one that works on a first run — should not have
-     * to pay null-handling ceremony for an outcome they have designed out.
-     *
-     * Callers that want to handle the null case explicitly — showing a "restart
-     * to finish setup" prompt, or reporting telemetry — should read [model]
-     * directly instead of calling this.
-     */
-    public fun requireModel(): Model = model ?: error(
-        "Model source \"$name\" was added successfully — files are on disk at " +
-            "\"$path\" — but no handle came back: " +
-            (handleUnavailableReason ?: "the catalog did not surface one."),
-    )
 }

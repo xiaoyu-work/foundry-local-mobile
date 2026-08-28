@@ -4,119 +4,211 @@
 #include "model.h"
 
 #include <filesystem>
+#include <fstream>
 
-#include "catalog.h"
+#include "manager.h"
 
 namespace flm {
 namespace {
 
 namespace fs = std::filesystem;
 
+/// Read genai_config.json from a model directory and extract metadata.
+nlohmann::json ReadGenaiConfig(const std::string& path) {
+  const fs::path config_path = fs::path(path) / "genai_config.json";
+  std::error_code ec;
+  if (!fs::exists(config_path, ec)) {
+    return nlohmann::json::object();
+  }
+  std::ifstream stream(config_path);
+  if (!stream) {
+    return nlohmann::json::object();
+  }
+  try {
+    return nlohmann::json::parse(stream, nullptr, false);
+  } catch (...) {
+    return nlohmann::json::object();
+  }
+}
+
+/// Compute the total size of all files in a directory.
+int64_t DirectorySizeBytes(const std::string& path) {
+  std::error_code ec;
+  int64_t total = 0;
+  for (fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec), end;
+       it != end && !ec; it.increment(ec)) {
+    if (it->is_regular_file(ec)) {
+      total += static_cast<int64_t>(it->file_size(ec));
+    }
+  }
+  return total;
+}
+
+/// Map OGA model type string to a task name compatible with the FLM ABI.
+std::string ModelTypeToTask(const std::string& model_type) {
+  if (model_type.find("gpt") != std::string::npos || model_type.find("llama") != std::string::npos ||
+      model_type.find("phi") != std::string::npos || model_type.find("qwen") != std::string::npos ||
+      model_type.find("gemma") != std::string::npos || model_type.find("mistral") != std::string::npos) {
+    return "chat-completion";
+  }
+  if (model_type.find("whisper") != std::string::npos) {
+    return "audio-transcription";
+  }
+  if (model_type.find("embed") != std::string::npos) {
+    return "embedding";
+  }
+  return "chat-completion";
+}
+
+/// Map OGA device type string to flm_device.
+flm_device ParseDeviceType(const std::string& device_type) {
+  if (device_type == "CPU" || device_type == "cpu") return FLM_DEVICE_CPU;
+  if (device_type == "GPU" || device_type == "gpu" || device_type == "CUDA" || device_type == "cuda" ||
+      device_type == "DML" || device_type == "dml") return FLM_DEVICE_GPU;
+  if (device_type == "NPU" || device_type == "npu" || device_type == "QNN" || device_type == "qnn")
+    return FLM_DEVICE_NPU;
+  return FLM_DEVICE_CPU;
+}
+
+const char* DeviceToString(flm_device device) noexcept {
+  switch (device) {
+    case FLM_DEVICE_CPU: return "cpu";
+    case FLM_DEVICE_GPU: return "gpu";
+    case FLM_DEVICE_NPU: return "npu";
+    default: return "unknown";
+  }
+}
+
 }  // namespace
 
-Model::Model(std::shared_ptr<Manager> manager, flModel* upstream, bool owns_upstream)
-    : manager_(std::move(manager)), upstream_(upstream), owns_upstream_(owns_upstream) {
-  if (upstream_ == nullptr) {
-    throw Error(FLM_ERROR_INTERNAL, "null model handle from the runtime");
+Model::InferenceLease::InferenceLease(std::shared_ptr<Model> model,
+                                      std::unique_lock<std::mutex> lock,
+                                      OgaModel* oga_model, OgaTokenizer* oga_tokenizer)
+    : model_(std::move(model)),
+      lock_(std::move(lock)),
+      oga_model_(oga_model),
+      oga_tokenizer_(oga_tokenizer) {}
+
+Model::Model(std::shared_ptr<Manager> manager, const std::string& path, const std::string& name)
+    : manager_(std::move(manager)), path_(path), name_(name) {
+  if (path_.empty()) {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT, "model path must not be empty");
   }
+  LoadMetadataFromConfig();
 }
 
 Model::~Model() {
-  // Models obtained from the catalog are owned by it; only variant lists transfer
-  // ownership, and releasing a borrowed model would corrupt the catalog's cache.
-  if (owns_upstream_ && upstream_ != nullptr) {
-    // No per-model release exists upstream; models live with their catalog. Kept
-    // explicit so the ownership distinction is not silently lost.
-    upstream_ = nullptr;
+  try {
+    Unload();
+  } catch (...) {
   }
+}
+
+void Model::LoadMetadataFromConfig() {
+  const nlohmann::json config = ReadGenaiConfig(path_);
+  metadata_ = nlohmann::json::object();
+  metadata_["id"] = name_;
+  metadata_["alias"] = name_;
+  metadata_["name"] = name_;
+  metadata_["display_name"] = name_;
+  metadata_["version"] = 1;
+  metadata_["publisher"] = "";
+  metadata_["license"] = "";
+  metadata_["model_type"] = "";
+
+  if (config.contains("model") && config["model"].contains("type")) {
+    const std::string model_type = config["model"]["type"].get<std::string>();
+    metadata_["model_type"] = model_type;
+    metadata_["task"] = ModelTypeToTask(model_type);
+  } else {
+    metadata_["task"] = "chat-completion";
+  }
+
+  metadata_["device"] = "cpu";
+  metadata_["execution_provider"] = "";
+  metadata_["file_size_bytes"] = DirectorySizeBytes(path_);
+  metadata_["context_length"] = 0;
+  metadata_["max_output_tokens"] = 0;
+  metadata_["supports_tool_calling"] = nullptr;
+  metadata_["supports_reasoning"] = nullptr;
+  metadata_["input_modalities"] = nlohmann::json::array({"text"});
+  metadata_["output_modalities"] = nlohmann::json::array({"text"});
+  metadata_["capabilities"] = nlohmann::json::array();
+  metadata_["prompt_templates"] = nlohmann::json::object();
+
+  if (config.contains("search")) {
+    if (config["search"].contains("max_length")) {
+      metadata_["context_length"] = config["search"]["max_length"].get<int64_t>();
+    }
+    if (config["search"].contains("max_output_tokens")) {
+      metadata_["max_output_tokens"] = config["search"]["max_output_tokens"].get<int64_t>();
+    }
+  }
+
+  metadata_["is_cached"] = true;
+  metadata_["is_loaded"] = false;
 }
 
 nlohmann::json Model::GetInfo() const {
-  const Runtime& runtime = Runtime::Instance();
-  nlohmann::json info = SerializeModelInfo(runtime, upstream_);
-  info["is_package"] = IsPackage();
+  std::lock_guard<std::mutex> lock(mutex_);
+  nlohmann::json info = metadata_;
+  info["is_loaded"] = loaded_;
+  info["is_cached"] = IsCached();
   return info;
 }
 
-std::string Model::GetId() const {
-  const Runtime& runtime = Runtime::Instance();
-  const flModelInfo* info = nullptr;
-  runtime.Check(runtime.model_api().GetInfo(upstream_, &info), "get model info");
-  const char* id = runtime.model_api().Info_GetId(info);
-  return id != nullptr ? std::string(id) : std::string();
-}
+std::string Model::GetId() const { return name_; }
 
 std::string Model::GetTask() const {
-  const Runtime& runtime = Runtime::Instance();
-  const flModelInfo* info = nullptr;
-  runtime.Check(runtime.model_api().GetInfo(upstream_, &info), "get model info");
-  const char* task = runtime.model_api().Info_GetTask(info);
-  return task != nullptr ? std::string(task) : std::string();
+  std::lock_guard<std::mutex> lock(mutex_);
+  return metadata_.value("task", std::string("chat-completion"));
 }
 
-std::string Model::GetPath() const {
-  const Runtime& runtime = Runtime::Instance();
-  const char* path = nullptr;
-  runtime.Check(runtime.model_api().GetPath(upstream_, &path), "get model path");
-  return path != nullptr ? std::string(path) : std::string();
-}
+std::string Model::GetPath() const { return path_; }
 
 bool Model::IsCached() const {
-  const Runtime& runtime = Runtime::Instance();
-  int cached = 0;
-  runtime.Check(runtime.model_api().IsCached(upstream_, &cached), "query cache state");
-  return cached != 0;
+  std::error_code ec;
+  return fs::is_directory(path_, ec);
 }
 
 bool Model::IsLoaded() const {
-  const Runtime& runtime = Runtime::Instance();
-  int loaded = 0;
-  runtime.Check(runtime.model_api().IsLoaded(upstream_, &loaded), "query load state");
-  return loaded != 0;
+  std::lock_guard<std::mutex> lock(mutex_);
+  return loaded_;
 }
 
-nlohmann::json Model::Download(const nlohmann::json& /*options*/, JobContext& context) {
-  manager_->ThrowIfShutdown();
-
-  // Already on disk: nothing to fetch. This is the case that succeeds, and it is how a
-  // model added through flm_manager_add_model_source_async behaves, since that call has
-  // already put the files in place.
-  if (IsCached()) {
-    const int64_t bytes = GetInfo().value("file_size_bytes", static_cast<int64_t>(0));
-    context.ReportProgress(100.0f, "downloading", bytes, bytes);
-    return nlohmann::json{{"path", GetPath()}, {"bytes", bytes}};
+Model::InferenceLease Model::AcquireInferenceLease() {
+  std::unique_lock<std::mutex> oga_lock(oga_mutex_);
+  if (oga_model_ == nullptr || oga_tokenizer_ == nullptr) {
+    throw Error(FLM_ERROR_INVALID_STATE, "the model must be loaded before creating an inference lease");
   }
-
-  // Deliberately not Foundry Local's downloader. That one resolves the model through the
-  // Azure catalog and fetches the desktop build published there — CUDA, DirectML,
-  // OpenVINO, x64. On a phone those are gigabytes with no execution provider that can run
-  // them. Mobile models come from the app instead, through
-  // flm_manager_add_model_source_async, which fetches through this SDK's own downloader
-  // and picks the variant the device can actually run.
-  throw Error(FLM_ERROR_NOT_IMPLEMENTED,
-              "this model is not on the device, and it cannot be fetched from the Foundry Local "
-              "catalog because that catalog publishes desktop builds. Supply the model with "
-              "flm_manager_add_model_source_async(), either bundled in the app or from a URL you host.",
-              {{"model", GetInfo().value("id", std::string())}});
+  return InferenceLease(shared_from_this(), std::move(oga_lock), oga_model_, oga_tokenizer_);
 }
 
 nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
   manager_->ThrowIfShutdown();
-  const Runtime& runtime = Runtime::Instance();
 
   if (!IsCached()) {
-    // Not on the device. Download() no longer fetches anything, so this is purely the
-    // route to its error, which names the call an app should have made instead.
-    Download(options, context);
+    throw Error(FLM_ERROR_NOT_FOUND,
+                "model directory does not exist at the specified path",
+                {{"path", path_}});
+  }
+
+  std::unique_lock<std::mutex> oga_lock(oga_mutex_);
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (loaded_) {
+      const int64_t bytes = metadata_.value("file_size_bytes", static_cast<int64_t>(0));
+      context.ReportProgress(100.0f, "loading");
+      return nlohmann::json{{"path", path_}, {"bytes", bytes}};
+    }
   }
 
   context.ThrowIfCancelled();
   context.ReportProgress(0.0f, "loading");
 
-  // Reject a load that the OS would kill. Failing here with a clear error is much better
-  // than an opaque process death a few seconds later.
   const DeviceProfile profile = GetDeviceProfile();
-  const int64_t model_bytes = GetInfo().value("file_size_bytes", static_cast<int64_t>(0));
+  const int64_t model_bytes = metadata_.value("file_size_bytes", static_cast<int64_t>(0));
   const int64_t budget = profile.MaxModelBytes();
   if (model_bytes > 0 && budget > 0 && model_bytes > budget) {
     throw Error(FLM_ERROR_MEMORY_PRESSURE,
@@ -126,278 +218,133 @@ nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
                  {"available_memory_bytes", profile.available_memory_bytes}});
   }
 
-  runtime.Check(runtime.model_api().Load(upstream_), "load model");
-  context.ReportProgress(100.0f, "loading");
+  const Runtime& runtime = Runtime::Instance();
 
-  return nlohmann::json{{"path", GetPath()}, {"bytes", model_bytes}};
+  std::string ep;
+  nlohmann::json provider_options;
+  if (options.is_object()) {
+    ep = options.value("execution_provider", std::string());
+    if (options.contains("provider_options") && options["provider_options"].is_object()) {
+      provider_options = options["provider_options"];
+    }
+  }
+
+  OgaConfigHandle local_config;
+  OgaModelHandle local_model;
+  OgaTokenizerHandle local_tokenizer;
+
+  if (!ep.empty()) {
+    OgaConfig* config_raw = nullptr;
+    const bool is_package =
+        fs::exists(fs::path(path_) / "manifest.json") &&
+        !fs::exists(fs::path(path_) / "genai_config.json");
+    if (is_package) {
+      runtime.Check(OgaCreateConfigFromPackageEp(path_.c_str(), ep.c_str(), &config_raw),
+                    "create OGA package config");
+    } else {
+      runtime.Check(OgaCreateConfig(path_.c_str(), &config_raw), "create OGA config");
+    }
+    local_config = OgaConfigHandle(config_raw);
+
+    if (!is_package) {
+      runtime.Check(OgaConfigClearProviders(local_config.get()), "clear providers");
+      runtime.Check(OgaConfigAppendProvider(local_config.get(), ep.c_str()), "set provider");
+    }
+
+    for (const auto& [key, value] : provider_options.items()) {
+      const std::string val_str = value.is_string() ? value.get<std::string>() : value.dump();
+      runtime.Check(OgaConfigSetProviderOption(local_config.get(), ep.c_str(), key.c_str(), val_str.c_str()),
+                    "set provider option");
+    }
+
+    OgaModel* model_raw = nullptr;
+    runtime.Check(OgaCreateModelFromConfig(local_config.get(), &model_raw), "create OGA model from config");
+    local_model = OgaModelHandle(model_raw);
+  } else {
+    OgaModel* model_raw = nullptr;
+    runtime.Check(OgaCreateModel(path_.c_str(), &model_raw), "create OGA model");
+    local_model = OgaModelHandle(model_raw);
+  }
+
+  OgaTokenizer* tokenizer_raw = nullptr;
+  runtime.Check(OgaCreateTokenizer(local_model.get(), &tokenizer_raw), "create OGA tokenizer");
+  local_tokenizer = OgaTokenizerHandle(tokenizer_raw);
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    oga_config_ = local_config.release();
+    oga_model_ = local_model.release();
+    oga_tokenizer_ = local_tokenizer.release();
+
+    runtime.AddRef();
+
+    loaded_ = true;
+    execution_provider_ = ep;
+    load_options_ = options;
+
+    const char* model_type = nullptr;
+    OgaResult* type_result = OgaModelGetType(oga_model_, &model_type);
+    if (type_result == nullptr && model_type != nullptr) {
+      metadata_["model_type"] = model_type;
+      metadata_["task"] = ModelTypeToTask(model_type);
+      OgaDestroyString(model_type);
+    } else if (type_result != nullptr) {
+      OgaDestroyResult(type_result);
+    }
+
+    const char* device_type = nullptr;
+    OgaResult* device_result = OgaModelGetDeviceType(oga_model_, &device_type);
+    if (device_result == nullptr && device_type != nullptr) {
+      metadata_["device"] = DeviceToString(ParseDeviceType(device_type));
+      OgaDestroyString(device_type);
+    } else if (device_result != nullptr) {
+      OgaDestroyResult(device_result);
+    }
+
+    if (!ep.empty()) {
+      metadata_["execution_provider"] = ep;
+    }
+
+    metadata_["is_loaded"] = true;
+  }
+
+  context.ReportProgress(100.0f, "loading");
+  return nlohmann::json{{"path", path_}, {"bytes", model_bytes}};
+}
+
+nlohmann::json Model::Reload(JobContext& context) {
+  nlohmann::json options;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    options = load_options_;
+  }
+  return Load(options, context);
 }
 
 void Model::Unload() {
-  const Runtime& runtime = Runtime::Instance();
-  runtime.Check(runtime.model_api().Unload(upstream_), "unload model");
-}
-
-void Model::Delete() {
-  const Runtime& runtime = Runtime::Instance();
-  if (IsLoaded()) {
-    Unload();
-  }
-
-  // Clean up orphaned shared assets before removing the model, while the package
-  // manifest is still readable. The package spec does not track which variants use which
-  // assets, so this mapping is ours to maintain.
-  if (IsPackage()) {
-    try {
-      const ModelPackage& package = GetPackage();
-      const std::string path = GetPath();
-      const auto orphans = package.FindOrphanedAssets({});
-      for (const auto& digest : orphans) {
-        std::error_code ec;
-        fs::remove_all(fs::path(path) / "shared_assets" / digest, ec);
-      }
-    } catch (const Error&) {
-      // Best effort: a manifest we cannot parse must not block deleting the model.
-    }
-  }
-
-  runtime.Check(runtime.model_api().RemoveFromCache(upstream_), "remove model from cache");
-
+  std::unique_lock<std::mutex> oga_lock(oga_mutex_);
   std::lock_guard<std::mutex> lock(mutex_);
-  package_checked_ = false;
-  package_.reset();
-}
-
-/* ------------------------------------------------------------------------- */
-/* Model packages                                                             */
-/* ------------------------------------------------------------------------- */
-
-void Model::EnsurePackageLoaded() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (package_checked_) {
+  if (!loaded_) {
     return;
   }
-  package_checked_ = true;
 
-  const Runtime& runtime = Runtime::Instance();
-
-  // A downloaded package is authoritative: parse the real manifest.
-  const char* path = nullptr;
-  if (runtime.CheckNoThrow(runtime.model_api().GetPath(upstream_, &path)) == FLM_OK && path != nullptr &&
-      path[0] != '\0' && ModelPackage::IsPackageDirectory(path)) {
-    try {
-      const flModelInfo* info = nullptr;
-      std::string package_id;
-      if (runtime.CheckNoThrow(runtime.model_api().GetInfo(upstream_, &info)) == FLM_OK && info != nullptr) {
-        if (const char* alias = runtime.model_api().Info_GetAlias(info)) {
-          package_id = alias;
-        }
-      }
-      ModelPackage package = ModelPackage::FromDirectory(path, package_id);
-      package.ScoreVariants(GetDeviceProfile());
-      package_ = std::move(package);
-      return;
-    } catch (const Error&) {
-      // Fall through to the catalog view rather than failing outright — a malformed
-      // on-disk manifest should not make the model unusable.
-    }
+  if (oga_tokenizer_ != nullptr) {
+    OgaDestroyTokenizer(oga_tokenizer_);
+    oga_tokenizer_ = nullptr;
   }
-
-  // Not downloaded yet, or not a true ORT package. Present the catalog's device-optimized
-  // variants through the same interface so app code has one selection API.
-  package_ = BuildPackageFromUpstreamVariants();
-}
-
-std::optional<ModelPackage> Model::BuildPackageFromUpstreamVariants() const {
-  const Runtime& runtime = Runtime::Instance();
-
-  flModelList* variants = nullptr;
-  if (runtime.CheckNoThrow(runtime.model_api().GetVariants(upstream_, &variants)) != FLM_OK || variants == nullptr) {
-    return std::nullopt;
+  if (oga_model_ != nullptr) {
+    OgaDestroyModel(oga_model_);
+    oga_model_ = nullptr;
   }
-  UpstreamHandle<flModelList, decltype(flApi::ModelList_Release)> owned_variants(variants,
-                                                                                runtime.api().ModelList_Release);
-
-  const size_t count = runtime.api().ModelList_Size(owned_variants.get());
-  if (count <= 1) {
-    return std::nullopt;  // A leaf model reports itself as its only variant.
+  if (oga_config_ != nullptr) {
+    OgaDestroyConfig(oga_config_);
+    oga_config_ = nullptr;
   }
+  Runtime::Instance().Release();
 
-  const flModelInfo* self_info = nullptr;
-  std::string package_id;
-  if (runtime.CheckNoThrow(runtime.model_api().GetInfo(upstream_, &self_info)) == FLM_OK && self_info != nullptr) {
-    if (const char* alias = runtime.model_api().Info_GetAlias(self_info)) {
-      package_id = alias;
-    }
-  }
-
-  nlohmann::json manifest;
-  manifest["schema_version"] = "1.0";
-  nlohmann::json variant_entries = nlohmann::json::array();
-
-  for (size_t i = 0; i < count; ++i) {
-    flModel* variant = runtime.api().ModelList_GetAt(owned_variants.get(), i);
-    if (variant == nullptr) {
-      continue;
-    }
-    const flModelInfo* info = nullptr;
-    if (runtime.CheckNoThrow(runtime.model_api().GetInfo(variant, &info)) != FLM_OK || info == nullptr) {
-      continue;
-    }
-
-    const char* id = runtime.model_api().Info_GetId(info);
-    const char* ep = runtime.model_api().Info_GetExecutionProvider(info);
-    const int64_t filesize_mb =
-        runtime.model_api().Info_GetIntProperty(info, FOUNDRY_LOCAL_MODEL_PROP_FILESIZE_MB_INT, 0);
-
-    nlohmann::json entry;
-    entry["id"] = id != nullptr ? id : (package_id + "." + std::to_string(i));
-    entry["ep"] = ep != nullptr ? ep : "CPU";
-    entry["device"] = ToString(static_cast<flm_device>(runtime.model_api().Info_GetDeviceType(info)));
-    entry["size"] = filesize_mb * 1024 * 1024;
-    entry["platform"] = "any";
-    variant_entries.push_back(std::move(entry));
-  }
-
-  if (variant_entries.empty()) {
-    return std::nullopt;
-  }
-
-  manifest["components"] = nlohmann::json::array({nlohmann::json{{"name", "model"}, {"variants", variant_entries}}});
-
-  try {
-    ModelPackage package = ModelPackage::FromManifest(manifest, package_id);
-    package.ScoreVariants(GetDeviceProfile());
-    return package;
-  } catch (const Error&) {
-    return std::nullopt;
-  }
-}
-
-bool Model::IsPackage() const {
-  EnsurePackageLoaded();
-  std::lock_guard<std::mutex> lock(mutex_);
-  return package_.has_value();
-}
-
-const ModelPackage& Model::GetPackage() const {
-  EnsurePackageLoaded();
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (!package_) {
-    throw Error(FLM_ERROR_INVALID_STATE, "this model is not a model package and has no variants");
-  }
-  return *package_;
-}
-
-void Model::SelectVariant(const std::string& variant_id) {
-  EnsurePackageLoaded();
-
-  std::string resolved_id;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!package_) {
-      throw Error(FLM_ERROR_INVALID_STATE, "this model is not a model package and has no variants");
-    }
-    package_->SelectVariant(variant_id);
-    resolved_id = variant_id;
-  }
-
-  // Mirror the choice into the runtime so load and inference use the variant we just
-  // reported to the app; otherwise the SDK's view and the runtime's would drift.
-  //
-  // This only applies to catalog-level variants. For on-disk package variants the
-  // runtime selects from the manifest at load time, so a lookup miss is expected and
-  // must not be treated as an error.
-  const Runtime& runtime = Runtime::Instance();
-  flModel* upstream_variant = nullptr;
-  auto catalog = manager_->catalog();
-  if (runtime.CheckNoThrow(runtime.catalog_api().GetModelVariant(catalog->upstream(), resolved_id.c_str(),
-                                                                 &upstream_variant)) != FLM_OK ||
-      upstream_variant == nullptr) {
-    return;
-  }
-  runtime.CheckNoThrow(runtime.model_api().SelectVariant(upstream_, upstream_variant));
-}
-
-std::string Model::SelectBestVariant(const nlohmann::json& constraints) {
-  EnsurePackageLoaded();
-
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (!package_) {
-    throw Error(FLM_ERROR_INVALID_STATE, "this model is not a model package and has no variants");
-  }
-
-  const auto selected = package_->SelectBestVariant(VariantConstraints::FromJson(constraints));
-  if (!selected) {
-    nlohmann::json reasons = nlohmann::json::object();
-    for (const auto& variant : package_->variants()) {
-      if (!variant.is_compatible) {
-        reasons[variant.id] = variant.incompatibility_reason;
-      }
-    }
-    throw Error(FLM_ERROR_INCOMPATIBLE, "no model package variant satisfies the constraints on this device",
-                {{"variant_reasons", reasons}});
-  }
-  package_->SelectVariant(*selected);
-  return *selected;
-}
-
-std::shared_ptr<Model> Model::GetVariantModel(const std::string& variant_id) {
-  EnsurePackageLoaded();
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!package_ || package_->FindVariant(variant_id) == nullptr) {
-      throw Error(FLM_ERROR_NOT_FOUND, "no variant '" + variant_id + "' in this model");
-    }
-  }
-
-  const Runtime& runtime = Runtime::Instance();
-  auto catalog = manager_->catalog();
-  flModel* upstream_variant = nullptr;
-  runtime.Check(runtime.catalog_api().GetModelVariant(catalog->upstream(), variant_id.c_str(), &upstream_variant),
-                "get variant '" + variant_id + "'");
-  if (upstream_variant == nullptr) {
-    throw Error(FLM_ERROR_NOT_FOUND, "no variant '" + variant_id + "' in the catalog");
-  }
-  return std::make_shared<Model>(manager_, upstream_variant, /*owns_upstream=*/false);
-}
-
-nlohmann::json Model::EstimateDownload(const std::optional<std::vector<std::string>>& variant_ids) const {
-  EnsurePackageLoaded();
-
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (!package_) {
-    // A flat model: the estimate is simply its size, or zero when already cached.
-    const Runtime& runtime = Runtime::Instance();
-    const flModelInfo* info = nullptr;
-    int64_t bytes = 0;
-    if (runtime.CheckNoThrow(runtime.model_api().GetInfo(upstream_, &info)) == FLM_OK && info != nullptr) {
-      bytes = runtime.model_api().Info_GetIntProperty(info, FOUNDRY_LOCAL_MODEL_PROP_FILESIZE_MB_INT, 0) * 1024 * 1024;
-    }
-    int cached = 0;
-    runtime.CheckNoThrow(runtime.model_api().IsCached(upstream_, &cached));
-    const DeviceProfile profile = GetDeviceProfile();
-    ModelPackage::DownloadEstimate estimate;
-    estimate.disk_bytes = bytes;
-    estimate.download_bytes = cached != 0 ? 0 : bytes;
-    estimate.already_cached_bytes = cached != 0 ? bytes : 0;
-    return estimate.ToJson(profile.available_storage_bytes);
-  }
-
-  std::vector<std::string> ids;
-  if (variant_ids && !variant_ids->empty()) {
-    ids = *variant_ids;
-  } else if (!package_->selected_variant_id().empty()) {
-    ids.push_back(package_->selected_variant_id());
-  } else {
-    // Nothing pinned yet: estimate for what automatic selection would choose, which is
-    // what the user is about to be asked to approve.
-    if (auto best = package_->SelectBestVariant(VariantConstraints{})) {
-      ids.push_back(*best);
-    }
-  }
-
-  const ModelPackage::DownloadEstimate estimate = package_->EstimateDownload(ids);
-  return estimate.ToJson(GetDeviceProfile().available_storage_bytes);
+  loaded_ = false;
+  metadata_["is_loaded"] = false;
 }
 
 }  // namespace flm

@@ -4,13 +4,10 @@
 package com.microsoft.ai.foundry.local.mobile
 
 import android.content.Context
+import com.microsoft.ai.foundry.local.mobile.internal.JobBridge
 import com.microsoft.ai.foundry.local.mobile.internal.JsonCodec
 import com.microsoft.ai.foundry.local.mobile.internal.NativeBridge
-import com.microsoft.ai.foundry.local.mobile.internal.JobBridge
 import com.microsoft.ai.foundry.local.mobile.lifecycle.LifecycleBridge
-import com.microsoft.ai.foundry.local.mobile.transport.OkHttpTransport
-import com.microsoft.ai.foundry.local.mobile.transport.TransportDispatcher
-import com.microsoft.ai.foundry.local.mobile.transport.HttpTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -28,17 +25,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * // (lifecycleScope, viewModelScope, or your own).
  * val foundry = FoundryLocal.create(context, FoundryLocalConfig(appName = "my-app"))
  *
- * // Acquire a model: bundled inside the APK, or hosted at a URL the app controls.
- * // The catalog does not fetch models; addModelSource is the only supply path.
- * val result = foundry.addModelSource(
- *     ModelSource.Remote(name = "qwen2.5-0.5b", url = "https://.../manifest.json"),
+ * // Load a model directly from a local directory path.
+ * val model = foundry.loadModel(
+ *     path = "/data/models/qwen2.5-0.5b",
  * ) { println("${it.percent}%") }
- *
- * // requireModel() throws the rare "download succeeded but catalog missed it" case
- * // with an actionable message; use `result.model ?: catalog.getModel(name)` to
- * // handle it explicitly.
- * val model = result.requireModel()
- * model.load()
  *
  * val chat = model.createChatSession()
  * chat.completeStreaming("Explain the golden ratio.").collect { print(it.text) }
@@ -51,7 +41,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 public class FoundryLocal internal constructor(
     private val handle: Long,
-    private val transport: HttpTransport,
     private val lifecycle: LifecycleBridge?,
 ) : AutoCloseable {
 
@@ -60,21 +49,13 @@ public class FoundryLocal internal constructor(
     /** ABI status codes and the message associated with the last error on this thread. */
     public val version: String get() = NativeBridge.versionString()
 
-    /** Runtime version, or `null` if the Foundry Local runtime is not present. */
+    /** Runtime version, or `null` if the ONNX Runtime GenAI runtime is not present. */
     public val runtimeVersion: String? get() = NativeBridge.runtimeVersionString()
 
-    /** `true` if the underlying Foundry Local runtime is present and loadable. */
+    /** `true` if the underlying ONNX Runtime GenAI runtime is present and loadable. */
     public val isRuntimeAvailable: Boolean get() = NativeBridge.isRuntimeAvailable()
 
-    /**
-     * The catalog owned by this manager. Borrowed; do not release directly.
-     */
-    public val catalog: Catalog by lazy { Catalog(NativeBridge.managerGetCatalog(requireHandle())) }
-
-    /**
-     * Snapshot of the device profile the core built for scoring variants and
-     * planning downloads.
-     */
+    /** Snapshot of the device profile the core built for model placement. */
     public val deviceProfile: DeviceProfile
         get() = JsonCodec.decode(
             DeviceProfile.serializer(),
@@ -82,33 +63,36 @@ public class FoundryLocal internal constructor(
         )
 
     /**
-     * Install a bundled or remote model as a first-class catalog entry.
+     * Load a model directly from a local directory path and return a ready-to-use
+     * [Model].
      *
-     * See `docs/model-sources.md`. When [source] is a [ModelSource.Remote] the
-     * default OkHttp transport downloads only the variant this device can run
-     * plus its shared assets; when it is a [ModelSource.Bundled] the files are
-     * loaded in place, or copied into the cache if the app requests it.
+     * ```kotlin
+     * val model = foundry.loadModel(
+     *     path = "/data/models/phi-4-mini",
+     *     executionProvider = "QNNExecutionProvider",
+     * )
+     * val chat = model.createChatSession()
+     * ```
      *
-     * The result carries the resolved [ModelSourceResult.name],
-     * [ModelSourceResult.path] and, in the common case, a ready-to-use
-     * [ModelSourceResult.model] the core minted inside the same job. `model`
-     * is `null` only when the download succeeded but the catalog's local scan
-     * did not find the files afterwards; the caller can then look the model
-     * up by name through [catalog] or work from [ModelSourceResult.path]
-     * directly.
-     *
-     * Progress is optional; typical UI code uses it to show a "download in
-     * progress" spinner.
+     * @param path Absolute filesystem path to the model directory.
+     * @param executionProvider Optional execution provider override.
+     * @param providerOptions Optional key-value EP configuration forwarded as
+     *   `provider_options` to the OGA session.
+     * @param onProgress Optional progress callback for the load phase.
+     * @return A loaded [Model] ready for session creation.
+     * @throws FoundryLocalException if the path is invalid or loading fails.
      */
-    public suspend fun addModelSource(
-        source: ModelSource,
+    public suspend fun loadModel(
+        path: String,
+        executionProvider: String? = null,
+        providerOptions: Map<String, String>? = null,
         onProgress: ((Progress) -> Unit)? = null,
-    ): ModelSourceResult {
-        val json = JsonCodec.encodeSource(source)
+    ): Model {
+        val options = JsonCodec.encodeLoadModelOptions(executionProvider, providerOptions)
         val result = JobBridge.awaitResult(onProgress = onProgress) { corr ->
-            NativeBridge.managerAddModelSourceAsync(requireHandle(), json, corr)
+            NativeBridge.managerLoadModelAsync(requireHandle(), path, options, corr)
         }
-        return JsonCodec.parseModelSourceResult(result, source.name)
+        return JsonCodec.parseLoadedModel(result, path)
     }
 
     /**
@@ -133,7 +117,7 @@ public class FoundryLocal internal constructor(
     /**
      * Shut down the manager and release all native resources. Idempotent; safe
      * to call from any thread. After this returns, every derived object
-     * (catalog, model, session, job) is invalidated.
+     * (model, session, job) is invalidated.
      */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -146,7 +130,6 @@ public class FoundryLocal internal constructor(
         try {
             NativeBridge.managerRelease(handle)
         } catch (_: Throwable) {}
-        TransportDispatcher.uninstall(transport)
     }
 
     @Suppress("removal", "deprecation")
@@ -162,56 +145,28 @@ public class FoundryLocal internal constructor(
 
     public companion object {
         /**
-         * Create the SDK using the app's private data directory. The default
-         * OkHttp-backed transport is installed at the same time.
+         * Create the SDK using the app's private data directory.
          *
          * This function is `suspend` because it does filesystem work — it
-         * creates the app data, model cache and log directories, and the
-         * `flm_manager_create` call it invokes may kick off a catalog refresh
-         * that scans a cache holding several gigabytes of model files. On the
-         * main thread that is a StrictMode violation and a plausible ANR on
-         * a cold start with a populated cache; the dispatch to
-         * [Dispatchers.IO] below makes it structurally impossible to get
-         * that wrong.
+         * creates the optional app-data directory away from the main thread.
          *
          * Call from a coroutine scope — `lifecycleScope`, `viewModelScope`,
          * or your own. Java callers can bridge via `BuildersKt.runBlocking`
          * or the standard Kotlin coroutines Java bridging APIs.
          */
         @JvmStatic
-        @JvmOverloads
         public suspend fun create(
             context: Context,
             config: FoundryLocalConfig,
-            transport: HttpTransport = OkHttpTransport(),
         ): FoundryLocal = withContext(Dispatchers.IO) {
             val appContext = context.applicationContext ?: context
             val filesDir = appContext.filesDir
             val dataDir = config.appDataDir ?: File(filesDir, "foundry").apply { mkdirs() }.absolutePath
-            val cacheDir = config.modelCacheDir ?: File(dataDir, "models").apply {
-                mkdirs()
-            }.absolutePath
-            val logsDir = config.logsDir ?: File(dataDir, "logs").apply { mkdirs() }.absolutePath
+            val resolved = config.copy(appDataDir = dataDir)
 
-            val resolved = config.copy(
-                appDataDir = dataDir,
-                modelCacheDir = cacheDir,
-                logsDir = logsDir,
-            )
-
-            // Install the transport before creating the manager, because the
-            // manager may kick off a catalog refresh from its constructor.
-            TransportDispatcher.install(transport)
-
-            val handle = try {
-                NativeBridge.managerCreate(JsonCodec.encodeConfig(resolved))
-            } catch (t: Throwable) {
-                TransportDispatcher.uninstall(transport)
-                throw t
-            }
-
+            val handle = NativeBridge.managerCreate(JsonCodec.encodeConfig(resolved))
             val lifecycle = LifecycleBridge.forContext(appContext)
-            val instance = FoundryLocal(handle, transport, lifecycle)
+            val instance = FoundryLocal(handle, lifecycle)
             lifecycle?.attach(instance)
             instance
         }

@@ -40,22 +40,8 @@ import { FoundryLocal } from '@foundry-local/react-native';
 
 const foundry = await FoundryLocal.create({ appName: 'my-app' });
 
-// The catalog is for inspection, not acquisition. addModelSource is the only
-// supply path on mobile — the desktop Foundry Local catalog publishes
-// CUDA/DirectML/OpenVINO/x64 builds that a phone cannot execute.
-const result = await foundry.addModelSource(
-  {
-    kind: 'remote',
-    name: 'qwen2.5-0.5b',
-    url: 'https://models.example.com/qwen2.5-0.5b/manifest.json',
-  },
-  (p) => console.log(`${p.percent}%`),
-);
-
-// `result.model` is a ready-to-use handle in the common case. See "The
-// addModelSource result shape" below for when it can be null.
-const model = result.model!; // non-null when sources are added before the catalog is queried
-await model.load();
+// Load a model directly from a local directory path.
+const model = await foundry.loadModel('/path/to/models/qwen2.5-0.5b');
 
 const chat = model.createChatSession();
 for await (const delta of chat.completeStreaming('What is the golden ratio?')) {
@@ -67,67 +53,25 @@ for await (const delta of chat.completeStreaming('What is the golden ratio?')) {
 
 The public exports are:
 
-- `FoundryLocal` — entry point (`create`, `addModelSource`, `catalog`, `deviceProfile`, `updateSettings`, `setLogLevel`, `close`).
-- `Catalog` — inspection only (`listModels`, `listCachedModels`, `getModel`, `getModelById`, `cacheSizeBytes`).
-- `Model` / `ModelPackage` — a loaded model or an ONNX Runtime package with declarative variant policy.
-- `ChatSession` — streaming (`completeStreaming`, `completeAllDeltas`) and non-streaming (`complete`, `submitToolResults`) completion.
-- `AudioSession` — one-shot and streaming speech-to-text (`transcribe`, `transcribeStreaming`, `pushAudio`).
-- `EmbeddingSession` — batch embeddings (`embed`).
+- `FoundryLocal` — entry point (`create`, `loadModel`, `deviceProfile`, `updateSettings`, `setLogLevel`, `close`).
+- `Model` — a loaded model handle.
+- `ChatSession` — streaming (`completeStreaming`, `completeAllDeltas`) and non-streaming (`complete`, `submitToolResults`) completion. Text streaming and multi-turn history work today; structured tool-call event parsing is not complete — the native core does not yet detect or emit tool calls.
+- `AudioSession` — one-shot and streaming speech-to-text (`transcribe`, `transcribeStreaming`, `pushAudio`). **Not yet implemented**: these calls return an error from the native core.
+- `EmbeddingSession` — batch embeddings (`embed`). **Not yet implemented**: this call returns an error from the native core.
 - `FoundryLocalError` — errors, with `code`, `status`, `detailJson`, `isRetryable`.
 
 Every long operation is a `Promise` or an `AsyncIterable`. Streams cancel through the standard `for await ... of` `break` path: breaking the loop calls `return()` on the iterator, which propagates through to `flm_job_cancel` on the native side. There is no separate `cancel()` method to call.
 
-## Model sources
+## Loading models
 
-`addModelSource` is the acquisition API. Two source kinds are supported:
-
-- `{ kind: 'bundled', path: '/absolute/path/inside/app' }` — a model shipped inside the APK. Set `copyIntoCache: true` when the path is temporary.
-- `{ kind: 'remote', url: 'https://.../manifest.json', headers?: { Authorization: '…' } }` — a model hosted at a URL the app controls.
-
-Common options on both kinds:
-
-- `resume` (default `true`) — resume a partial download from disk.
-- `verifyChecksums` (default `true`) — verify each file's SHA-256 after download.
-- `constraints` — variant selection policy, applied against the manifest before any bytes transfer.
-
-The variant policy vocabulary is exactly:
+Load a model directly from a local directory path:
 
 ```ts
-{
-  maxDownloadBytes?: number;
-  allowedDevices?: readonly ('cpu' | 'gpu' | 'npu')[];
-  preferSmallest?: boolean;
-  requireCached?: boolean;
-}
+const model = await foundry.loadModel('/absolute/path/to/model', {
+  executionProvider: 'QNNExecutionProvider',
+  providerOptions: { backend_path: 'libQnnHtp.so' },
+});
 ```
-
-Anything else you add is silently ignored by the core.
-
-### The `addModelSource` result shape
-
-`addModelSource` resolves to a `ModelSourceResult`, not directly to a `Model`:
-
-```ts
-interface ModelSourceResult {
-  name: string;
-  path: string;
-  variantId: string | null;
-  bytesDownloaded: number;
-  bytesReused: number;
-  wasCached: boolean;
-  model: Model | null;
-  handleUnavailableReason: string | null;
-}
-```
-
-`model` is a ready-to-use handle in the common case — the core mints it inside the same job. It is `null` when Foundry Local had already scanned the device for models before this source was added; that scan runs once per process and cannot be repeated, so `foundry.catalog.getModel(result.name)` fails for the same reason. `handleUnavailableReason` carries the explanation. The download succeeded either way — the files at `result.path` are committed and the next launch picks them up. Add model sources before querying the catalog and the case does not arise:
-
-```ts
-const result = await foundry.addModelSource(source);
-const model = result.model!; // non-null when sources are added before the catalog is queried
-```
-
-This deviates from the language-agnostic quickstart in the root project README, which shows `addModelSource` resolving to a `Model` directly. The deviation preserves the ABI's model-handle contract (a `uint64` that can legitimately be `FLM_INVALID_HANDLE`); fabricating a `Model` for that case or throwing would both be lossy. See the root README's TypeScript block if you want the two reconciled — the maintainers have offered to update the root README to match this shape.
 
 ## Streaming
 
@@ -151,6 +95,11 @@ for await (const delta of chat.completeAllDeltas({ messages: [...], tools: [...]
 Cancellation propagates automatically. Breaking the `for await` loop calls the iterator's `return()`, which in turn calls `cancelSubscription` on the native side. A cancelled stream always terminates with an `error` event (status `cancelled`), so the underlying subscription is guaranteed to be cleaned up.
 
 ## Tool calling
+
+> **Not yet complete.** The native core does not currently detect or parse
+> model-emitted tool calls: `result.toolCalls` is always `null` and no
+> `toolCall` delta is emitted, even when `tools` are supplied. The shape below
+> documents the intended API once structured tool-call parsing lands.
 
 `tool_calls[].arguments` is a JSON **string**, not a parsed object. A model may emit arguments that do not match the declared tool schema, and deciding whether that is fatal is the app's call. `tool_calls` and `usage` on `CompleteResult` are `null`, not empty, when there is nothing to report:
 
@@ -182,7 +131,7 @@ No bare `Error` reaches an app from the SDK.
 
 ## Architecture notes
 
-- **Android**: this package's TurboModule wraps the Kotlin binding at `bindings/android/`. It does not re-bind the C ABI — every download, callback, transport, and lifecycle concern is handled by the Kotlin binding's existing OkHttp + WorkManager transport, which survives the app being backgrounded and applies the append-on-resume fix for partial downloads.
+- **Android**: this package's TurboModule wraps the Kotlin binding at `bindings/android/`. It does not re-bind the C ABI; the module forwards JSON payloads and registry slot ids to the underlying binding.
 - **iOS**: this package's TurboModule wraps the Swift binding at `bindings/ios/Sources/FoundryLocal/`, mirroring Android's shape. `ios/RNFoundryLocalCore.swift` owns the handle registries and subscription table; `ios/RNFoundryLocal.mm` is a thin Objective-C++ `RCTEventEmitter` that exports the codegen'd selectors and forwards to Swift. Streaming maps `AsyncThrowingStream` to the same `FoundryLocal:*` event names the Android module uses, so the shared JS async-iterator layer is platform-agnostic. The podspec reaches into the sibling Swift binding source tree only for local-path consumption; it is not publishable until a `FoundryLocalKit.podspec` (or equivalent) ships.
 - **Wire format**: everything richer than a primitive crosses the TurboModule boundary as a UTF-8 JSON string. The TypeScript layer parses/produces those strings, so the codegen'd spec stays small and the same JSON shape is used by iOS and Android.
 - **Handles**: all native handles are opaque `number`s (slot ids into a per-module registry). The `0` slot is reserved as the invalid-handle sentinel.
