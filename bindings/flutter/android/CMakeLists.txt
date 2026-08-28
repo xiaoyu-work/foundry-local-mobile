@@ -48,29 +48,3 @@ set_source_files_properties(
     TARGET_DIRECTORY foundry_local_mobile
     PROPERTIES COMPILE_FLAGS "-fvisibility=default"
 )
-
-# --------------------------------------------------------------------------
-# Package OGA and ORT shared libraries so Gradle ships them in the APK.
-# The nested OGA subdirectory build produces libonnxruntime-genai.so as a
-# CMake target, and ORT's libonnxruntime.so is fetched into the build tree.
-# --------------------------------------------------------------------------
-if(TARGET onnxruntime-genai)
-    add_custom_command(TARGET foundry_local_mobile POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:onnxruntime-genai>
-            $<TARGET_FILE_DIR:foundry_local_mobile>/$<TARGET_FILE_NAME:onnxruntime-genai>
-        COMMENT "Copying libonnxruntime-genai.so for Flutter APK packaging"
-    )
-endif()
-
-# Use a post-build script to locate libonnxruntime.so in the build tree,
-# since ORT_LIB_DIR is set in the OGA child scope.
-add_custom_command(TARGET foundry_local_mobile POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC_DIR=${CMAKE_BINARY_DIR}
-        -DDST_DIR=$<TARGET_FILE_DIR:foundry_local_mobile>
-        -DLIB_NAME=libonnxruntime.so
-        -DABI=${ANDROID_ABI}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/copy_runtime_lib.cmake
-    COMMENT "Copying libonnxruntime.so for Flutter APK packaging"
-)

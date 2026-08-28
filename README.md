@@ -111,8 +111,8 @@ Be precise about what is proven and what is not:
 | Multi-turn history (export/restore/undo/clear) | Implemented and Windows E2E-tested |
 | Audio transcription (batch and streaming) | Implemented directly with OGA; compatible-model E2E and phone validation still pending |
 | Embeddings | Implemented for `hidden_states`-style outputs with float32, float16 and bfloat16 conversion; model E2E pending |
-| Multimodal input (image/audio content parts) | **Not implemented / incomplete** |
-| Structured tool-call event parsing | **Not implemented** — the model's raw text is not parsed into structured tool calls; `finish_reason: tool_calls` is never produced today |
+| Multimodal chat input | Implemented for local-path or base64 image/audio content through OGA processors; real-model/device E2E pending |
+| Structured tool-call and reasoning deltas | Implemented for models exposing OGA BOT/EOT and BOR/EOR special-token IDs; compatible-model E2E pending |
 | Android build | Compiles for `arm64-v8a`, `armeabi-v7a`, `x86_64`; on-device E2E not yet proven |
 | iOS build | Compiles against the C ABI; on-device E2E not yet proven |
 | Flutter / React Native | Path-first API surface present; release packaging and device validation in progress |
@@ -233,9 +233,8 @@ docs/                 Architecture, model directory requirements, platform notes
 ## Limitations
 
 - No catalog, no remote model download/transport, no SDK-managed cache or cache deletion.
-- Audio transcription and embeddings are implemented but still need successful
-  compatible-model and phone E2E coverage. Multimodal chat inputs and structured
-  tool-call event parsing remain incomplete.
+- Audio transcription, embeddings, multimodal chat and structured tool-call parsing are
+  implemented but still need compatible-model and physical-device E2E coverage.
 - Android and iOS on-device (physical hardware) end-to-end validation is not yet proven;
   today's proof point is a Windows E2E run against the OGA `qwen3-5` fixture model.
 - Flutter and React Native release packaging and device validation may still be in

@@ -44,6 +44,237 @@ constexpr GenOptionMapping kGenOptions[] = {
     {"do_sample", "do_sample", false},
 };
 
+/* ------------------------------------------------------------------------- */
+/* Multimodal content helpers                                                 */
+/* ------------------------------------------------------------------------- */
+
+struct MediaItem {
+  enum Type { kImage, kAudio };
+  Type type;
+  std::vector<uint8_t> data;
+};
+
+/// Return true if any message in the array contains an image or audio content part.
+bool HasMediaContent(const nlohmann::json& messages) {
+  for (const auto& msg : messages) {
+    if (!msg.contains("content") || !msg["content"].is_array()) continue;
+    for (const auto& part : msg["content"]) {
+      if (!part.is_object()) continue;
+      const std::string t = part.value("type", "");
+      if (t == "image" || t == "image_url" || t == "audio" || t == "input_audio") return true;
+    }
+  }
+  return false;
+}
+
+/// Validate that no message in `earlier` has media; only the last in `latest` may.
+void ValidateMediaPlacement(const nlohmann::json& earlier, const nlohmann::json& latest) {
+  auto has_media = [](const nlohmann::json& msg) {
+    if (!msg.contains("content") || !msg["content"].is_array()) return false;
+    for (const auto& part : msg["content"]) {
+      if (!part.is_object()) continue;
+      const std::string t = part.value("type", "");
+      if (t == "image" || t == "image_url" || t == "audio" || t == "input_audio") return true;
+    }
+    return false;
+  };
+
+  for (const auto& msg : earlier) {
+    if (has_media(msg)) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                  "media content is only allowed in the latest user message, "
+                  "but conversation history contains media in an earlier message");
+    }
+  }
+  for (size_t i = 0; i + 1 < latest.size(); ++i) {
+    if (has_media(latest[i])) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                  "media content is only allowed in the latest user message");
+    }
+  }
+  if (latest.empty() || latest.back().value("role", std::string()) != "user") {
+    throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                "media content must belong to the latest user message");
+  }
+}
+
+/// Extract media buffers from a single message's content array.
+std::vector<MediaItem> ExtractMedia(const nlohmann::json& message) {
+  std::vector<MediaItem> items;
+  if (!message.contains("content") || !message["content"].is_array()) return items;
+
+  for (const auto& part : message["content"]) {
+    if (!part.is_object()) continue;
+    const std::string type = part.value("type", "");
+
+    if (type == "image" || type == "image_url") {
+      MediaItem item{};
+      item.type = MediaItem::kImage;
+
+      if (type == "image_url" && part.contains("image_url") && part["image_url"].is_object()) {
+        const std::string url = part["image_url"].value("url", std::string());
+        if (url.empty()) throw Error(FLM_ERROR_INVALID_ARGUMENT, "image_url has an empty url");
+        if (url.size() > 5 && url.substr(0, 5) == "data:") {
+          const size_t comma = url.find(',');
+          if (comma == std::string::npos || url.substr(0, comma).find(";base64") == std::string::npos) {
+            throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                        "image data URL must contain a base64 payload");
+          }
+          item.data = Base64Decode(url.substr(comma + 1));
+        } else if (url.rfind("file://", 0) == 0) {
+          item.data = ReadFileBytes(url.substr(7));
+        } else if (url.find("://") != std::string::npos) {
+          throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                      "remote image URLs are not supported; provide a local path or data URL");
+        } else {
+          item.data = ReadFileBytes(url);
+        }
+      } else if (part.contains("path") && part["path"].is_string()) {
+        const std::string p = part["path"].get<std::string>();
+        if (p.empty()) throw Error(FLM_ERROR_INVALID_ARGUMENT, "image path must not be empty");
+        item.data = ReadFileBytes(p);
+      } else if (part.contains("data_base64") && part["data_base64"].is_string()) {
+        item.data = Base64Decode(part["data_base64"].get<std::string>());
+      } else {
+        throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                    "image part needs 'path', 'data_base64', or 'image_url'");
+      }
+      if (item.data.empty()) throw Error(FLM_ERROR_INVALID_ARGUMENT, "image data decoded to zero bytes");
+      items.push_back(std::move(item));
+
+    } else if (type == "audio" || type == "input_audio") {
+      MediaItem item{};
+      item.type = MediaItem::kAudio;
+
+      if (part.contains("path") && part["path"].is_string()) {
+        const std::string p = part["path"].get<std::string>();
+        if (p.empty()) throw Error(FLM_ERROR_INVALID_ARGUMENT, "audio path must not be empty");
+        item.data = ReadFileBytes(p);
+      } else if (part.contains("data_base64") && part["data_base64"].is_string()) {
+        item.data = Base64Decode(part["data_base64"].get<std::string>());
+      } else if (part.contains("input_audio") && part["input_audio"].is_object()) {
+        const auto& ia = part["input_audio"];
+        if (ia.contains("data") && ia["data"].is_string()) {
+          item.data = Base64Decode(ia["data"].get<std::string>());
+        } else {
+          throw Error(FLM_ERROR_INVALID_ARGUMENT, "input_audio object needs a 'data' field");
+        }
+      } else {
+        throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                    "audio part needs 'path' or 'data_base64'");
+      }
+      if (item.data.empty()) throw Error(FLM_ERROR_INVALID_ARGUMENT, "audio data decoded to zero bytes");
+      items.push_back(std::move(item));
+    }
+  }
+  return items;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Tool definition normalization                                              */
+/* ------------------------------------------------------------------------- */
+
+/// Normalize SDK-shaped tool definitions ({name, description, parameters_json})
+/// into the OpenAI function-calling shape expected by OGA chat templates.
+nlohmann::json NormalizeToolsForTemplate(const nlohmann::json& tools) {
+  if (!tools.is_array()) return nlohmann::json::array();
+
+  nlohmann::json normalized = nlohmann::json::array();
+  for (const auto& tool : tools) {
+    if (!tool.is_object()) continue;
+
+    // Already in OpenAI format.
+    if (tool.value("type", "") == "function" && tool.contains("function")) {
+      normalized.push_back(tool);
+      continue;
+    }
+
+    const std::string name = tool.value("name", std::string());
+    if (name.empty()) continue;
+
+    nlohmann::json fn = {{"name", name}};
+    if (tool.contains("description")) fn["description"] = tool["description"];
+
+    if (tool.contains("parameters_json") && tool["parameters_json"].is_string()) {
+      try {
+        fn["parameters"] = nlohmann::json::parse(tool["parameters_json"].get<std::string>());
+      } catch (const nlohmann::json::exception& error) {
+        throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                    "tool '" + name + "' has invalid parameters_json: " + error.what());
+      }
+    } else if (tool.contains("parameters")) {
+      fn["parameters"] = tool["parameters"];
+    }
+
+    normalized.push_back(nlohmann::json{{"type", "function"}, {"function", fn}});
+  }
+  return normalized;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Tool-call / reasoning streaming state machine                              */
+/* ------------------------------------------------------------------------- */
+
+enum class StreamState {
+  kText,       // Normal visible text.
+  kReasoning,  // Between BOR and EOR.
+  kToolCall,   // Between BOT and EOT — accumulate, do not emit as text.
+};
+
+/// Try to parse `buffer` as either a single tool-call object or an array of them.
+/// Each object must have "name" and "arguments" or "parameters".
+/// Emits FLM_DELTA_TOOL_CALL for every parsed call, appends to the aggregate vector,
+/// and returns true if anything was parsed. On malformed JSON returns false.
+bool ParseAndEmitToolCalls(const std::string& buffer,
+                           std::vector<nlohmann::json>& tool_calls,
+                           uint64_t& counter,
+                           JobContext& context) {
+  nlohmann::json parsed;
+  try {
+    parsed = nlohmann::json::parse(buffer);
+  } catch (...) {
+    return false;
+  }
+
+  bool emitted = false;
+  auto process_one = [&](const nlohmann::json& call) {
+    if (!call.is_object()) return;
+    const std::string name = call.value("name", std::string());
+    if (name.empty()) return;
+
+    std::string arguments;
+    if (call.contains("arguments")) {
+      arguments = call["arguments"].is_string() ? call["arguments"].get<std::string>() : call["arguments"].dump();
+    } else if (call.contains("parameters")) {
+      arguments = call["parameters"].is_string() ? call["parameters"].get<std::string>() : call["parameters"].dump();
+    }
+
+    const std::string call_id = "call_" + std::to_string(counter++);
+
+    tool_calls.push_back(nlohmann::json{
+        {"call_id", call_id},
+        {"name", name},
+        {"arguments", arguments}});
+
+    flm_delta delta{};
+    delta.version = FLM_API_VERSION;
+    delta.kind = FLM_DELTA_TOOL_CALL;
+    delta.tool_call_id = call_id.c_str();
+    delta.tool_name = name.c_str();
+    delta.tool_arguments_json = arguments.c_str();
+    delta.finish_reason = FLM_FINISH_NONE;
+    context.EmitDelta(delta);
+    emitted = true;
+  };
+
+  if (parsed.is_array()) {
+    for (const auto& item : parsed) process_one(item);
+  } else {
+    process_one(parsed);
+  }
+  return emitted;
+}
+
 float Float16ToFloat32(uint16_t value) noexcept {
   const uint32_t sign = static_cast<uint32_t>(value & 0x8000U) << 16U;
   const uint32_t exponent = (value >> 10U) & 0x1FU;
@@ -165,29 +396,62 @@ void Session::SetOptions(const nlohmann::json& options) {
 /* ------------------------------------------------------------------------- */
 
 std::string Session::BuildPrompt(const nlohmann::json& messages, const nlohmann::json& tools,
-                                 OgaTokenizer* tokenizer) {
+                                 OgaTokenizer* tokenizer, bool preserve_media) {
   if (tokenizer == nullptr) {
     throw Error(FLM_ERROR_INVALID_STATE, "model tokenizer is not available");
   }
 
   // Include the full accumulated conversation history because each request creates a
-  // fresh OGA generator. Normalize rich content to the text shape accepted by ordinary
-  // chat templates; multimodal requests are rejected separately until that path is
-  // implemented.
+  // fresh OGA generator.
   nlohmann::json all_messages = nlohmann::json::array();
-  auto append_message = [&all_messages](const nlohmann::json& message) {
-    if (message.contains("content") && message["content"].is_array()) {
-      nlohmann::json normalized = message;
-      std::string text;
-      for (const auto& part : message["content"]) {
-        if (part.is_string()) {
-          text += part.get<std::string>();
-        } else if (part.is_object() && part.value("type", "") == "text") {
-          text += part.value("text", std::string());
+
+  // Flatten a content array to a plain text string (text-only path and history).
+  auto flatten_to_text = [](const nlohmann::json& message) -> nlohmann::json {
+    nlohmann::json normalized = message;
+    std::string text;
+    for (const auto& part : message["content"]) {
+      if (part.is_string()) {
+        text += part.get<std::string>();
+      } else if (part.is_object() && part.value("type", "") == "text") {
+        text += part.value("text", std::string());
+      }
+    }
+    normalized["content"] = std::move(text);
+    return normalized;
+  };
+
+  // Keep content arrays but strip data payloads, retaining only type-only markers
+  // so the chat template can insert the correct multimodal placeholders.
+  auto strip_media_data = [](const nlohmann::json& message) -> nlohmann::json {
+    nlohmann::json normalized = message;
+    nlohmann::json parts = nlohmann::json::array();
+    for (const auto& part : message["content"]) {
+      if (part.is_string()) {
+        parts.push_back(nlohmann::json{{"type", "text"}, {"text", part.get<std::string>()}});
+      } else if (!part.is_object()) {
+        continue;
+      } else {
+        const std::string t = part.value("type", "");
+        if (t == "text") {
+          parts.push_back(part);
+        } else if (t == "image" || t == "image_url") {
+          parts.push_back(nlohmann::json{{"type", "image"}});
+        } else if (t == "audio" || t == "input_audio") {
+          parts.push_back(nlohmann::json{{"type", "audio"}});
         }
       }
-      normalized["content"] = std::move(text);
-      all_messages.push_back(std::move(normalized));
+    }
+    normalized["content"] = std::move(parts);
+    return normalized;
+  };
+
+  auto append_message = [&](const nlohmann::json& message, bool may_have_media) {
+    if (message.contains("content") && message["content"].is_array()) {
+      if (may_have_media && preserve_media) {
+        all_messages.push_back(strip_media_data(message));
+      } else {
+        all_messages.push_back(flatten_to_text(message));
+      }
       return;
     }
     all_messages.push_back(message);
@@ -197,15 +461,17 @@ std::string Session::BuildPrompt(const nlohmann::json& messages, const nlohmann:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& msg : history_) {
-      append_message(msg);
+      append_message(msg, /*may_have_media=*/false);
     }
     if (const auto it = options_.find("chat_template");
         it != options_.end() && it->is_string()) {
       explicit_template = it->get<std::string>();
     }
   }
-  for (const auto& msg : messages) {
-    append_message(msg);
+  for (size_t i = 0; i < messages.size(); ++i) {
+    // Only the last incoming message may carry media.
+    const bool is_last = (i + 1 == messages.size());
+    append_message(messages[i], is_last);
   }
 
   const std::string messages_str = all_messages.dump();
@@ -226,6 +492,10 @@ std::string Session::BuildPrompt(const nlohmann::json& messages, const nlohmann:
     OgaDestroyResult(template_result);
     if (!explicit_template.empty() || message.find("Empty chat template") == std::string::npos) {
       throw Error(FLM_ERROR_INVALID_ARGUMENT, "apply chat template: " + message);
+    }
+    if (preserve_media) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                  "multimodal chat requires a chat template in the model tokenizer configuration");
     }
 
     // Base completion models often omit a chat template. Keep path-based loading useful
@@ -255,19 +525,42 @@ std::string Session::BuildPrompt(const nlohmann::json& messages, const nlohmann:
 /* ------------------------------------------------------------------------- */
 
 nlohmann::json Session::Generate(const std::string& prompt, const nlohmann::json& gen_options,
-                                 Model::InferenceLease& lease, JobContext& context) {
+                                 const nlohmann::json& tool_defs,
+                                 Model::InferenceLease& lease, JobContext& context,
+                                 OgaNamedTensors* mm_inputs,
+                                 OgaMultiModalProcessor* mm_processor) {
   const Runtime& runtime = Runtime::Instance();
   OgaModel* oga_model = lease.oga_model();
   OgaTokenizer* tokenizer = lease.oga_tokenizer();
 
-  // Encode prompt to tokens.
-  OgaSequences* sequences_raw = nullptr;
-  runtime.Check(OgaCreateSequences(&sequences_raw), "create sequences");
-  OgaSequencesHandle sequences(sequences_raw);
+  // --- Determine prompt token count early (needed for max_length). ---
+  size_t prompt_token_count = 0;
+  OgaSequencesHandle sequences;
 
-  runtime.Check(OgaTokenizerEncode(tokenizer, prompt.c_str(), sequences.get()), "encode prompt");
-
-  const size_t prompt_token_count = OgaSequencesGetSequenceCount(sequences.get(), 0);
+  if (mm_inputs != nullptr) {
+    // Multimodal path: derive from input_ids tensor shape when available.
+    OgaTensor* ids_tensor_raw = nullptr;
+    OgaResult* ids_result = OgaNamedTensorsGet(mm_inputs, "input_ids", &ids_tensor_raw);
+    if (ids_result == nullptr && ids_tensor_raw != nullptr) {
+      OgaTensorHandle ids_tensor(ids_tensor_raw);
+      size_t rank = 0;
+      runtime.Check(OgaTensorGetShapeRank(ids_tensor.get(), &rank), "read input_ids rank");
+      if (rank >= 1) {
+        std::vector<int64_t> shape(rank);
+        runtime.Check(OgaTensorGetShape(ids_tensor.get(), shape.data(), rank), "read input_ids shape");
+        prompt_token_count = static_cast<size_t>(shape.back());
+      }
+    } else {
+      if (ids_result) OgaDestroyResult(ids_result);
+    }
+  } else {
+    // Text-only path: encode prompt.
+    OgaSequences* seq_raw = nullptr;
+    runtime.Check(OgaCreateSequences(&seq_raw), "create sequences");
+    sequences = OgaSequencesHandle(seq_raw);
+    runtime.Check(OgaTokenizerEncode(tokenizer, prompt.c_str(), sequences.get()), "encode prompt");
+    prompt_token_count = OgaSequencesGetSequenceCount(sequences.get(), 0);
+  }
 
   // Create generator params.
   OgaGeneratorParams* params_raw = nullptr;
@@ -280,7 +573,6 @@ nlohmann::json Session::Generate(const std::string& prompt, const nlohmann::json
     std::lock_guard<std::mutex> lock(mutex_);
     merged_options = options_;
   }
-  // Per-request options override session-level ones.
   for (const auto& [key, value] : gen_options.items()) {
     merged_options[key] = value;
   }
@@ -296,7 +588,6 @@ nlohmann::json Session::Generate(const std::string& prompt, const nlohmann::json
         try { val = std::stod(it->get<std::string>()); } catch (...) { continue; }
       } else continue;
 
-      // Map max_output_tokens to max_length = prompt_token_count + max_output_tokens.
       const char* oga_key = mapping.oga_key;
       if (std::strcmp(mapping.json_key, "max_output_tokens") == 0) {
         val = static_cast<double>(prompt_token_count) + val;
@@ -319,34 +610,71 @@ nlohmann::json Session::Generate(const std::string& prompt, const nlohmann::json
   runtime.Check(OgaCreateGenerator(oga_model, params.get(), &gen_raw), "create generator");
   OgaGeneratorHandle generator(gen_raw);
 
-  // Append prompt tokens.
-  const int32_t* token_data = OgaSequencesGetSequenceData(sequences.get(), 0);
-  runtime.Check(OgaGenerator_AppendTokens(generator.get(), token_data,
-                                          prompt_token_count),
-                "append prompt tokens");
+  // Seed the generator — multimodal vs text-only.
+  if (mm_inputs != nullptr) {
+    runtime.Check(OgaGenerator_SetInputs(generator.get(), mm_inputs), "set multimodal inputs");
+    // Refine prompt_token_count from the generator if the tensor probe missed.
+    if (prompt_token_count == 0) {
+      prompt_token_count = OgaGenerator_TokenCount(generator.get());
+    }
+  } else {
+    const int32_t* token_data = OgaSequencesGetSequenceData(sequences.get(), 0);
+    runtime.Check(OgaGenerator_AppendTokens(generator.get(), token_data, prompt_token_count),
+                  "append prompt tokens");
+  }
 
   // Create tokenizer stream for incremental decoding.
   OgaTokenizerStream* stream_raw = nullptr;
-  runtime.Check(OgaCreateTokenizerStream(tokenizer, &stream_raw), "create tokenizer stream");
+  if (mm_processor != nullptr) {
+    runtime.Check(OgaCreateTokenizerStreamFromProcessor(mm_processor, &stream_raw),
+                  "create tokenizer stream from processor");
+  } else {
+    runtime.Check(OgaCreateTokenizerStream(tokenizer, &stream_raw), "create tokenizer stream");
+  }
   OgaTokenizerStreamHandle token_stream(stream_raw);
 
-  // Generation loop.
-  nlohmann::json aggregate = nlohmann::json::object();
+  // --- Probe special token IDs for tool-call / reasoning parsing. ---
+  const bool has_tools = tool_defs.is_array() && !tool_defs.empty();
+  int32_t bot_id = -1, eot_id = -1, bor_id = -1, eor_id = -1;
+  {
+    auto probe = [&](auto fn, int32_t& out) {
+      OgaResult* r = fn(tokenizer, &out);
+      if (r) { OgaDestroyResult(r); out = -1; }
+    };
+    probe(OgaTokenizerGetBotTokenId, bot_id);
+    probe(OgaTokenizerGetEotTokenId, eot_id);
+    probe(OgaTokenizerGetBorTokenId, bor_id);
+    probe(OgaTokenizerGetEorTokenId, eor_id);
+  }
+
+  // --- Streaming state ---
+  StreamState state = StreamState::kText;
+  StreamState pre_tool_state = StreamState::kText;
+  std::string tool_buffer;
+  std::vector<nlohmann::json> tool_calls_aggregate;
   std::string full_text;
+  std::string full_reasoning;
   int64_t completion_tokens = 0;
   flm_finish_reason finish = FLM_FINISH_NONE;
   bool cancelled = false;
 
+  auto request_cancel = [&]() {
+    OgaResult* term = OgaGenerator_SetRuntimeOption(generator.get(), "terminate_session", "1");
+    if (term) OgaDestroyResult(term);
+    cancelled = true;
+    finish = FLM_FINISH_CANCELLED;
+  };
+
+  auto consume_marker = [&](int32_t token_id) {
+    const char* ignored = nullptr;
+    runtime.Check(OgaTokenizerStreamDecode(token_stream.get(), token_id, &ignored),
+                  "decode special token");
+  };
+
+  // --- Generation loop ---
   while (!OgaGenerator_IsDone(generator.get())) {
     if (context.IsCancelled() || OgaGenerator_IsSessionTerminated(generator.get())) {
-      // Request OGA-level termination so the engine can clean up cooperatively.
-      OgaResult* term_result = OgaGenerator_SetRuntimeOption(
-          generator.get(), "terminate_session", "1");
-      if (term_result != nullptr) {
-        OgaDestroyResult(term_result);
-      }
-      cancelled = true;
-      finish = FLM_FINISH_CANCELLED;
+      request_cancel();
       break;
     }
 
@@ -355,7 +683,6 @@ nlohmann::json Session::Generate(const std::string& prompt, const nlohmann::json
       const char* err = OgaResultGetError(step_result);
       std::string err_msg = err ? err : "generation error";
       OgaDestroyResult(step_result);
-      // If session was terminated (cooperative cancellation), treat as cancel.
       if (OgaGenerator_IsSessionTerminated(generator.get())) {
         cancelled = true;
         finish = FLM_FINISH_CANCELLED;
@@ -366,60 +693,135 @@ nlohmann::json Session::Generate(const std::string& prompt, const nlohmann::json
 
     completion_tokens++;
 
-    // Get the newly generated token.
     const int32_t* next_tokens = nullptr;
     size_t next_count = 0;
     runtime.Check(OgaGenerator_GetNextTokens(generator.get(), &next_tokens, &next_count), "get next tokens");
 
-    if (next_count > 0 && next_tokens != nullptr) {
-      const char* decoded = nullptr;
-      OgaResult* decode_result = OgaTokenizerStreamDecode(token_stream.get(), next_tokens[0], &decoded);
-      runtime.Check(decode_result, "decode generated token");
-      if (decoded != nullptr && decoded[0] != '\0') {
-        const size_t len = std::strlen(decoded);
-        full_text.append(decoded, len);
+    if (next_count == 0 || next_tokens == nullptr) continue;
+    const int32_t token_id = next_tokens[0];
 
-        // Emit streaming delta.
+    // --- State transitions on special tokens ---
+    if (token_id == bor_id && bor_id >= 0 && state == StreamState::kText) {
+      state = StreamState::kReasoning;
+      consume_marker(token_id);
+      continue;
+    }
+    if (token_id == eor_id && eor_id >= 0 && state == StreamState::kReasoning) {
+      state = StreamState::kText;
+      consume_marker(token_id);
+      continue;
+    }
+    if (has_tools && token_id == bot_id && bot_id >= 0 &&
+        (state == StreamState::kText || state == StreamState::kReasoning)) {
+      pre_tool_state = state;
+      state = StreamState::kToolCall;
+      tool_buffer.clear();
+      consume_marker(token_id);
+      continue;
+    }
+    if (has_tools && token_id == eot_id && eot_id >= 0 && state == StreamState::kToolCall) {
+      if (!ParseAndEmitToolCalls(tool_buffer, tool_calls_aggregate,
+                                 next_tool_call_id_, context)) {
+        full_text.append(tool_buffer);
+        flm_delta delta{};
+        delta.version = FLM_API_VERSION;
+        delta.kind = FLM_DELTA_TEXT;
+        delta.text = tool_buffer.c_str();
+        delta.text_length = tool_buffer.size();
+        delta.finish_reason = FLM_FINISH_NONE;
+        if (!context.EmitDelta(delta)) {
+          request_cancel();
+        }
+      }
+      tool_buffer.clear();
+      state = pre_tool_state;
+      consume_marker(token_id);
+      if (cancelled) break;
+      continue;
+    }
+
+    // --- Decode the token ---
+    const char* decoded = nullptr;
+    OgaResult* decode_result = OgaTokenizerStreamDecode(token_stream.get(), token_id, &decoded);
+    runtime.Check(decode_result, "decode generated token");
+
+    if (decoded == nullptr || decoded[0] == '\0') continue;
+    const size_t len = std::strlen(decoded);
+
+    switch (state) {
+      case StreamState::kText: {
+        full_text.append(decoded, len);
         flm_delta delta{};
         delta.version = FLM_API_VERSION;
         delta.kind = FLM_DELTA_TEXT;
         delta.text = decoded;
         delta.text_length = len;
         delta.finish_reason = FLM_FINISH_NONE;
-
         if (!context.EmitDelta(delta)) {
-          // Consumer requested cancellation — signal OGA termination.
-          OgaResult* term_result = OgaGenerator_SetRuntimeOption(
-              generator.get(), "terminate_session", "1");
-          if (term_result != nullptr) {
-            OgaDestroyResult(term_result);
-          }
-          cancelled = true;
-          finish = FLM_FINISH_CANCELLED;
-          break;
+          request_cancel();
         }
+        break;
       }
+      case StreamState::kReasoning: {
+        full_reasoning.append(decoded, len);
+        flm_delta delta{};
+        delta.version = FLM_API_VERSION;
+        delta.kind = FLM_DELTA_REASONING;
+        delta.text = decoded;
+        delta.text_length = len;
+        delta.finish_reason = FLM_FINISH_NONE;
+        if (!context.EmitDelta(delta)) {
+          request_cancel();
+        }
+        break;
+      }
+      case StreamState::kToolCall:
+        tool_buffer.append(decoded, len);
+        break;
     }
+
+    if (cancelled) break;
   }
 
+  // --- Flush unterminated buffers as visible text rather than losing output. ---
+  if (!cancelled && state == StreamState::kToolCall && !tool_buffer.empty()) {
+    full_text.append(tool_buffer);
+    flm_delta delta{};
+    delta.version = FLM_API_VERSION;
+    delta.kind = FLM_DELTA_TEXT;
+    delta.text = tool_buffer.c_str();
+    delta.text_length = tool_buffer.size();
+    delta.finish_reason = FLM_FINISH_NONE;
+    context.EmitDelta(delta);
+    tool_buffer.clear();
+  }
+
+  // --- Determine finish reason ---
   if (finish == FLM_FINISH_NONE) {
-    // Check if we hit max length.
-    double max_len = 0;
-    OgaResult* max_len_result = OgaGeneratorParamsGetSearchNumber(params.get(), "max_length", &max_len);
-    if (max_len_result == nullptr) {
-      if (max_len > 0 && static_cast<double>(prompt_token_count + completion_tokens) >= max_len) {
-        finish = FLM_FINISH_LENGTH;
+    if (!tool_calls_aggregate.empty()) {
+      finish = FLM_FINISH_TOOL_CALLS;
+    } else {
+      double max_len = 0;
+      OgaResult* max_len_result = OgaGeneratorParamsGetSearchNumber(params.get(), "max_length", &max_len);
+      if (max_len_result == nullptr) {
+        if (max_len > 0 && static_cast<double>(prompt_token_count + completion_tokens) >= max_len) {
+          finish = FLM_FINISH_LENGTH;
+        } else {
+          finish = FLM_FINISH_STOP;
+        }
       } else {
+        OgaDestroyResult(max_len_result);
         finish = FLM_FINISH_STOP;
       }
-    } else {
-      OgaDestroyResult(max_len_result);
-      finish = FLM_FINISH_STOP;
     }
   }
 
+  nlohmann::json aggregate = nlohmann::json::object();
   aggregate["text"] = full_text;
   aggregate["finish_reason"] = FinishReasonName(finish);
+  if (!tool_calls_aggregate.empty()) {
+    aggregate["tool_calls"] = tool_calls_aggregate;
+  }
   aggregate["usage"] = nlohmann::json{
       {"prompt_tokens", static_cast<int64_t>(prompt_token_count)},
       {"completion_tokens", completion_tokens},
@@ -473,11 +875,13 @@ nlohmann::json Session::Complete(const nlohmann::json& request, JobContext& cont
     current_tools = tool_definitions_;
   }
 
+  // Normalize tool definitions to the OpenAI function shape for the chat template.
+  const nlohmann::json template_tools = NormalizeToolsForTemplate(current_tools);
+
   // Acquire inference lease — holds the OGA model/tokenizer alive for the entire operation.
   Model::InferenceLease lease = model_->AcquireInferenceLease();
-
-  // Build the prompt using the chat template (includes full conversation history).
-  const std::string prompt = BuildPrompt(*messages, current_tools, lease.oga_tokenizer());
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
+  const Runtime& runtime = Runtime::Instance();
 
   // Extract per-request generation options.
   nlohmann::json gen_options = nlohmann::json::object();
@@ -488,8 +892,89 @@ nlohmann::json Session::Complete(const nlohmann::json& request, JobContext& cont
     }
   }
 
+  // --- Detect multimodal content ---
+  const bool multimodal = HasMediaContent(*messages);
+  OgaNamedTensorsHandle mm_tensors;
+  OgaMultiModalProcessorHandle mm_processor;
+  OgaImagesHandle mm_images;
+  OgaAudiosHandle mm_audios;
+  // Owned buffers for media data must outlive the OGA objects.
+  std::vector<MediaItem> media_items;
+
+  std::string prompt;
+
+  if (multimodal) {
+    // Validate that only the latest user message carries media.
+    nlohmann::json history_copy;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      history_copy = history_;
+    }
+    ValidateMediaPlacement(history_copy, *messages);
+
+    // Extract media buffers from the last message.
+    media_items = ExtractMedia(messages->back());
+    if (media_items.empty()) {
+      throw Error(FLM_ERROR_INVALID_ARGUMENT,
+                  "multimodal content detected but no valid media extracted");
+    }
+
+    // Build prompt preserving media type markers for the chat template.
+    prompt = BuildPrompt(*messages, template_tools, lease.oga_tokenizer(), /*preserve_media=*/true);
+
+    // Separate images and audios, load via OGA.
+    std::vector<const void*> image_ptrs;
+    std::vector<size_t> image_sizes;
+    std::vector<const void*> audio_ptrs;
+    std::vector<size_t> audio_sizes;
+
+    for (const auto& item : media_items) {
+      if (item.type == MediaItem::kImage) {
+        image_ptrs.push_back(item.data.data());
+        image_sizes.push_back(item.data.size());
+      } else {
+        audio_ptrs.push_back(item.data.data());
+        audio_sizes.push_back(item.data.size());
+      }
+    }
+
+    if (!image_ptrs.empty()) {
+      OgaImages* imgs_raw = nullptr;
+      runtime.Check(OgaLoadImagesFromBuffers(image_ptrs.data(), image_sizes.data(),
+                                             image_ptrs.size(), &imgs_raw),
+                    "load images from buffers");
+      mm_images = OgaImagesHandle(imgs_raw);
+    }
+    if (!audio_ptrs.empty()) {
+      OgaAudios* auds_raw = nullptr;
+      runtime.Check(OgaLoadAudiosFromBuffers(audio_ptrs.data(), audio_sizes.data(),
+                                             audio_ptrs.size(), &auds_raw),
+                    "load audios from buffers");
+      mm_audios = OgaAudiosHandle(auds_raw);
+    }
+
+    context.ThrowIfCancelled();
+
+    // Create multimodal processor and process prompt + media.
+    OgaMultiModalProcessor* proc_raw = nullptr;
+    runtime.Check(OgaCreateMultiModalProcessor(lease.oga_model(), &proc_raw),
+                  "create multimodal processor");
+    mm_processor = OgaMultiModalProcessorHandle(proc_raw);
+
+    OgaNamedTensors* tensors_raw = nullptr;
+    runtime.Check(OgaProcessorProcessImagesAndAudios(mm_processor.get(), prompt.c_str(),
+                                                     mm_images.get(), mm_audios.get(),
+                                                     &tensors_raw),
+                  "process multimodal inputs");
+    mm_tensors = OgaNamedTensorsHandle(tensors_raw);
+  } else {
+    // Text-only prompt.
+    prompt = BuildPrompt(*messages, template_tools, lease.oga_tokenizer());
+  }
+
   context.ReportProgress(0.0f, "generating");
-  nlohmann::json result = Generate(prompt, gen_options, lease, context);
+  nlohmann::json result = Generate(prompt, gen_options, template_tools, lease, context,
+                                   mm_tensors.get(), mm_processor.get());
   context.ReportProgress(100.0f, "generating");
 
   if (keep_history_) {
@@ -538,15 +1023,17 @@ nlohmann::json Session::SubmitToolResults(const nlohmann::json& tool_results, Jo
     std::lock_guard<std::mutex> lock(mutex_);
     current_tools = tool_definitions_;
   }
+  const nlohmann::json template_tools = NormalizeToolsForTemplate(current_tools);
 
   // Acquire inference lease.
   Model::InferenceLease lease = model_->AcquireInferenceLease();
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
 
   // Re-build prompt including full history and the tool result messages.
-  const std::string prompt = BuildPrompt(tool_messages, current_tools, lease.oga_tokenizer());
+  const std::string prompt = BuildPrompt(tool_messages, template_tools, lease.oga_tokenizer());
 
   context.ReportProgress(0.0f, "generating");
-  nlohmann::json result = Generate(prompt, nlohmann::json::object(), lease, context);
+  nlohmann::json result = Generate(prompt, nlohmann::json::object(), template_tools, lease, context);
   context.ReportProgress(100.0f, "generating");
 
   if (keep_history_) {
@@ -559,7 +1046,11 @@ nlohmann::json Session::SubmitToolResults(const nlohmann::json& tool_results, Jo
                           ? entry["result"].get<std::string>()
                           : entry.value("result", nlohmann::json::object()).dump()}});
     }
-    history_.push_back(nlohmann::json{{"role", "assistant"}, {"content", result.value("text", std::string())}});
+    nlohmann::json assistant{{"role", "assistant"}, {"content", result.value("text", std::string())}};
+    if (result.contains("tool_calls")) {
+      assistant["tool_calls"] = result["tool_calls"];
+    }
+    history_.push_back(std::move(assistant));
   }
 
   return result;
@@ -645,6 +1136,8 @@ nlohmann::json Session::TranscribeBatch(const nlohmann::json& request, JobContex
 
   const std::string language = request.value("language", std::string());
   const bool translate = request.value("translate", false);
+  Model::InferenceLease lease = model_->AcquireInferenceLease();
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
 
   // --- Load audio ---
   OgaAudiosHandle audios;
@@ -687,7 +1180,6 @@ nlohmann::json Session::TranscribeBatch(const nlohmann::json& request, JobContex
   context.ThrowIfCancelled();
 
   // --- Create multimodal processor ---
-  Model::InferenceLease lease = model_->AcquireInferenceLease();
   OgaMultiModalProcessor* processor_raw = nullptr;
   runtime.Check(OgaCreateMultiModalProcessor(lease.oga_model(), &processor_raw),
                 "create multimodal processor for audio");
@@ -854,6 +1346,7 @@ nlohmann::json Session::TranscribeStreaming(const nlohmann::json& request, JobCo
   const Runtime& runtime = Runtime::Instance();
 
   Model::InferenceLease lease = model_->AcquireInferenceLease();
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
 
   // Reset the audio queue state for a new streaming session.
   {
@@ -1107,6 +1600,7 @@ nlohmann::json Session::Embed(const nlohmann::json& request, JobContext& context
 
   std::lock_guard<std::mutex> request_lock(request_mutex_);
   Model::InferenceLease lease = model_->AcquireInferenceLease();
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
   const Runtime& runtime = Runtime::Instance();
 
   std::string output_name = "hidden_states";

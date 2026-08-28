@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -41,6 +42,12 @@ class Runtime {
   /// Same, but returns a status code instead of throwing. For destructors.
   flm_status CheckNoThrow(OgaResult* result) const noexcept;
 
+  /// OGA's C API is not thread-safe. Hold this lease across each complete model or
+  /// inference operation, not just individual calls, so object state cannot interleave.
+  std::unique_lock<std::mutex> AcquireOperationLease() const {
+    return std::unique_lock<std::mutex>(operation_mutex_);
+  }
+
   /// Increment/decrement the live-object count. OgaShutdown is deferred until all
   /// objects are destroyed and the Runtime itself is destroyed.
   void AddRef() const noexcept { live_objects_.fetch_add(1, std::memory_order_relaxed); }
@@ -55,6 +62,7 @@ class Runtime {
 
   std::string version_;
   mutable std::atomic<int64_t> live_objects_{0};
+  mutable std::mutex operation_mutex_;
 };
 
 /// RAII guard for any Oga* handle that has a matching OgaDestroy* function.
@@ -113,6 +121,7 @@ using OgaGeneratorParamsHandle = OgaHandle<OgaGeneratorParams, OgaDestroyGenerat
 using OgaGeneratorHandle = OgaHandle<OgaGenerator, OgaDestroyGenerator>;
 using OgaMultiModalProcessorHandle = OgaHandle<OgaMultiModalProcessor, OgaDestroyMultiModalProcessor>;
 using OgaTensorHandle = OgaHandle<OgaTensor, OgaDestroyTensor>;
+using OgaImagesHandle = OgaHandle<OgaImages, OgaDestroyImages>;
 using OgaAudiosHandle = OgaHandle<OgaAudios, OgaDestroyAudios>;
 using OgaNamedTensorsHandle = OgaHandle<OgaNamedTensors, OgaDestroyNamedTensors>;
 using OgaStringArrayHandle = OgaHandle<OgaStringArray, OgaDestroyStringArray>;

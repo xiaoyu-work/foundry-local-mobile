@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -64,12 +65,19 @@ class Session {
  private:
   /// Build a chat-template prompt from OpenAI-shaped messages + optional tool definitions.
   /// Includes full accumulated conversation history to provide context for the fresh OGA generator.
+  /// When `preserve_media` is true, image/audio content parts are kept as type-only markers
+  /// so the chat template can insert the correct multimodal placeholders.
   std::string BuildPrompt(const nlohmann::json& messages, const nlohmann::json& tools,
-                          OgaTokenizer* tokenizer);
+                          OgaTokenizer* tokenizer, bool preserve_media = false);
 
-  /// Run the token generation loop, streaming deltas.
+  /// Run the token generation loop with integrated tool-call and reasoning parsing.
+  /// When `mm_inputs` and `mm_processor` are non-null, the generator is seeded via
+  /// OgaGenerator_SetInputs (multimodal path) instead of token encoding.
   nlohmann::json Generate(const std::string& prompt, const nlohmann::json& gen_options,
-                          Model::InferenceLease& lease, JobContext& context);
+                          const nlohmann::json& tool_defs,
+                          Model::InferenceLease& lease, JobContext& context,
+                          OgaNamedTensors* mm_inputs = nullptr,
+                          OgaMultiModalProcessor* mm_processor = nullptr);
 
   // -- Audio helpers --
 
@@ -97,6 +105,7 @@ class Session {
 
   /// Registered tool definitions for chat template rendering.
   nlohmann::json tool_definitions_ = nlohmann::json::array();
+  uint64_t next_tool_call_id_ = 0;
 
   /// Serialises requests; the OGA generator is not reentrant.
   std::mutex request_mutex_;

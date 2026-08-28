@@ -13,9 +13,8 @@ network required for inference. The plugin ships:
 - batch/streaming audio transcription and text embeddings,
 - OS-level lifecycle bridging (memory pressure, thermal, connectivity).
 
-Audio and embedding paths still require compatible-model and physical-device
-validation. Multimodal chat input and structured tool-call event parsing remain
-incomplete.
+Audio, embedding, multimodal and structured tool-call paths still require
+compatible-model and physical-device validation.
 
 ## Requirements
 

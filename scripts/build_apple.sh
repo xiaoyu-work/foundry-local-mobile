@@ -157,6 +157,11 @@ build_slice() {
         # which fails even though the real library will build cleanly.
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
     )
+    if [[ "${slice_id}" == ios-* ]]; then
+        cmake_args+=(-DIOS=ON)
+    else
+        cmake_args+=(-DIOS=OFF)
+    fi
     # Same reason as log(): keep the configure and build chatter off the
     # stdout this function returns a path on.
     cmake "${cmake_args[@]}" >&2

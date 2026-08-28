@@ -96,10 +96,10 @@ Implemented and exercised: `flm_manager_load_model_async` / `flm_model_load_asyn
 Also implemented directly over OGA: batch audio transcription, queued 16-kHz mono PCM
 streaming transcription, and embeddings from a configurable tensor output. These paths
 compile but still need compatible-model and physical-device E2E coverage.
-`flm_session_submit_tool_results_async` runs, but the core does not parse a model's raw
-output into structured tool calls, so
-`FLM_FINISH_TOOL_CALLS` is never produced and no `FLM_DELTA_TOOL_CALL` event is emitted
-today.
+Multimodal chat uses OGA's image/audio processors for media in the latest user message.
+Tool and reasoning special-token IDs drive streaming state machines that emit
+`FLM_DELTA_TOOL_CALL` and `FLM_DELTA_REASONING`; these model-dependent paths still need
+compatible-model and physical-device E2E coverage.
 
 ## Layer 3 — Platform bridges
 

@@ -56,38 +56,3 @@ target_link_libraries(foundry_local_mobile_jni PRIVATE
     ${ANDROID_LOG_LIB}
     ${ANDROID_LIB}
 )
-
-# --------------------------------------------------------------------------
-# Package OGA and ORT shared libraries into jniLibs so Gradle ships them in
-# the AAR. AGP only auto-packages libraries that are direct CMake targets or
-# live under src/main/jniLibs. The nested OGA subdirectory build produces
-# libonnxruntime-genai.so as a CMake target, and ORT's libonnxruntime.so is
-# downloaded by cmake/ortlib.cmake into the build tree. We copy both into the
-# CMake output directory so AGP's jniLibs scanner picks them up alongside
-# libfoundry_local_mobile.so and libfoundry_local_mobile_jni.so.
-# --------------------------------------------------------------------------
-
-# libonnxruntime-genai.so — produced by the OGA add_subdirectory.
-if(TARGET onnxruntime-genai)
-    add_custom_command(TARGET foundry_local_mobile_jni POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:onnxruntime-genai>
-            $<TARGET_FILE_DIR:foundry_local_mobile_jni>/$<TARGET_FILE_NAME:onnxruntime-genai>
-        COMMENT "Copying libonnxruntime-genai.so for AAR packaging"
-    )
-endif()
-
-# libonnxruntime.so — fetched by OGA's cmake/ortlib.cmake. ORT_LIB_DIR is set
-# in the OGA child scope; ONNXRUNTIME_LIB_DIR is set there too. Both are
-# propagated as cache variables, and also available at the parent scope via the
-# OGA build. Use a post-build find-and-copy since the exact path depends on
-# whether ORT_HOME was provided or ORT was auto-downloaded.
-add_custom_command(TARGET foundry_local_mobile_jni POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC_DIR=${CMAKE_BINARY_DIR}
-        -DDST_DIR=$<TARGET_FILE_DIR:foundry_local_mobile_jni>
-        -DLIB_NAME=libonnxruntime.so
-        -DABI=${ANDROID_ABI}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/copy_runtime_lib.cmake
-    COMMENT "Copying libonnxruntime.so for AAR packaging"
-)

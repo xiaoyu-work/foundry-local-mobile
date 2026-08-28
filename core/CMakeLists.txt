@@ -10,10 +10,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Hide everything that is not explicitly exported. The ABI surface is small and
-# deliberate, and on Android a leaked symbol can collide with an app's own ONNX Runtime.
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # --------------------------------------------------------------------------
@@ -150,6 +146,11 @@ endif()
 
 add_library(foundry_local_mobile::foundry_local_mobile ALIAS foundry_local_mobile)
 
+set_target_properties(foundry_local_mobile PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+
 target_include_directories(foundry_local_mobile
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -182,6 +183,30 @@ endif()
 if(ANDROID)
     target_link_libraries(foundry_local_mobile PRIVATE log dl)
     target_link_options(foundry_local_mobile PRIVATE "-Wl,-z,max-page-size=16384")
+
+    # OGA links ONNX Runtime dynamically on Android. Copy the matching ABI runtime
+    # next to this target so AGP packages a complete set of shared libraries.
+    if(TARGET onnxruntime-genai)
+        get_target_property(_oga_link_dirs onnxruntime-genai LINK_DIRECTORIES)
+        set(_ort_android_runtime "")
+        foreach(_dir IN LISTS _oga_link_dirs)
+            if(EXISTS "${_dir}/libonnxruntime.so")
+                set(_ort_android_runtime "${_dir}/libonnxruntime.so")
+                break()
+            endif()
+        endforeach()
+        if(NOT _ort_android_runtime)
+            message(FATAL_ERROR
+                "The source-built OGA target does not expose its Android libonnxruntime.so. "
+                "Pass a matching ORT_HOME or use the pinned staged OGA source.")
+        endif()
+        add_custom_command(TARGET foundry_local_mobile POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_ort_android_runtime}"
+                "$<TARGET_FILE_DIR:foundry_local_mobile>/libonnxruntime.so"
+            COMMENT "Copying libonnxruntime.so next to Foundry Local Mobile"
+        )
+    endif()
 elseif(APPLE)
     target_link_libraries(foundry_local_mobile PRIVATE "-framework Foundation")
     set_target_properties(foundry_local_mobile PROPERTIES

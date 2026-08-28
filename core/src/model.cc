@@ -194,6 +194,7 @@ nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
   }
 
   std::unique_lock<std::mutex> oga_lock(oga_mutex_);
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -324,6 +325,7 @@ nlohmann::json Model::Reload(JobContext& context) {
 
 void Model::Unload() {
   std::unique_lock<std::mutex> oga_lock(oga_mutex_);
+  auto runtime_lease = Runtime::Instance().AcquireOperationLease();
   std::lock_guard<std::mutex> lock(mutex_);
   if (!loaded_) {
     return;
