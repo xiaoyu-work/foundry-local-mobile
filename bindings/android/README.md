@@ -11,9 +11,9 @@ Native bindings sit on, exposed as `suspend` functions and `Flow`s.
 - **ABIs**: `arm64-v8a`, `armeabi-v7a`, `x86_64`
 - **Runtime**: ONNX Runtime GenAI, linked directly into the native core and
   loaded at process start via `System.loadLibrary`
-- **Working today**: text chat, streaming completions, multi-turn history.
-  Audio transcription, embeddings, multimodal inputs and structured tool-call
-  events are not yet implemented and return an error from the native core.
+- **Implemented**: text chat, streaming completions, multi-turn history, audio
+  transcription, embeddings, multimodal inputs, and structured tool/reasoning
+  deltas. The latter capabilities still need compatible-model device E2E coverage.
 
 ## Install
 

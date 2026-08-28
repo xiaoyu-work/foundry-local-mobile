@@ -6,7 +6,7 @@ import 'dart:ffi';
 import 'bindings.dart' as raw;
 import 'native_library.dart';
 
-/// Adapter layer over the tiny C shim in `src/flm_dart_bridge.c`.
+/// Adapter layer over the tiny C shim embedded in the native core.
 ///
 /// The shim exists for two reasons:
 ///

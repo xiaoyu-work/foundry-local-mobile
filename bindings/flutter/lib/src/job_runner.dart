@@ -194,7 +194,7 @@ class JobRunner {
     }
   }
 
-  // The C shim (`src/flm_dart_bridge.c`) has already deep-copied `ptr` and
+  // The native core's C shim has already deep-copied `ptr` and
   // the strings it points at onto the heap before this listener runs — see
   // the top-of-file comment on why (the raw core pointer would be freed by
   // the time this asynchronous listener body executes). We only need to

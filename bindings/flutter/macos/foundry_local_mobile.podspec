@@ -21,51 +21,24 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
   s.source           = { :path => '.' }
   s.source_files     = 'Classes/**/*'
 
-  core_root          = '../../../core'
-  bridge_root        = '../src'
-
-  s.preserve_paths   = [
-    "#{core_root}/**/*",
-    "#{bridge_root}/**/*"
-  ]
-
-  s.source_files    += [
-    "#{core_root}/src/**/*.{cc,cpp}",
-    "#{bridge_root}/*.{c,h}"
-  ]
-
-  s.exclude_files    = [
-    "#{core_root}/src/platform/device_profile_android.cc",
-    # Desktop-only path is fine on macOS; keep it. Only Android must be excluded.
-  ]
-
-  s.public_header_files = [
-    "#{core_root}/include/foundry_local_mobile/*.h",
-    "#{bridge_root}/*.h"
-  ]
-
   s.dependency 'FlutterMacOS'
-  s.frameworks       = 'Foundation'
+  s.frameworks       = ['Foundation', 'CoreML', 'CoreGraphics', 'ImageIO']
+  s.libraries        = 'c++'
 
   # The core links against ONNX Runtime GenAI at runtime. Vendor the
   # XCFrameworks built by `scripts/build_apple.sh --macos`.
+  framework_root = File.directory?(File.join(__dir__, "Frameworks")) \
+    ? "Frameworks" \
+    : "../../ios/Frameworks"
   s.vendored_frameworks = [
-    '../../../bindings/ios/Frameworks/FoundryLocalMobile.xcframework',
-    '../../../bindings/ios/Frameworks/onnxruntime-genai.xcframework',
+    "#{framework_root}/FoundryLocalMobile.xcframework",
+    "#{framework_root}/onnxruntime-genai.xcframework",
   ]
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++20',
     'CLANG_CXX_LIBRARY' => 'libc++',
-    'HEADER_SEARCH_PATHS' => [
-      '"${PODS_TARGET_SRCROOT}/../../../core/include"',
-      '"${PODS_TARGET_SRCROOT}/../../../core/src"',
-      '"${PODS_TARGET_SRCROOT}/../../../core/third_party/nlohmann/include"',
-      '"${PODS_TARGET_SRCROOT}/../../../third_party/onnxruntime-genai/src"',
-      '"${PODS_TARGET_SRCROOT}/../src"'
-    ].join(' '),
-    'GCC_PREPROCESSOR_DEFINITIONS' => 'FLM_STATIC=1',
     'STRIP_INSTALLED_PRODUCT' => 'NO'
   }
 end

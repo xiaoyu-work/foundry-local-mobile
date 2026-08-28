@@ -70,9 +70,12 @@ jobs:
         if: hashFiles('bindings/android/gradlew') != ''
         run: |
           cd bindings/android
-          ./gradlew --no-daemon --console=plain assembleRelease
+          ./gradlew --no-daemon --console=plain \
+            assembleRelease publishReleasePublicationToReleaseBundleRepository
           cp build/outputs/aar/foundry-local-mobile-release.aar \
              "${GITHUB_WORKSPACE}/foundry-local-mobile-android.aar"
+          cd build/maven-repository
+          zip -r "${GITHUB_WORKSPACE}/foundry-local-mobile-maven-repository.zip" .
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -81,6 +84,7 @@ jobs:
           path: |
             foundry-local-mobile-android-jniLibs.zip
             foundry-local-mobile-android.aar
+            foundry-local-mobile-maven-repository.zip
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -97,7 +101,7 @@ jobs:
         run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
       - name: Build XCFramework
-        run: ./scripts/build_apple.sh --build-type Release
+        run: ./scripts/build_apple.sh --build-type Release --macos
 
       - name: Zip XCFrameworks
         # Bare `zip` preserves symlinks inside the XCFramework, which
@@ -109,11 +113,25 @@ jobs:
             FoundryLocalMobile.xcframework \
             onnxruntime-genai.xcframework
 
+      - name: Package Swift SDK
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/FoundryLocal"
+          mkdir -p "${stage}/Frameworks"
+          cp bindings/ios/Package.swift bindings/ios/README.md LICENSE "${stage}/"
+          cp -R bindings/ios/Sources "${stage}/"
+          cp -R build/apple/FoundryLocalMobile.xcframework "${stage}/Frameworks/"
+          cp -R build/apple/onnxruntime-genai.xcframework "${stage}/Frameworks/"
+          cd "${RUNNER_TEMP}"
+          zip -ry "${GITHUB_WORKSPACE}/foundry-local-mobile-swift-sdk.zip" FoundryLocal
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: apple
-          path: foundry-local-mobile-apple-xcframework.zip
+          path: |
+            foundry-local-mobile-apple-xcframework.zip
+            foundry-local-mobile-swift-sdk.zip
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -123,6 +141,7 @@ jobs:
   # ---------------------------------------------------------------------------
   flutter:
     name: flutter package
+    needs: [android, apple]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +159,39 @@ jobs:
       - name: Set up Dart
         if: steps.probe.outputs.present == 'true'
         uses: dart-lang/setup-dart@v1
+
+      - name: Download Android SDK
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: ${{ runner.temp }}/android-sdk
+
+      - name: Download Apple SDK
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: apple
+          path: ${{ runner.temp }}/apple-sdk
+
+      - name: Stage native runtimes
+        if: steps.probe.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p bindings/flutter/android/libs \
+                   bindings/flutter/ios/Frameworks \
+                   bindings/flutter/macos/Frameworks
+          cp "${RUNNER_TEMP}/android-sdk/foundry-local-mobile-android.aar" \
+             bindings/flutter/android/libs/foundry-local-mobile.aar
+          mkdir -p "${RUNNER_TEMP}/apple-unpacked"
+          unzip -q "${RUNNER_TEMP}/apple-sdk/foundry-local-mobile-apple-xcframework.zip" \
+            -d "${RUNNER_TEMP}/apple-unpacked"
+          for platform in ios macos; do
+            cp -R "${RUNNER_TEMP}/apple-unpacked/FoundryLocalMobile.xcframework" \
+              "bindings/flutter/${platform}/Frameworks/"
+            cp -R "${RUNNER_TEMP}/apple-unpacked/onnxruntime-genai.xcframework" \
+              "bindings/flutter/${platform}/Frameworks/"
+          done
 
       - name: Package Flutter plugin
         if: steps.probe.outputs.present == 'true'
@@ -165,6 +217,7 @@ jobs:
   # ---------------------------------------------------------------------------
   react-native:
     name: react-native package
+    needs: [android, apple]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -184,6 +237,39 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Download Android SDK
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: ${{ runner.temp }}/android-sdk
+
+      - name: Download Apple SDK
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: apple
+          path: ${{ runner.temp }}/apple-sdk
+
+      - name: Stage native runtimes and Swift SDK
+        if: steps.probe.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p bindings/react-native/android/libs \
+                   bindings/react-native/ios/Frameworks \
+                   bindings/react-native/ios/FoundryLocal
+          cp "${RUNNER_TEMP}/android-sdk/foundry-local-mobile-android.aar" \
+             bindings/react-native/android/libs/foundry-local-mobile.aar
+          cp -R bindings/ios/Sources/FoundryLocal/. \
+             bindings/react-native/ios/FoundryLocal/
+          mkdir -p "${RUNNER_TEMP}/apple-unpacked"
+          unzip -q "${RUNNER_TEMP}/apple-sdk/foundry-local-mobile-apple-xcframework.zip" \
+            -d "${RUNNER_TEMP}/apple-unpacked"
+          cp -R "${RUNNER_TEMP}/apple-unpacked/FoundryLocalMobile.xcframework" \
+            bindings/react-native/ios/Frameworks/
+          cp -R "${RUNNER_TEMP}/apple-unpacked/onnxruntime-genai.xcframework" \
+            bindings/react-native/ios/Frameworks/
 
       - name: Pack
         if: steps.probe.outputs.present == 'true'

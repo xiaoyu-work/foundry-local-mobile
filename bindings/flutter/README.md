@@ -34,7 +34,8 @@ dependencies:
 ```
 
 Nothing else needs to be added on Android or iOS — the plugin builds the native
-core from source and the FFI binding is registered automatically.
+artifacts and registers the FFI binding automatically. Published packages contain
+the Android AAR plus the Apple core and ONNX Runtime GenAI XCFrameworks.
 
 ## Quickstart
 
@@ -108,7 +109,7 @@ calling thread.
 
 Two ABI callbacks return `int32_t` (`flm_progress_callback`,
 `flm_delta_callback`). `NativeCallable.listener` supports only void callbacks.
-To bridge the gap the plugin ships a tiny C shim (`src/flm_dart_bridge.c`) whose
+To bridge the gap the native core ships a tiny C shim (`core/src/flm_dart_bridge.c`) whose
 functions match the ABI signature, forward to a stored void listener and return
 zero. Cancellation flows through `flm_job_cancel`, so a synchronous return
 value from the listener is never needed.
@@ -137,12 +138,13 @@ Highlights:
 - `Model` — one loaded model (`load`, `unload`, `getInfo`, `path`, session
   creation, `dispose`).
 - `ChatSession` — `complete`, `completeStreaming`, `submitToolResults`,
-  history export/restore. Text streaming and multi-turn history are
-  implemented; structured tool-call event parsing is not complete yet.
-- `AudioSession` — batch file transcription and streaming microphone input.
-  Not yet implemented; calls return an error from the native core.
-- `EmbeddingSession` — single-batch text embeddings. Not yet implemented;
-  calls return an error from the native core.
+  history export/restore, multimodal content, and structured tool/reasoning
+  deltas.
+- `AudioSession` — batch file transcription and streaming PCM input.
+- `EmbeddingSession` — batch text embeddings.
+
+Audio, embedding, multimodal, and structured-event paths are implemented but
+still require compatible-model and physical-device E2E coverage.
 
 ## License
 

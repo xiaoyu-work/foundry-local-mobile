@@ -25,7 +25,7 @@ class NativeLibrary {
   static NativeLibrary? _instance;
 
   /// The raw DynamicLibrary. Exposed so the shim adapter layer can look up the
-  /// `flm_dart_bridge_*` trampolines from `src/flm_dart_bridge.c`.
+  /// `flm_dart_bridge_*` trampolines embedded in the native core.
   final DynamicLibrary dylib;
 
   /// Handle onto the raw FFI bindings. Never null after [instance] has been read.

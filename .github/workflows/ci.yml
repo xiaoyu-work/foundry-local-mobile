@@ -119,7 +119,7 @@ jobs:
         run: |
           so=build/linux/libfoundry_local_mobile.so
 
-          expected=$(grep -c '^FLM_EXPORT' core/include/foundry_local_mobile/flm_api.h)
+          expected=$(grep -h '^FLM_EXPORT' core/include/foundry_local_mobile/*.h | wc -l)
           actual=$(nm -D --defined-only "$so" | awk '$NF ~ /^flm_/' | wc -l)
           echo "FLM_EXPORT declarations in flm_api.h: ${expected}"
           echo "Exported flm_* symbols in $(basename "$so"): ${actual}"
@@ -238,7 +238,7 @@ jobs:
               exit 1
           fi
 
-          expected=$(grep -c '^FLM_EXPORT' core/include/foundry_local_mobile/flm_api.h)
+          expected=$(grep -h '^FLM_EXPORT' core/include/foundry_local_mobile/*.h | wc -l)
           actual=$("${nm}" -D --defined-only "${so}" | awk '$NF ~ /^flm_/' | wc -l)
           leaks=$("${nm}" -D --defined-only "${so}" | awk '{print $NF}' | grep -Ev '^flm_' || true)
           echo "FLM_EXPORT declarations: ${expected}; flm_* symbols in ${abi}: ${actual}"

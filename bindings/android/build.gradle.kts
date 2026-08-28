@@ -122,4 +122,11 @@ publishing {
             }
         }
     }
+
+    repositories {
+        maven {
+            name = "releaseBundle"
+            url = uri(layout.buildDirectory.dir("maven-repository"))
+        }
+    }
 }

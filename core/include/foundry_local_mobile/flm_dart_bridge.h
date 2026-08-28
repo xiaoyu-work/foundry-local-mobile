@@ -29,8 +29,8 @@
 
 #include <stdint.h>
 
-#include "foundry_local_mobile/flm_export.h"
-#include "foundry_local_mobile/flm_types.h"
+#include "flm_export.h"
+#include "flm_types.h"
 
 #ifdef __cplusplus
 extern "C" {

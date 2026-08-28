@@ -24,6 +24,7 @@ apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
 apply plugin: 'com.facebook.react'
 
 def isNewArchEnabled = rootProject.hasProperty('newArchEnabled') && rootProject.getProperty('newArchEnabled') == 'true'
+def bundledSdkAar = file('libs/foundry-local-mobile.aar')
 
 android {
     namespace 'com.foundrylocal.reactnative'
@@ -83,7 +84,11 @@ dependencies {
     // module lives in the same repo as the Kotlin binding (as here), consumers
     // can substitute the coordinate for a Gradle project dependency via
     // `dependencySubstitution`.
-    implementation 'com.microsoft.ai.foundry.local:foundry-local-mobile:0.2.0'
+    if (bundledSdkAar.exists()) {
+        implementation files(bundledSdkAar)
+    } else {
+        implementation 'com.microsoft.ai.foundry.local:foundry-local-mobile:0.2.0'
+    }
 
     // Coroutines — used to bridge the binding's `suspend`/`Flow` API to
     // TurboModule promises and event streams.

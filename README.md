@@ -52,8 +52,9 @@ chat.completeStreaming("What is the golden ratio?").collect { delta -> print(del
 
 All four bindings expose the same path-first `loadModel(path, executionProvider,
 providerOptions)` shape and sit on the same native core, so behaviour is identical across
-platforms. Release packaging and on-device validation are at different stages of
-readiness per binding — see [Current maturity](#current-maturity) below.
+platforms. Self-contained release bundles are implemented for every binding;
+physical-device validation is still pending — see [Current maturity](#current-maturity)
+below.
 
 ## Model directory requirements
 
@@ -115,7 +116,7 @@ Be precise about what is proven and what is not:
 | Structured tool-call and reasoning deltas | Implemented for models exposing OGA BOT/EOT and BOR/EOR special-token IDs; compatible-model E2E pending |
 | Android build | Compiles for `arm64-v8a`, `armeabi-v7a`, `x86_64`; on-device E2E not yet proven |
 | iOS build | Compiles against the C ABI; on-device E2E not yet proven |
-| Flutter / React Native | Path-first API surface present; release packaging and device validation in progress |
+| Flutter / React Native | Self-contained Android/Apple release packaging implemented; device validation pending |
 
 There is no catalog, no remote model download, no transport layer, and no SDK-managed
 cache deletion anywhere in this SDK — those concerns belong entirely to your app.
@@ -237,8 +238,8 @@ docs/                 Architecture, model directory requirements, platform notes
   implemented but still need compatible-model and physical-device E2E coverage.
 - Android and iOS on-device (physical hardware) end-to-end validation is not yet proven;
   today's proof point is a Windows E2E run against the OGA `qwen3-5` fixture model.
-- Flutter and React Native release packaging and device validation may still be in
-  progress even though their path-first APIs are present.
+- Flutter and React Native ship self-contained Android and Apple native artifacts;
+  physical-device validation is still pending.
 
 ## License
 

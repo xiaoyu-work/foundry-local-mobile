@@ -26,6 +26,8 @@ rootProject.allprojects {
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
+def bundledSdkAar = file('libs/foundry-local-mobile.aar')
+
 android {
     // The Android namespace is required by AGP 7+.
     if (project.android.hasProperty("namespace")) {
@@ -48,12 +50,14 @@ android {
         // not viable because the runtime uses APIs added in Lollipop.
         minSdk 21
 
-        externalNativeBuild {
-            cmake {
-                cppFlags '-std=c++20', '-fvisibility=hidden'
-                arguments '-DANDROID_STL=c++_shared'
-                arguments '-DFLM_BUILD_SHARED=ON'
-                targets 'foundry_local_mobile'
+        if (!bundledSdkAar.exists()) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags '-std=c++20', '-fvisibility=hidden'
+                    arguments '-DANDROID_STL=c++_shared'
+                    arguments '-DFLM_BUILD_SHARED=ON'
+                    targets 'foundry_local_mobile'
+                }
             }
         }
 
@@ -64,10 +68,12 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path 'CMakeLists.txt'
-            version '3.31.6'
+    if (!bundledSdkAar.exists()) {
+        externalNativeBuild {
+            cmake {
+                path 'CMakeLists.txt'
+                version '3.31.6'
+            }
         }
     }
 
@@ -90,4 +96,7 @@ android {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    if (bundledSdkAar.exists()) {
+        implementation files(bundledSdkAar)
+    }
 }

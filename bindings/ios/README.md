@@ -37,6 +37,7 @@ for try await delta in chat.completeStreaming("Explain vector databases in one l
 ```bash
 ./scripts/build_apple.sh
 cp -R build/apple/FoundryLocalMobile.xcframework bindings/ios/Frameworks/
+cp -R build/apple/onnxruntime-genai.xcframework bindings/ios/Frameworks/
 ```
 
 ## Lifecycle wiring

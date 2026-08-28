@@ -13,7 +13,7 @@
 
 #import <Foundation/Foundation.h>
 #include "foundry_local_mobile/flm_api.h"
-#include "flm_dart_bridge.h"
+#include "foundry_local_mobile/flm_dart_bridge.h"
 
 __attribute__((visibility("default")))
 void* FoundryLocalMobile_KeepSymbols(int index) {

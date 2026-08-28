@@ -203,6 +203,7 @@ framework module ${FRAMEWORK_NAME} {
     umbrella header "foundry_local_mobile/flm_api.h"
     header "foundry_local_mobile/flm_types.h"
     header "foundry_local_mobile/flm_export.h"
+    header "foundry_local_mobile/flm_dart_bridge.h"
     export *
     module * { export * }
 }

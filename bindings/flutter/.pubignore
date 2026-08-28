@@ -1,0 +1,8 @@
+.dart_tool/
+build/
+example/build/
+pubspec.lock
+**/.gradle/
+**/.cxx/
+**/Pods/
+**/DerivedData/

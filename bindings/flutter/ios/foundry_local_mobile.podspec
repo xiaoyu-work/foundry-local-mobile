@@ -28,42 +28,20 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
   # Swift + ObjC++ plugin sources.
   s.source_files     = 'Classes/**/*'
 
-  # C++ core sources — kept as a monorepo relative reference; the .podspec is
-  # consumed from bindings/flutter/ios, so ../../.. is the repo root.
-  core_root          = '../../../core'
-  bridge_root        = '../src'
-
-  s.preserve_paths   = [
-    "#{core_root}/**/*",
-    "#{bridge_root}/**/*"
-  ]
-
-  s.source_files    += [
-    "#{core_root}/src/**/*.{cc,cpp}",
-    "#{core_root}/src/platform/device_profile_apple.cc",
-    "#{bridge_root}/*.{c,h}"
-  ]
-
-  s.exclude_files    = [
-    "#{core_root}/src/platform/device_profile_android.cc",
-    "#{core_root}/src/platform/device_profile_desktop.cc"
-  ]
-
-  s.public_header_files = [
-    "#{core_root}/include/foundry_local_mobile/*.h",
-    "#{bridge_root}/*.h"
-  ]
-
   s.dependency 'Flutter'
-  s.frameworks       = 'Foundation'
+  s.frameworks       = ['Foundation', 'CoreML', 'CoreGraphics', 'ImageIO']
+  s.libraries        = 'c++'
 
   # The core links against ONNX Runtime GenAI at runtime. Vendor both
   # XCFrameworks built by `scripts/build_apple.sh` so the dynamic linker
   # can resolve them. The same frameworks are referenced by the Swift
   # Package and React Native pod.
+  framework_root = File.directory?(File.join(__dir__, "Frameworks")) \
+    ? "Frameworks" \
+    : "../../ios/Frameworks"
   s.vendored_frameworks = [
-    '../../../bindings/ios/Frameworks/FoundryLocalMobile.xcframework',
-    '../../../bindings/ios/Frameworks/onnxruntime-genai.xcframework',
+    "#{framework_root}/FoundryLocalMobile.xcframework",
+    "#{framework_root}/onnxruntime-genai.xcframework",
   ]
 
   # nlohmann/json is a header-only dependency the C++ core relies on. The
@@ -73,17 +51,6 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
     'DEFINES_MODULE' => 'YES',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++20',
     'CLANG_CXX_LIBRARY' => 'libc++',
-    'HEADER_SEARCH_PATHS' => [
-      '"${PODS_TARGET_SRCROOT}/../../../core/include"',
-      '"${PODS_TARGET_SRCROOT}/../../../core/src"',
-      '"${PODS_TARGET_SRCROOT}/../../../core/third_party/nlohmann/include"',
-      '"${PODS_TARGET_SRCROOT}/../../../third_party/onnxruntime-genai/src"',
-      '"${PODS_TARGET_SRCROOT}/../src"'
-    ].join(' '),
-    'GCC_PREPROCESSOR_DEFINITIONS' => 'FLM_STATIC=1',
-    # Keep the C ABI symbols; the Objective-C++ export unit
-    # (FoundryLocalMobileExports.mm) is what actually stops the linker from
-    # dropping them.
     'STRIP_INSTALLED_PRODUCT' => 'NO'
   }
 end

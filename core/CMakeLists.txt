@@ -3,7 +3,7 @@
 
 cmake_minimum_required(VERSION 3.26)
 
-project(foundry_local_mobile VERSION 0.2.0 LANGUAGES CXX)
+project(foundry_local_mobile VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -126,6 +126,7 @@ set(FLM_SOURCES
     src/encoding.cc
     src/handle_table.cc
     src/job.cc
+    src/flm_dart_bridge.c
     src/runtime.cc
     src/device_profile.cc
     src/manager.cc

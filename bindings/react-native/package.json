@@ -7,6 +7,7 @@
   "files": [
     "src",
     "android/build.gradle",
+    "android/libs",
     "android/src",
     "ios",
     "FoundryLocal.podspec",

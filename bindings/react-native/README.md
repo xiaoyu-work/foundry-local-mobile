@@ -7,28 +7,23 @@ on-device LLM inference from JavaScript, backed by ONNX Runtime.
 
 | Platform | Status |
 | --- | --- |
-| Android | Wired. Wraps the `bindings/android/` Kotlin binding through a TurboModule. |
-| iOS | Wired against the Swift binding at `bindings/ios/Sources/FoundryLocal/`, unverified. The iOS TurboModule wraps the Swift binding so the JS surface is identical to Android's, but neither the Swift binding nor this wrapper has been compiled — no Swift toolchain has been run against them yet. Confidence is structural review only; the first `swift build` / `pod install` may surface build issues. |
+| Android | Self-contained AAR. Wraps the Kotlin SDK through a TurboModule. |
+| iOS | Self-contained Swift sources plus core and ONNX Runtime GenAI XCFrameworks. Physical-device E2E remains pending. |
 
-This package is **repo-local only** today. The podspec intentionally has no
-publishable `s.source` because it compiles the sibling Swift binding from
-`bindings/ios/Sources/FoundryLocal/`; a CocoaPods trunk release and a standalone
-npm package cannot honestly include that dependency until the Swift binding
-ships its own pod for this package to depend on.
+The published npm package contains the native Android and Apple artifacts it
+needs; consuming apps do not need a checkout of this repository.
 
 ## Installation
 
-Consume this package from a workspace or symlink inside a checkout of this
-repository, so CocoaPods resolves `FoundryLocal.podspec` at
-`bindings/react-native/` and can see the sibling `bindings/ios/` sources. Do
-not consume it from an npm tarball yet; `npm pack` is useful for auditing the
-package boundary, but that tarball is not a supported distribution artifact.
+```bash
+npm install @foundry-local/react-native
+```
 
 **Requirements**
 
 - React Native **≥ 0.73** with the **New Architecture** enabled (this package is a TurboModule; the legacy bridge is not supported).
-- Android **minSdk 26** (arm64-v8a and armeabi-v7a). NDK build is handled by the wrapped Kotlin binding — no `externalNativeBuild` block in your app is required.
-- iOS **15.0+** (the Swift binding uses `AsyncThrowingStream`). Before running `pod install`, build the C ABI XCFramework once by running `scripts/build_apple.sh` from the repo root — the podspec vendors `bindings/ios/Frameworks/FoundryLocalMobile.xcframework`, and the pod will not link without it.
+- Android **minSdk 26** (arm64-v8a, armeabi-v7a, and x86_64). The package contains the native AAR; no `externalNativeBuild` block is required in your app.
+- iOS **15.0+** (the Swift binding uses `AsyncThrowingStream`). CocoaPods links the two bundled XCFrameworks automatically.
 - Autolinking picks this package up automatically. If you have opted out of autolinking, register the module under `RNFoundryLocal`.
 
 Codegen configuration is declared in this package's `package.json` (`codegenConfig`); no additional Gradle setup is needed in your app.
@@ -55,9 +50,9 @@ The public exports are:
 
 - `FoundryLocal` — entry point (`create`, `loadModel`, `deviceProfile`, `updateSettings`, `setLogLevel`, `close`).
 - `Model` — a loaded model handle.
-- `ChatSession` — streaming (`completeStreaming`, `completeAllDeltas`) and non-streaming (`complete`, `submitToolResults`) completion. Text streaming and multi-turn history work today; structured tool-call event parsing is not complete — the native core does not yet detect or emit tool calls.
-- `AudioSession` — one-shot and streaming speech-to-text (`transcribe`, `transcribeStreaming`, `pushAudio`). **Not yet implemented**: these calls return an error from the native core.
-- `EmbeddingSession` — batch embeddings (`embed`). **Not yet implemented**: this call returns an error from the native core.
+- `ChatSession` — streaming (`completeStreaming`, `completeAllDeltas`) and non-streaming (`complete`, `submitToolResults`) completion, including multimodal input and structured tool/reasoning deltas.
+- `AudioSession` — one-shot and streaming speech-to-text (`transcribe`, `transcribeStreaming`, `pushAudio`).
+- `EmbeddingSession` — batch embeddings (`embed`).
 - `FoundryLocalError` — errors, with `code`, `status`, `detailJson`, `isRetryable`.
 
 Every long operation is a `Promise` or an `AsyncIterable`. Streams cancel through the standard `for await ... of` `break` path: breaking the loop calls `return()` on the iterator, which propagates through to `flm_job_cancel` on the native side. There is no separate `cancel()` method to call.
@@ -131,8 +126,8 @@ No bare `Error` reaches an app from the SDK.
 
 ## Architecture notes
 
-- **Android**: this package's TurboModule wraps the Kotlin binding at `bindings/android/`. It does not re-bind the C ABI; the module forwards JSON payloads and registry slot ids to the underlying binding.
-- **iOS**: this package's TurboModule wraps the Swift binding at `bindings/ios/Sources/FoundryLocal/`, mirroring Android's shape. `ios/RNFoundryLocalCore.swift` owns the handle registries and subscription table; `ios/RNFoundryLocal.mm` is a thin Objective-C++ `RCTEventEmitter` that exports the codegen'd selectors and forwards to Swift. Streaming maps `AsyncThrowingStream` to the same `FoundryLocal:*` event names the Android module uses, so the shared JS async-iterator layer is platform-agnostic. The podspec reaches into the sibling Swift binding source tree only for local-path consumption; it is not publishable until a `FoundryLocalKit.podspec` (or equivalent) ships.
+- **Android**: this package's TurboModule wraps the bundled Kotlin AAR. It does not re-bind the C ABI; the module forwards JSON payloads and registry slot ids to the underlying binding.
+- **iOS**: this package's TurboModule compiles its bundled Swift SDK sources. `ios/RNFoundryLocalCore.swift` owns the handle registries and subscription table; `ios/RNFoundryLocal.mm` is a thin Objective-C++ `RCTEventEmitter` that exports the codegen'd selectors and forwards to Swift. Streaming maps `AsyncThrowingStream` to the same `FoundryLocal:*` event names the Android module uses, so the shared JS async-iterator layer is platform-agnostic.
 - **Wire format**: everything richer than a primitive crosses the TurboModule boundary as a UTF-8 JSON string. The TypeScript layer parses/produces those strings, so the codegen'd spec stays small and the same JSON shape is used by iOS and Android.
 - **Handles**: all native handles are opaque `number`s (slot ids into a per-module registry). The `0` slot is reserved as the invalid-handle sentinel.
 
