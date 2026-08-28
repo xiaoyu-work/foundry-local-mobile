@@ -114,7 +114,7 @@ Be precise about what is proven and what is not:
 | Embeddings | Implemented for `hidden_states`-style outputs with float32, float16 and bfloat16 conversion; model E2E pending |
 | Multimodal chat input | Implemented for local-path or base64 image/audio content through OGA processors; real-model/device E2E pending |
 | Structured tool-call and reasoning deltas | Implemented for models exposing OGA BOT/EOT and BOR/EOR special-token IDs; compatible-model E2E pending |
-| Android build | Compiles for `arm64-v8a`, `armeabi-v7a`, `x86_64`; on-device E2E not yet proven |
+| Android build | Compiles for `arm64-v8a` and `x86_64`; on-device E2E not yet proven |
 | iOS build | Compiles against the C ABI; on-device E2E not yet proven |
 | Flutter / React Native | Self-contained Android/Apple release packaging implemented; device validation pending |
 
@@ -130,7 +130,7 @@ staged by `scripts/fetch_onnxruntime_genai.sh`.
 ```bash
 ./scripts/fetch_onnxruntime_genai.sh   # stage OGA source into third_party/
 ./scripts/build.sh linux               # native core, for local iteration
-./scripts/build.sh android             # arm64-v8a, armeabi-v7a, x86_64
+./scripts/build.sh android             # arm64-v8a, x86_64
 ./scripts/build.sh apple               # XCFramework (macOS host only)
 ```
 

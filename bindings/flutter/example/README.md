@@ -27,7 +27,7 @@ flutter build apk --debug
 ```
 
 The resulting APK ships `libfoundry_local_mobile.so` and `libc++_shared.so`
-for `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
+for `arm64-v8a` and `x86_64`.
 
 ## Consuming the plugin
 

@@ -20,7 +20,7 @@ Usage:
 Commands:
   fetch                 Stage the ONNX Runtime GenAI source (scripts/fetch_onnxruntime_genai.sh).
   android [target]      Build the core for Android ABIs (scripts/build_android.sh).
-                        Default target is 'all' (arm64-v8a + armeabi-v7a + x86_64).
+                        Default target is 'all' (arm64-v8a + x86_64).
                         A specific ABI (arm64-v8a, x86_64, ...) may be given
                         instead and is forwarded as --abi.
   android-binding       Assemble bindings/android as an AAR via Gradle.

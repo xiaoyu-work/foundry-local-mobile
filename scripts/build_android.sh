@@ -3,7 +3,6 @@
 #
 #   <output>/jniLibs/
 #     arm64-v8a/libfoundry_local_mobile.so
-#     armeabi-v7a/libfoundry_local_mobile.so
 #     x86_64/libfoundry_local_mobile.so
 #
 # which is the on-disk shape the Android binding's AAR consumes directly. The
@@ -17,7 +16,7 @@ SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-DEFAULT_ABIS=(arm64-v8a armeabi-v7a x86_64)
+DEFAULT_ABIS=(arm64-v8a x86_64)
 # API 26 == Android 8.0. Matches the min supported OS documented in the SDK.
 DEFAULT_PLATFORM=26
 DEFAULT_STL=c++_shared
@@ -145,8 +144,6 @@ is_release_type() {
 ndk_triple_for_abi() {
     case "$1" in
         arm64-v8a)   echo aarch64-linux-android ;;
-        armeabi-v7a) echo arm-linux-androideabi ;;
-        x86)         echo i686-linux-android ;;
         x86_64)      echo x86_64-linux-android ;;
         *)           echo "" ;;
     esac
@@ -174,7 +171,7 @@ ndk_lib_for_abi() {
 # Android 15+ on 64-bit devices refuses to map a shared object with 4 KB LOAD
 # segments, so this catches a silent regression of `-Wl,-z,max-page-size=16384`
 # — a linker flag that the linker itself will never complain about if it is
-# dropped or misspelled. armeabi-v7a is 32-bit and exempt.
+# dropped or misspelled.
 assert_16k_aligned_load_segments() {
     local abi="$1" so="$2"
     case "${abi}" in
@@ -319,8 +316,8 @@ build_one_abi() {
 
 for abi in "${ABIS[@]}"; do
     case "${abi}" in
-        arm64-v8a|armeabi-v7a|x86|x86_64) ;;
-        *) die "unsupported ABI '${abi}'. Expected one of: arm64-v8a armeabi-v7a x86 x86_64" ;;
+        arm64-v8a|x86_64) ;;
+        *) die "unsupported ABI '${abi}'. Expected one of: arm64-v8a x86_64" ;;
     esac
     build_one_abi "${abi}"
 done

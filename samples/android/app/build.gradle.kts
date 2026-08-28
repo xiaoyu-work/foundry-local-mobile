@@ -34,7 +34,7 @@ android {
         // ABI matcher rejects the app on an x86 device that has no matching
         // libfoundry_local_mobile.so.
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
 
         // Default model path from local.properties. Empty means the user

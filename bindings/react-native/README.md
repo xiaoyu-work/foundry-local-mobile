@@ -22,7 +22,7 @@ npm install @foundry-local/react-native
 **Requirements**
 
 - React Native **≥ 0.73** with the **New Architecture** enabled (this package is a TurboModule; the legacy bridge is not supported).
-- Android **minSdk 26** (arm64-v8a, armeabi-v7a, and x86_64). The package contains the native AAR; no `externalNativeBuild` block is required in your app.
+- Android **minSdk 26** (`arm64-v8a` and `x86_64`). The package contains the native AAR; no `externalNativeBuild` block is required in your app.
 - iOS **15.0+** (the Swift binding uses `AsyncThrowingStream`). CocoaPods links the two bundled XCFrameworks automatically.
 - Autolinking picks this package up automatically. If you have opted out of autolinking, register the module under `RNFoundryLocal`.
 

@@ -8,7 +8,7 @@ implements it.
 
 | Target | Min OS | ABIs | On-device EPs (platform-registered) | Accelerator |
 |---|---|---|---|---|
-| **Android** | 8.0 (API 26) | `arm64-v8a`, `armeabi-v7a`, `x86_64` | QNN *(if Hexagon DSP present)*, XNNPACK, CPU | Qualcomm Hexagon NPU |
+| **Android** | 8.0 (API 26) | `arm64-v8a`, `x86_64` | QNN *(if Hexagon DSP present)*, XNNPACK, CPU | Qualcomm Hexagon NPU |
 | **iOS / iPadOS** | 15.0 | `arm64` device; `arm64` + `x86_64` simulator | CoreML, XNNPACK, CPU | Apple Neural Engine (A12+) |
 | **macOS** *(developer target only)* | 12.0 | `arm64`, `x86_64` | CoreML *(Apple silicon)*, XNNPACK, CPU | ANE on Apple silicon |
 | **Linux / Windows** *(dev builds only)* | — | native | CPU | — |
@@ -54,11 +54,10 @@ Detected at compile time in `core/src/platform/device_profile_android.cc` and
 | ABI | Silicon | ANDROID_ABI |
 |---|---|---|
 | `arm64-v8a` | Every 64-bit ARM Android phone/tablet shipped since 2016 | `arm64-v8a` |
-| `armeabi-v7a` | 32-bit ARM devices; still relevant for entry-level phones | `armeabi-v7a` |
 | `x86_64` | Emulator + Chromebooks that expose an Android runtime | `x86_64` |
 
-`x86` (32-bit) is not produced. There is no viable inference target left on 32-bit
-x86 Android.
+The pinned OGA runtime supports only 64-bit Android targets. `armeabi-v7a` and
+`x86` are therefore not produced.
 
 If your own app builds an `x86` slice — Flutter's default template does, and some
 dependencies pull one in — the resulting APK will install on a 32-bit x86 image and
@@ -69,7 +68,7 @@ refusal, which is the worse of the two. Pin your ABI set to what the SDK ships:
 ```kotlin
 android {
     defaultConfig {
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 }
 ```
@@ -196,9 +195,6 @@ and risking an OS kill.
   XNNPACK and plain CPU.
 * **iOS simulator has no ANE.** CoreML-targeted models match by name but execute on the
   simulator's CPU. Test NPU code paths on device.
-* **`armeabi-v7a` targets are 32-bit and inherit its address-space cap.** Practical
-  ceiling ~2 GB per process on most vendors, less on some. Do not ship gigabyte-plus
-  models to this ABI.
 * **Windows and Linux are not shipping targets.** They compile so the core can be
   built and inspected on a developer's laptop and by CI. There is no packaging story
   for either, and thermal and low-power state are not detected there.

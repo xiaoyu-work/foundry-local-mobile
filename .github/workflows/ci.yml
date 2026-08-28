@@ -161,7 +161,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [arm64-v8a, armeabi-v7a, x86_64]
+        abi: [arm64-v8a, x86_64]
     steps:
       - uses: actions/checkout@v4
 
@@ -228,7 +228,6 @@ jobs:
 
           case "${abi}" in
               arm64-v8a)   want_machine="AArch64" ;;
-              armeabi-v7a) want_machine="ARM" ;;
               x86_64)      want_machine="Advanced Micro Devices X86-64" ;;
               *)           echo "::error::unknown abi ${abi}"; exit 1 ;;
           esac
@@ -281,7 +280,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Full Android Gradle binding: assembleRelease produces the AAR that ships
   # to app developers, and packages the core .so, the JNI wrapper .so, and
-  # libc++_shared.so for all three ABIs. Building it here is what stops the
+  # libc++_shared.so for both supported ABIs. Building it here is what stops the
   # 23-file Kotlin surface from silently regressing.
   #
   # The build also does a JNI symbol reconciliation: every 'external fun' the
@@ -357,15 +356,14 @@ jobs:
           latest_ndk="$(ls -1 "${ndk_root}" | sort -V | tail -n1)"
           nm="${ndk_root}/${latest_ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
 
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in arm64-v8a x86_64; do
             so="${workdir}/jni/${abi}/libfoundry_local_mobile_jni.so"
             "${nm}" -D --defined-only "${so}" \
               | awk '$2 == "T" && $3 ~ /^Java_/ { print $3 }' \
               | sort > "${workdir}/jni-${abi}.txt"
           done
           # Every ABI ships the same set of Java_* exports.
-          if ! diff -q "${workdir}/jni-arm64-v8a.txt" "${workdir}/jni-armeabi-v7a.txt" \
-             || ! diff -q "${workdir}/jni-arm64-v8a.txt" "${workdir}/jni-x86_64.txt"; then
+          if ! diff -q "${workdir}/jni-arm64-v8a.txt" "${workdir}/jni-x86_64.txt"; then
             echo "::error::JNI symbol tables differ across ABIs"
             exit 1
           fi
@@ -451,14 +449,14 @@ jobs:
         # and the CI signal we want is the compile, not a shippable artifact.
         run: ./gradlew --no-daemon --console=plain :app:assembleDebug
 
-      - name: Verify the APK carries all three target ABIs with the shipped libs
+      - name: Verify the APK carries both target ABIs with the shipped libs
         run: |
           set -euo pipefail
           apk=samples/android/app/build/outputs/apk/debug/app-debug.apk
           test -s "${apk}" || { echo "::error::sample APK missing at ${apk}"; exit 1; }
           libs=$(unzip -l "${apk}" | awk '/lib\/.*\.so$/ {print $4}' | sort -u)
           echo "${libs}"
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in arm64-v8a x86_64; do
             for so in libfoundry_local_mobile.so libfoundry_local_mobile_jni.so libc++_shared.so libonnxruntime-genai.so libonnxruntime.so; do
               if ! grep -qx "lib/${abi}/${so}" <<<"${libs}"; then
                 echo "::error::sample APK missing lib/${abi}/${so}"
@@ -489,7 +487,7 @@ jobs:
   #   2. flutter build apk --debug on the example. That drives the CMake
   #      ExternalNativeBuild of the core through the plugin's Gradle module,
   #      packages the resulting libfoundry_local_mobile.so + libc++_shared.so
-  #      for all three ABIs, and produces an APK with the plugin as a real
+  #      for both supported ABIs, and produces an APK with the plugin as a real
   #      transitive dependency. The APK is then asserted to carry the right
   #      slices — mirroring the samples/android check so a plugin-side ABI
   #      regression fails here rather than silently on a user's device.
@@ -595,7 +593,7 @@ jobs:
         # ExternalNativeBuild of the core both go through end to end.
         run: flutter build apk --debug
 
-      - name: Verify the APK carries all three target ABIs with the shipped libs
+      - name: Verify the APK carries both target ABIs with the shipped libs
         # Mirrors the assertion the android-sample job makes: a regression in
         # the plugin's abiFilters would put lib/x86/libflutter.so back in
         # without a matching lib/x86/libfoundry_local_mobile.so, and Android's
@@ -607,7 +605,7 @@ jobs:
           test -s "${apk}" || { echo "::error::example APK missing at ${apk}"; exit 1; }
           libs=$(unzip -l "${apk}" | awk '/lib\/.*\.so$/ {print $4}' | sort -u)
           echo "${libs}"
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in arm64-v8a x86_64; do
             for so in libfoundry_local_mobile.so libc++_shared.so libonnxruntime-genai.so libonnxruntime.so; do
               if ! grep -qx "lib/${abi}/${so}" <<<"${libs}"; then
                 echo "::error::example APK missing lib/${abi}/${so}"

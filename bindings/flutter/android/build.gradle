@@ -51,7 +51,7 @@ android {
         if (!bundledSdkAar.exists()) {
             externalNativeBuild {
                 cmake {
-                    cppFlags '-std=c++20', '-fvisibility=hidden'
+                    cppFlags '-std=c++20'
                     arguments '-DANDROID_STL=c++_shared'
                     arguments '-DFLM_BUILD_SHARED=ON'
                     targets 'foundry_local_mobile'
@@ -59,10 +59,9 @@ android {
             }
         }
 
-        // ONNX Runtime GenAI has GPU/NPU acceleration paths we do not need in
-        // the plugin's own build. Ship the standard 64-bit + 32-bit ABIs.
+        // Match the 64-bit ABIs supported by the pinned OGA runtime.
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            abiFilters 'arm64-v8a', 'x86_64'
         }
     }
 

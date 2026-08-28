@@ -79,8 +79,8 @@ Output: `build/linux/libfoundry_local_mobile.so` (or `.dylib`, `.dll`).
 ## Cross-compile for Android
 
 ```bash
-export ANDROID_NDK_HOME=/path/to/android-ndk-r26d
-./scripts/build_android.sh                       # all three ABIs
+export ANDROID_NDK_HOME=/path/to/android-ndk-r27
+./scripts/build_android.sh                       # both supported ABIs
 ./scripts/build_android.sh --abi arm64-v8a       # just one
 ./scripts/build_android.sh --build-type Debug    # skip optimisation
 ```
@@ -91,11 +91,6 @@ Layout:
 build/android/
 └── jniLibs/
     ├── arm64-v8a/
-    │   ├── libc++_shared.so
-    │   ├── libonnxruntime.so
-    │   ├── libonnxruntime-genai.so
-    │   └── libfoundry_local_mobile.so
-    ├── armeabi-v7a/
     │   ├── libc++_shared.so
     │   ├── libonnxruntime.so
     │   ├── libonnxruntime-genai.so
@@ -199,7 +194,7 @@ cd bindings/android
 ```
 
 Output: `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar`.
-The AAR ships all three ABIs, each with `libfoundry_local_mobile.so`,
+The AAR ships both supported ABIs, each with `libfoundry_local_mobile.so`,
 `libfoundry_local_mobile_jni.so`, `libonnxruntime-genai.so`, `libonnxruntime.so`,
 and `libc++_shared.so` — the OGA/ORT shared libraries are required at run time
 alongside the core, since the core links against them dynamically (see
@@ -220,7 +215,7 @@ run `./scripts/build_android.sh` and point `sourceSets.main.jniLibs.srcDirs` at
 ```bash
 ./scripts/build.sh fetch      # stage the SDK
 ./scripts/build.sh linux      # native build
-./scripts/build.sh android    # all three ABIs
+./scripts/build.sh android    # arm64-v8a + x86_64
 ./scripts/build.sh apple      # XCFramework (macOS only)
 ./scripts/build.sh all        # fetch + android + apple (apple skipped on non-macOS)
 ./scripts/build.sh clean      # delete build/ and third_party/onnxruntime-genai/

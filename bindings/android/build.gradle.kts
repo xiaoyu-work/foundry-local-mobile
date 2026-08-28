@@ -21,12 +21,12 @@ android {
         minSdk = 26
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
 
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++20", "-fvisibility=hidden", "-fvisibility-inlines-hidden")
+                cppFlags += listOf("-std=c++20")
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
                     "-DFLM_BUILD_SHARED=ON",

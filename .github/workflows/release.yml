@@ -22,10 +22,8 @@ env:
 jobs:
   # ---------------------------------------------------------------------------
   # Android AAR / jniLibs bundle.
-  # We always produce a jniLibs.zip with the three ABIs. If the Android binding
-  # directory has landed (owned by another agent), we additionally run its
-  # `assembleRelease` and attach the AAR. If it has not, the binding artefact
-  # step is skipped rather than failing the release.
+  # The raw jniLibs bundle, AAR, and local Maven repository all contain both
+  # 64-bit ABIs supported by the pinned OGA runtime.
   # ---------------------------------------------------------------------------
   android:
     name: android artifacts
@@ -45,7 +43,7 @@ jobs:
       - name: Fetch ONNX Runtime GenAI
         run: ./scripts/fetch_onnxruntime_genai.sh --ref "${OGA_REF}"
 
-      - name: Build all Android ABIs
+      - name: Build Android ABIs
         run: ./scripts/build_android.sh --build-type Release
 
       - name: Package jniLibs.zip
@@ -54,20 +52,24 @@ jobs:
           zip -r "${GITHUB_WORKSPACE}/foundry-local-mobile-android-jniLibs.zip" jniLibs
 
       - name: Set up JDK 17
-        if: hashFiles('bindings/android/gradlew') != ''
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Accept Android SDK licences
-        if: hashFiles('bindings/android/gradlew') != ''
         run: |
-          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          set +o pipefail
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          sdk_status=${PIPESTATUS[1]}
+          set -o pipefail
+          if [ "${sdk_status}" -ne 0 ]; then
+            echo "::error::sdkmanager --licenses failed with status ${sdk_status}"
+            exit "${sdk_status}"
+          fi
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "cmake;3.31.6"
 
       - name: Build AAR
-        if: hashFiles('bindings/android/gradlew') != ''
         run: |
           cd bindings/android
           ./gradlew --no-daemon --console=plain \
@@ -85,7 +87,7 @@ jobs:
             foundry-local-mobile-android-jniLibs.zip
             foundry-local-mobile-android.aar
             foundry-local-mobile-maven-repository.zip
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Apple XCFramework. Always produced; the iOS binding either bundles it in

@@ -8,7 +8,7 @@ Native bindings sit on, exposed as `suspend` functions and `Flow`s.
 
 - **`compileSdk`**: 35
 - **`minSdk`**: 26 (Android 8.0)
-- **ABIs**: `arm64-v8a`, `armeabi-v7a`, `x86_64`
+- **ABIs**: `arm64-v8a`, `x86_64`
 - **Runtime**: ONNX Runtime GenAI, linked directly into the native core and
   loaded at process start via `System.loadLibrary`
 - **Implemented**: text chat, streaming completions, multi-turn history, audio
