@@ -28,9 +28,9 @@ cd samples/android
 ./gradlew :app:assembleDebug
 ```
 
-## What each screen shows
+## User flow
 
-1. **Config** — enter the path to a local OGA model directory.
-2. **Configured** — the SDK is initialised with the device profile shown.
-3. **Loading** — `loadModel(path)` runs.
-4. **Ready / Generating** — chat with the loaded model.
+1. Enter the path to a local OGA model directory and tap **Load model**.
+2. The app switches to a chat-first screen showing the loaded model and status.
+3. User and assistant messages remain in a scrolling conversation while the
+   composer stays fixed above the keyboard.

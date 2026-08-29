@@ -26,8 +26,8 @@ class MainActivity : ComponentActivity() {
                     SampleScreen(
                         state = state,
                         onPrepare = vm::prepare,
-                        onLoadAndChat = vm::loadAndChat,
                         onSend = vm::sendTurn,
+                        onReset = vm::reset,
                     )
                 }
             }

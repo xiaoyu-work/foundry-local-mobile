@@ -10,8 +10,6 @@ import com.microsoft.ai.foundry.local.mobile.FoundryLocal
 import com.microsoft.ai.foundry.local.mobile.FoundryLocalConfig
 import com.microsoft.ai.foundry.local.mobile.FoundryLocalException
 import com.microsoft.ai.foundry.local.mobile.Model
-import com.microsoft.ai.foundry.local.mobile.Progress
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,12 +27,6 @@ sealed interface UiState {
     data class NeedsConfig(
         val modelPath: String,
         val message: String? = null,
-    ) : UiState
-
-    /** SDK initialised; ready to load the model. */
-    data class Configured(
-        val modelPath: String,
-        val deviceSummary: String,
     ) : UiState
 
     /** `model.load()` is running. */
@@ -66,11 +58,11 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
     private var session: com.microsoft.ai.foundry.local.mobile.ChatSession? = null
 
     /**
-     * Called from the configuration form. Initialises the manager, prints
-     * the device profile, and moves to [UiState.Configured].
+     * Initialise the SDK and load the caller-provided model.
      */
     fun prepare(modelPath: String) {
-        if (modelPath.isBlank()) {
+        val path = modelPath.trim()
+        if (path.isBlank()) {
             _state.update {
                 UiState.NeedsConfig(
                     modelPath = modelPath,
@@ -79,6 +71,7 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
+        _state.value = UiState.Loading(path.substringAfterLast('/'))
         viewModelScope.launch {
             try {
                 val fl = FoundryLocal.create(
@@ -86,48 +79,18 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
                     FoundryLocalConfig(appName = "foundry-local-sample"),
                 )
                 foundry = fl
-                _state.value = UiState.Configured(
-                    modelPath = modelPath.trim(),
-                    deviceSummary = fl.deviceProfile.summary,
-                )
-            } catch (t: Throwable) {
-                _state.value = UiState.Error("prepare", messageOf(t), detailOf(t))
-            }
-        }
-    }
-
-    /**
-     * Load the model from the given path and start a chat session.
-     */
-    fun loadAndChat(prompt: String) {
-        val current = _state.value as? UiState.Configured ?: return
-        val fl = foundry ?: return
-        val modelPath = current.modelPath
-
-        _state.value = UiState.Loading(modelPath)
-        viewModelScope.launch {
-            try {
-                // Load the model from a local directory path.
-                val m = fl.loadModel(modelPath)
+                val m = fl.loadModel(path)
                 model = m
-
                 val chat = m.createChatSession()
                 session = chat
-                val history = listOf(ChatTurn("user", prompt))
-                _state.value = UiState.Generating(modelPath, history, pending = "")
-                val acc = StringBuilder()
-                chat.completeStreaming(prompt).collect { delta ->
-                    acc.append(delta.text)
-                    _state.update { st ->
-                        if (st is UiState.Generating) st.copy(pending = acc.toString()) else st
-                    }
-                }
+                val info = m.info
                 _state.value = UiState.Ready(
-                    modelPath,
-                    history + ChatTurn("assistant", acc.toString()),
+                    name = info.displayName ?: info.name,
+                    history = emptyList(),
                 )
             } catch (t: Throwable) {
-                _state.value = UiState.Error("load-or-chat", messageOf(t), detailOf(t))
+                closeResources()
+                _state.value = UiState.Error("model load", messageOf(t), detailOf(t))
             }
         }
     }
@@ -152,15 +115,29 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
                     history + ChatTurn("assistant", acc.toString()),
                 )
             } catch (t: Throwable) {
+                closeResources()
                 _state.value = UiState.Error("chat", messageOf(t), detailOf(t))
             }
         }
     }
 
+    /** Return to model selection and release the current native resources. */
+    fun reset() {
+        closeResources()
+        _state.value = UiState.NeedsConfig(modelPath = BuildConfig.DEFAULT_MODEL_PATH)
+    }
+
     override fun onCleared() {
+        closeResources()
+    }
+
+    private fun closeResources() {
         try { session?.close() } catch (_: Throwable) {}
+        session = null
         try { model?.close() } catch (_: Throwable) {}
+        model = null
         try { foundry?.close() } catch (_: Throwable) {}
+        foundry = null
     }
 
     private fun messageOf(t: Throwable): String =
