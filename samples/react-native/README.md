@@ -2,8 +2,10 @@
 
 This bare React Native New Architecture app consumes
 `@foundry-local/react-native` through the local package in
-`bindings/react-native`. It loads a caller-owned ONNX Runtime GenAI model
-directory and streams chat output.
+`bindings/react-native`. Model selection is a one-time setup step; after the
+model loads, the app switches to a chat-first screen with model status,
+persistent user and assistant messages, streamed output, and a bottom-pinned
+composer.
 
 ```bash
 npm install
