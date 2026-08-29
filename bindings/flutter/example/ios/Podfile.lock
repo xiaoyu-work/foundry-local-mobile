@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - foundry_local_mobile (0.2.0):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - foundry_local_mobile (from `.symlinks/plugins/foundry_local_mobile/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  foundry_local_mobile:
+    :path: ".symlinks/plugins/foundry_local_mobile/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  foundry_local_mobile: 931d723f6f6020b213804f562977fa8a60f029bd
+
+PODFILE CHECKSUM: ce2a4dd764e1c7aeed6a7cdc5e61d092b6dc6d32
+
+COCOAPODS: 1.16.2

@@ -51,6 +51,7 @@ embeddings on top of Microsoft Foundry Local's on-device ONNX Runtime GenAI.
     'DEFINES_MODULE' => 'YES',
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++20',
     'CLANG_CXX_LIBRARY' => 'libc++',
+    'OTHER_LDFLAGS' => '$(inherited) -framework FoundryLocalMobile -framework onnxruntime-genai',
     'STRIP_INSTALLED_PRODUCT' => 'NO'
   }
 end

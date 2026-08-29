@@ -354,9 +354,6 @@ Future<Map<String, Object?>> runProgressJob({
   );
   StreamSubscription<Progress>? sub;
   StreamSubscription<void>? cancelSub;
-  if (onProgress != null) {
-    sub = runner.progressStream.listen(onProgress.add, onError: (_) {});
-  }
   try {
     runner.start(({
       required onProgress,
@@ -366,6 +363,9 @@ Future<Map<String, Object?>> runProgressJob({
       required outJob,
     }) =>
         abiCall(onProgress, onComplete, userData, outJob));
+    if (onProgress != null) {
+      sub = runner.progressStream.listen(onProgress.add, onError: (_) {});
+    }
     if (cancelToken != null) {
       cancelSub =
           cancelToken.whenCancelled.asStream().listen((_) => runner._cancelJob());

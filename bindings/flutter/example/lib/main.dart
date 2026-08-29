@@ -2,9 +2,12 @@
 // Licensed under the MIT License.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:foundry_local_mobile/foundry_local_mobile.dart';
+
+import 'model_path_resolver.dart';
 
 void main() {
   runApp(const FoundryDemoApp());
@@ -16,14 +19,37 @@ class FoundryDemoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Foundry Local demo',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
+      title: 'Qwen3 on device',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF10A37F),
+          surface: const Color(0xFFF7F7F8),
+        ),
+        scaffoldBackgroundColor: Colors.white,
+      ),
       home: const _HomeScreen(),
     );
   }
 }
 
 enum _Phase { idle, loading, ready, chatting }
+
+enum _MessageRole { user, assistant }
+
+class _ConversationMessage {
+  _ConversationMessage({
+    required this.role,
+    required this.text,
+    this.isThinking = false,
+  });
+
+  final _MessageRole role;
+  String text;
+  bool isThinking;
+  bool isError = false;
+}
 
 class _HomeScreen extends StatefulWidget {
   const _HomeScreen();
@@ -33,27 +59,36 @@ class _HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<_HomeScreen> {
+  static const _modelName = 'Qwen3 0.6B INT4';
   static const _defaultPath = String.fromEnvironment('FLM_MODEL_PATH');
+  static const _autoRun = bool.fromEnvironment('FLM_AUTORUN');
 
-  final _pathCtrl = TextEditingController(text: _defaultPath);
-  final _promptCtrl = TextEditingController(
-    text: 'In one sentence, what is on-device inference?',
-  );
-  final _logScroll = ScrollController();
+  final _promptCtrl = TextEditingController();
   final _chatScroll = ScrollController();
+  final _composerFocus = FocusNode();
+  final List<_ConversationMessage> _messages = <_ConversationMessage>[];
 
   FoundryLocal? _foundry;
   Model? _model;
   ChatSession? _chat;
   StreamSubscription<SessionDelta>? _chatSub;
 
-  _Phase _phase = _Phase.idle;
+  _Phase _phase = _Phase.loading;
   double _progress = 0;
-  String _progressStage = '';
-  String _status = 'Ready';
-  String _chatOutput = '';
-  String _modelSummary = 'No model loaded.';
-  final List<String> _log = <String>[];
+  String _status = 'Loading model on device...';
+  bool _receivedTextDelta = false;
+  bool _receivedReasoningDelta = false;
+  final File _deviceLogFile = File('${Directory.systemTemp.path}/flm_e2e.log');
+  Future<void> _deviceLogWrites = Future<void>.value();
+  bool _hasWrittenDeviceLog = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_resolveAndLoadDefaultModel());
+    });
+  }
 
   @override
   void dispose() {
@@ -61,41 +96,70 @@ class _HomeScreenState extends State<_HomeScreen> {
     _chat?.release();
     _model?.dispose();
     unawaited(_foundry?.dispose());
-    _pathCtrl.dispose();
     _promptCtrl.dispose();
-    _logScroll.dispose();
     _chatScroll.dispose();
+    _composerFocus.dispose();
     super.dispose();
   }
 
   void _appendLog(String line) {
-    setState(() => _log.add(line));
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_logScroll.hasClients) {
-        _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
+    debugPrint('[FLM] $line');
+    _deviceLogWrites = _deviceLogWrites.then((_) async {
+      try {
+        await _deviceLogFile.writeAsString(
+          '${DateTime.now().toIso8601String()} $line\n',
+          mode: _hasWrittenDeviceLog ? FileMode.append : FileMode.write,
+          flush: true,
+        );
+        _hasWrittenDeviceLog = true;
+      } catch (error) {
+        debugPrint('[FLM] Unable to persist device log: $error');
       }
     });
+  }
+
+  Future<void> _resolveAndLoadDefaultModel() async {
+    try {
+      final path = Platform.isIOS
+          ? await const ModelPathResolver().resolve()
+          : _defaultPath;
+      if (!mounted) return;
+      if (path.isEmpty) {
+        setState(() {
+          _phase = _Phase.idle;
+          _status = 'Bundled model is unavailable.';
+        });
+        return;
+      }
+      _appendLog('FLM_MODEL_PATH $path');
+      await _loadModel(path);
+    } catch (error) {
+      if (!mounted) return;
+      _appendLog('FLM_E2E_FAILURE model-path: $error');
+      setState(() {
+        _phase = _Phase.idle;
+        _status = 'Could not find the bundled model.';
+      });
+    }
   }
 
   Future<FoundryLocal> _ensureFoundry() async {
     final existing = _foundry;
     if (existing != null) return existing;
-    _appendLog('Initialising FoundryLocal…');
+    _appendLog('Initialising FoundryLocal...');
     final foundry = await FoundryLocal.create(
       const FoundryLocalConfig(appName: 'foundry_local_mobile_example'),
     );
+    if (!mounted) {
+      await foundry.dispose();
+      throw StateError('The chat screen was disposed during SDK startup.');
+    }
     _foundry = foundry;
     _appendLog('FoundryLocal ready.');
     return foundry;
   }
 
-  Future<void> _loadModel() async {
-    final path = _pathCtrl.text.trim();
-    if (path.isEmpty) {
-      setState(() => _status = 'Enter a model directory path.');
-      return;
-    }
-
+  Future<void> _loadModel(String path) async {
     await _chatSub?.cancel();
     _chatSub = null;
     _chat?.release();
@@ -106,10 +170,7 @@ class _HomeScreenState extends State<_HomeScreen> {
     setState(() {
       _phase = _Phase.loading;
       _progress = 0;
-      _progressStage = 'loading';
-      _status = 'Loading model…';
-      _chatOutput = '';
-      _modelSummary = 'Loading $path';
+      _status = 'Loading $_modelName on device...';
     });
 
     try {
@@ -117,227 +178,277 @@ class _HomeScreenState extends State<_HomeScreen> {
       _appendLog('loadModel(path=$path)');
       final model = await foundry.loadModel(
         path,
-        onProgress: (p) {
+        executionProvider: Platform.isIOS ? 'CPU' : null,
+        onProgress: (progress) {
+          if (!mounted) return;
           setState(() {
-            _progress = p.fraction;
-            _progressStage = p.stage;
-            _status = 'Loading… ${p.percent.toStringAsFixed(1)}% ($_progressStage)';
+            _progress = progress.fraction;
+            _status =
+                'Loading $_modelName - ${progress.percent.toStringAsFixed(0)}%';
           });
         },
       );
+      if (!mounted) {
+        model.dispose();
+        return;
+      }
       final info = model.getInfo();
       _model = model;
       _chat = model.createChatSession(
         options: const ChatSessionOptions(
-          systemPrompt: 'You are a concise assistant.',
-          temperature: 0.7,
+          systemPrompt: 'You are a concise, helpful assistant.',
+          temperature: 0.2,
+          maxOutputTokens: 512,
+          seed: 42,
         ),
       );
       _appendLog(
         'Loaded. path=${model.path} task=${info.task} ep=${info.executionProvider}',
       );
+      if (!mounted) return;
       setState(() {
         _phase = _Phase.ready;
-        _status = 'Model ready.';
-        _modelSummary =
-            '${info.displayName.isEmpty ? info.name : info.displayName} '
-            '(task=${info.task}, ep=${info.executionProvider})';
+        _progress = 1;
+        _status = 'On-device - ${info.executionProvider} - Ready';
       });
-    } catch (e) {
-      _appendLog('Load failed: $e');
+      _appendLog('FLM_MODEL_READY');
+      if (_autoRun) {
+        await _sendPrompt(prompt: 'Reply with exactly ON_DEVICE_OK.');
+      }
+    } catch (error) {
+      _appendLog('FLM_E2E_FAILURE model-load: $error');
+      if (!mounted) return;
       setState(() {
         _phase = _Phase.idle;
-        _status = 'Load failed: $e';
-        _modelSummary = 'No model loaded.';
+        _status = 'Model failed to load.';
       });
     }
   }
 
-  Future<void> _sendPrompt() async {
+  Future<void> _sendPrompt({String? prompt}) async {
     final chat = _chat;
-    if (chat == null) return;
-    final prompt = _promptCtrl.text.trim();
-    if (prompt.isEmpty) return;
+    final content = (prompt ?? _promptCtrl.text).trim();
+    if (chat == null || content.isEmpty || _phase != _Phase.ready) return;
 
+    _composerFocus.unfocus();
+    final assistant = _ConversationMessage(
+      role: _MessageRole.assistant,
+      text: '',
+      isThinking: true,
+    );
     setState(() {
+      _messages
+        ..add(_ConversationMessage(role: _MessageRole.user, text: content))
+        ..add(assistant);
       _phase = _Phase.chatting;
-      _chatOutput = '';
-      _status = 'Streaming…';
+      _status = 'Generating on device...';
+      _receivedTextDelta = false;
+      _receivedReasoningDelta = false;
+      _promptCtrl.clear();
     });
+    _scrollToBottom();
 
     await _chatSub?.cancel();
     final completer = Completer<void>();
-    _chatSub = chat.completeStreaming(
-      ChatRequest(messages: [ChatMessage.user(prompt)]),
-    ).listen(
+    _chatSub = chat
+        .completeStreaming(
+      ChatRequest(messages: [ChatMessage.user(content)]),
+    )
+        .listen(
       (delta) {
+        if (!mounted) return;
         if (delta is TextDelta) {
-          setState(() => _chatOutput += delta.text);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_chatScroll.hasClients) {
-              _chatScroll.jumpTo(_chatScroll.position.maxScrollExtent);
-            }
+          if (delta.text.isNotEmpty && !_receivedTextDelta) {
+            _receivedTextDelta = true;
+            _appendLog('FLM_E2E_TEXT_DELTA');
+          }
+          setState(() {
+            assistant
+              ..text += delta.text
+              ..isThinking = false;
           });
+          _scrollToBottom();
+        } else if (delta is ReasoningDelta) {
+          if (delta.text.isNotEmpty && !_receivedReasoningDelta) {
+            _receivedReasoningDelta = true;
+            _appendLog('FLM_E2E_REASONING_DELTA');
+          }
         } else if (delta is CompletedDelta) {
           _appendLog(
-            'Completed. reason=${delta.finishReason.name} '
+            'FLM_E2E_COMPLETED reason=${delta.finishReason.name} '
             'prompt=${delta.promptTokens} completion=${delta.completionTokens}',
           );
         }
       },
-      onError: (Object e) {
-        _appendLog('Stream error: $e');
-        setState(() {
-          _phase = _Phase.ready;
-          _status = 'Stream error: $e';
-        });
+      onError: (Object error) {
+        _appendLog('FLM_E2E_FAILURE stream: $error');
+        if (mounted) {
+          setState(() {
+            assistant
+              ..isThinking = false
+              ..isError = true;
+            if (assistant.text.isEmpty) {
+              assistant.text = 'The on-device model could not answer.';
+            }
+            _chatSub = null;
+            _phase = _Phase.ready;
+            _status = 'On-device - CPU - Ready';
+          });
+        }
         if (!completer.isCompleted) completer.complete();
       },
       onDone: () {
-        setState(() {
-          _phase = _Phase.ready;
-          _status = 'Done.';
-        });
+        if (mounted) {
+          setState(() {
+            assistant.isThinking = false;
+            if (assistant.text.isEmpty && !assistant.isError) {
+              assistant.text = 'The model returned an empty response.';
+            }
+            _chatSub = null;
+            _phase = _Phase.ready;
+            _status = 'On-device - CPU - Ready';
+          });
+          _scrollToBottom();
+        }
         if (!completer.isCompleted) completer.complete();
       },
     );
     await completer.future;
   }
 
-  Future<void> _stopChat() async {
-    await _chatSub?.cancel();
-    _chatSub = null;
-    setState(() {
-      _phase = _Phase.ready;
-      _status = 'Chat cancelled.';
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.animateTo(
+          _chatScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Foundry Local — path-only demo')),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _modelCard(),
-              const SizedBox(height: 12),
-              _progressCard(),
-              const SizedBox(height: 12),
-              Expanded(child: _chatCard()),
-              const SizedBox(height: 12),
-              _logCard(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _modelCard() {
-    final canLoad = _phase == _Phase.idle || _phase == _Phase.ready;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      appBar: AppBar(
+        toolbarHeight: 72,
+        titleSpacing: 16,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        bottom: _phase == _Phase.loading
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(2),
+                child: LinearProgressIndicator(
+                  minHeight: 2,
+                  value: _progress > 0 && _progress <= 1 ? _progress : null,
+                ),
+              )
+            : null,
+        title: Row(
           children: [
-            const Text('1. Load a local model directory',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _pathCtrl,
-              enabled: canLoad,
-              decoration: const InputDecoration(
-                labelText: 'Model path',
-                helperText:
-                    'Absolute path to a local ONNX Runtime GenAI model directory.',
+            Container(
+              width: 40,
+              height: 40,
+              decoration: const BoxDecoration(
+                color: Color(0xFF10A37F),
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: const Text(
+                'Q',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-            const SizedBox(height: 8),
-            FilledButton(
-              onPressed: canLoad ? _loadModel : null,
-              child: const Text('Load model'),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    _modelName,
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _status,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _phase == _Phase.idle
+                          ? Theme.of(context).colorScheme.error
+                          : Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(_modelSummary),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _progressCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      body: SafeArea(
+        top: false,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(_status),
-            const SizedBox(height: 6),
-            LinearProgressIndicator(
-              value: _phase == _Phase.loading
-                  ? (_progress > 0 && _progress <= 1 ? _progress : null)
-                  : 0,
-            ),
-            if (_progressStage.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text('stage: $_progressStage'),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _chatCard() {
-    final canSend = _phase == _Phase.ready && _chatSub == null && _chat != null;
-    final canCancel = _chatSub != null;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text('2. Streaming chat',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _promptCtrl,
-              enabled: _chat != null,
-              decoration: const InputDecoration(labelText: 'Prompt'),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                FilledButton(
-                  onPressed: canSend ? _sendPrompt : null,
-                  child: const Text('Send'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: canCancel ? _stopChat : null,
-                  child: const Text('Stop'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
             Expanded(
               child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade400),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                padding: const EdgeInsets.all(8),
-                child: SingleChildScrollView(
-                  controller: _chatScroll,
-                  child: Text(_chatOutput),
-                ),
+                key: const ValueKey('chat-message-list'),
+                color: Colors.white,
+                child: _messages.isEmpty
+                    ? _buildWelcome(context)
+                    : ListView.separated(
+                        controller: _chatScroll,
+                        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+                        itemCount: _messages.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 18),
+                        itemBuilder: (_, index) =>
+                            _buildMessage(context, _messages[index]),
+                      ),
+              ),
+            ),
+            _buildComposer(context),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWelcome(BuildContext context) {
+    final ready = _phase == _Phase.ready;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              ready ? Icons.chat_bubble_outline_rounded : Icons.memory_rounded,
+              size: 48,
+              color: const Color(0xFF10A37F),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              ready ? 'How can I help?' : 'Preparing your local AI',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              ready
+                  ? 'Messages stay on this iPhone and run through $_modelName.'
+                  : 'Loading $_modelName. This usually takes less than a second.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                height: 1.4,
+                color: Colors.grey.shade600,
               ),
             ),
           ],
@@ -346,28 +457,162 @@ class _HomeScreenState extends State<_HomeScreen> {
     );
   }
 
-  Widget _logCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text('Log', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            SizedBox(
-              height: 100,
-              child: ListView.builder(
-                controller: _logScroll,
-                itemCount: _log.length,
-                itemBuilder: (context, i) => Text(
-                  _log[i],
-                  style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-                ),
+  Widget _buildMessage(
+    BuildContext context,
+    _ConversationMessage message,
+  ) {
+    final isUser = message.role == _MessageRole.user;
+    return Row(
+      mainAxisAlignment:
+          isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!isUser) ...[
+          Container(
+            width: 30,
+            height: 30,
+            decoration: const BoxDecoration(
+              color: Color(0xFF10A37F),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: const Text(
+              'Q',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ],
+          ),
+          const SizedBox(width: 10),
+        ],
+        Flexible(
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+            decoration: BoxDecoration(
+              color: isUser
+                  ? const Color(0xFF10A37F)
+                  : message.isError
+                      ? Theme.of(context).colorScheme.errorContainer
+                      : const Color(0xFFF1F1F2),
+              borderRadius: BorderRadius.circular(20).copyWith(
+                bottomRight: isUser ? const Radius.circular(5) : null,
+                bottomLeft: isUser ? null : const Radius.circular(5),
+              ),
+            ),
+            child: message.isThinking && message.text.isEmpty
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 9),
+                      Text(
+                        'Thinking...',
+                        style: TextStyle(color: Colors.grey.shade700),
+                      ),
+                    ],
+                  )
+                : SelectableText(
+                    message.text,
+                    style: TextStyle(
+                      height: 1.4,
+                      color: isUser ? Colors.white : Colors.black87,
+                    ),
+                  ),
+          ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildComposer(BuildContext context) {
+    final isGenerating = _phase == _Phase.chatting;
+    final canCompose = _phase == _Phase.ready;
+    final canSend = canCompose && _promptCtrl.text.trim().isNotEmpty;
+
+    return Container(
+      key: const ValueKey('chat-composer'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('chat-input'),
+                  controller: _promptCtrl,
+                  focusNode: _composerFocus,
+                  enabled: canCompose,
+                  minLines: 1,
+                  maxLines: 5,
+                  textInputAction: TextInputAction.send,
+                  onChanged: (_) => setState(() {}),
+                  onSubmitted: (_) {
+                    if (canSend) unawaited(_sendPrompt());
+                  },
+                  decoration: InputDecoration(
+                    hintText:
+                        canCompose ? 'Message Qwen3...' : 'Loading model...',
+                    filled: true,
+                    fillColor: const Color(0xFFF4F4F5),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 13,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF10A37F),
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: isGenerating ? 'Generating' : 'Send',
+                onPressed: canSend ? _sendPrompt : null,
+                icon: isGenerating
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Icon(Icons.arrow_upward_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Loaded model: $_modelName - Runs locally with CPU',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+          ),
+        ],
       ),
     );
   }
