@@ -4,11 +4,69 @@
 import Foundation
 import FoundryLocal
 
+struct ConversationMessage: Identifiable, Equatable {
+    enum Role: Equatable {
+        case user
+        case assistant
+    }
+
+    let id = UUID()
+    let role: Role
+    var text: String
+    var isThinking = false
+}
+
+struct ConversationTranscript: Equatable {
+    private(set) var messages: [ConversationMessage] = []
+
+    mutating func beginTurn(_ prompt: String) {
+        messages.append(ConversationMessage(role: .user, text: prompt))
+        messages.append(
+            ConversationMessage(role: .assistant, text: "", isThinking: true)
+        )
+    }
+
+    mutating func receiveReasoning() {
+        let index = activeAssistantIndex
+        messages[index].isThinking = messages[index].text.isEmpty
+    }
+
+    mutating func receiveText(_ fragment: String) {
+        let index = activeAssistantIndex
+        messages[index].text += fragment
+        messages[index].isThinking = false
+    }
+
+    mutating func finishTurn() {
+        let index = activeAssistantIndex
+        if messages[index].text.isEmpty {
+            messages[index].text = "No visible response was generated."
+        }
+        messages[index].isThinking = false
+    }
+
+    mutating func failTurn(_ message: String) {
+        let index = activeAssistantIndex
+        if messages[index].text.isEmpty {
+            messages[index].text = "Generation failed: \(message)"
+        }
+        messages[index].isThinking = false
+    }
+
+    private var activeAssistantIndex: Int {
+        guard let index = messages.indices.last, messages[index].role == .assistant else {
+            preconditionFailure("A streamed delta requires an active assistant message.")
+        }
+        return index
+    }
+}
+
 @MainActor
 final class ExampleViewModel: ObservableObject {
     @Published var modelPath = ""
-    @Published var prompt = "In one sentence, what is on-device inference?"
-    @Published private(set) var response = ""
+    @Published var prompt = ""
+    @Published private(set) var transcript = ConversationTranscript()
+    @Published private(set) var modelDisplayName = "Local model"
     @Published private(set) var status = "Choose an ONNX Runtime GenAI model directory."
     @Published private(set) var loadProgress: Double?
     @Published private(set) var isLoading = false
@@ -19,6 +77,10 @@ final class ExampleViewModel: ObservableObject {
     private var model: Model?
     private var chat: ChatSession?
     private var securityScopedModelURL: URL?
+
+    var messages: [ConversationMessage] {
+        transcript.messages
+    }
 
     func selectModelDirectory(_ url: URL) {
         securityScopedModelURL?.stopAccessingSecurityScopedResource()
@@ -41,7 +103,8 @@ final class ExampleViewModel: ObservableObject {
         isLoading = true
         isModelReady = false
         loadProgress = 0
-        response = ""
+        transcript = ConversationTranscript()
+        modelDisplayName = path.components(separatedBy: "/").last ?? "Local model"
         status = "Loading model..."
         closeModel()
 
@@ -67,7 +130,7 @@ final class ExampleViewModel: ObservableObject {
                 ChatSessionOptions(
                     systemPrompt: "You are a concise assistant.",
                     temperature: 0.7,
-                    maxOutputTokens: 256
+                    maxOutputTokens: 512
                 )
             )
 
@@ -76,7 +139,8 @@ final class ExampleViewModel: ObservableObject {
             isModelReady = true
             loadProgress = 1
             let name = info.displayName ?? info.name
-            status = "Ready: \(name) (\(info.executionProvider ?? "default EP"))"
+            modelDisplayName = name
+            status = "On-device - \(info.executionProvider ?? "default EP")"
         } catch {
             closeModel()
             loadProgress = nil
@@ -86,6 +150,9 @@ final class ExampleViewModel: ObservableObject {
     }
 
     func sendPrompt() async {
+        guard !isGenerating else {
+            return
+        }
         guard let chat else {
             status = "Load a model first."
             return
@@ -97,27 +164,36 @@ final class ExampleViewModel: ObservableObject {
         }
 
         isGenerating = true
-        response = ""
-        status = "Generating..."
+        transcript.beginTurn(text)
+        prompt = ""
+        status = "Generating on device..."
+        defer {
+            isGenerating = false
+        }
+
         do {
             for try await delta in chat.completeStreaming(text) {
                 switch delta {
                 case .text(let fragment):
-                    response += fragment
+                    transcript.receiveText(fragment)
+                case .reasoning:
+                    transcript.receiveReasoning()
                 case .completed(let reason, let usage):
                     if let usage {
-                        status = "Done: \(reason) - \(usage.completionTokens) generated tokens"
+                        status = "On-device - \(reason) - \(usage.completionTokens) tokens"
                     } else {
-                        status = "Done: \(reason)"
+                        status = "On-device - \(reason)"
                     }
-                case .reasoning, .toolCall, .usage:
+                case .toolCall, .usage:
                     break
                 }
             }
+            transcript.finishTurn()
         } catch {
-            status = "Generation failed: \(error.localizedDescription)"
+            let message = error.localizedDescription
+            transcript.failTurn(message)
+            status = "Generation failed: \(message)"
         }
-        isGenerating = false
     }
 
     private func closeModel() {
