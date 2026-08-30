@@ -44,6 +44,40 @@ sealed interface UiState {
 
 data class ChatTurn(val role: String, val text: String)
 
+private class AssistantTextBuffer {
+    private val textBuilder = StringBuilder()
+    private val pendingPrefix = StringBuilder()
+    private var started = false
+
+    val text: String
+        get() = textBuilder.toString()
+
+    fun append(fragment: String) {
+        if (fragment.isEmpty()) return
+        if (started) {
+            textBuilder.append(fragment)
+            return
+        }
+
+        pendingPrefix.append(fragment)
+        val firstVisible = pendingPrefix.indexOfFirst { !it.isWhitespace() }
+        if (firstVisible < 0) return
+
+        val leadingWhitespace = pendingPrefix.substring(0, firstVisible)
+        val lastLineBreak = maxOf(
+            leadingWhitespace.lastIndexOf('\n'),
+            leadingWhitespace.lastIndexOf('\r'),
+        )
+        if (lastLineBreak >= 0) {
+            textBuilder.append(pendingPrefix.substring(lastLineBreak + 1))
+        } else {
+            textBuilder.append(pendingPrefix)
+        }
+        pendingPrefix.clear()
+        started = true
+    }
+}
+
 class SdkViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow<UiState>(
@@ -103,16 +137,20 @@ class SdkViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = UiState.Generating(ready.name, history, pending = "")
         viewModelScope.launch {
             try {
-                val acc = StringBuilder()
+                val responseText = AssistantTextBuffer()
                 chat.completeStreaming(prompt).collect { delta ->
-                    acc.append(delta.text)
+                    responseText.append(delta.text)
                     _state.update { st ->
-                        if (st is UiState.Generating) st.copy(pending = acc.toString()) else st
+                        if (st is UiState.Generating) {
+                            st.copy(pending = responseText.text)
+                        } else {
+                            st
+                        }
                     }
                 }
                 _state.value = UiState.Ready(
                     ready.name,
-                    history + ChatTurn("assistant", acc.toString()),
+                    history + ChatTurn("assistant", responseText.text),
                 )
             } catch (t: Throwable) {
                 closeResources()

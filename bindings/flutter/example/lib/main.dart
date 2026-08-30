@@ -7,7 +7,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:foundry_local_mobile/foundry_local_mobile.dart';
 
+import 'assistant_text.dart';
 import 'model_path_resolver.dart';
+
+const _ink = Color(0xFF111111);
 
 void main() {
   runApp(const FoundryDemoApp());
@@ -23,9 +26,13 @@ class FoundryDemoApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF10A37F),
-          surface: const Color(0xFFF7F7F8),
+        colorScheme: const ColorScheme.light(
+          primary: _ink,
+          onPrimary: Colors.white,
+          secondary: Color(0xFF404040),
+          onSecondary: Colors.white,
+          surface: Colors.white,
+          onSurface: _ink,
         ),
         scaffoldBackgroundColor: Colors.white,
       ),
@@ -236,6 +243,7 @@ class _HomeScreenState extends State<_HomeScreen> {
       text: '',
       isThinking: true,
     );
+    final responseText = AssistantTextBuffer();
     setState(() {
       _messages
         ..add(_ConversationMessage(role: _MessageRole.user, text: content))
@@ -258,13 +266,15 @@ class _HomeScreenState extends State<_HomeScreen> {
       (delta) {
         if (!mounted) return;
         if (delta is TextDelta) {
-          if (delta.text.isNotEmpty && !_receivedTextDelta) {
+          responseText.append(delta.text);
+          if (responseText.text.isEmpty) return;
+          if (!_receivedTextDelta) {
             _receivedTextDelta = true;
             _appendLog('FLM_E2E_TEXT_DELTA');
           }
           setState(() {
             assistant
-              ..text += delta.text
+              ..text = responseText.text
               ..isThinking = false;
           });
           _scrollToBottom();
@@ -351,7 +361,7 @@ class _HomeScreenState extends State<_HomeScreen> {
               width: 40,
               height: 40,
               decoration: const BoxDecoration(
-                color: Color(0xFF10A37F),
+                color: _ink,
                 shape: BoxShape.circle,
               ),
               alignment: Alignment.center,
@@ -430,7 +440,7 @@ class _HomeScreenState extends State<_HomeScreen> {
             Icon(
               ready ? Icons.chat_bubble_outline_rounded : Icons.memory_rounded,
               size: 48,
-              color: const Color(0xFF10A37F),
+              color: _ink,
             ),
             const SizedBox(height: 18),
             Text(
@@ -472,7 +482,7 @@ class _HomeScreenState extends State<_HomeScreen> {
             width: 30,
             height: 30,
             decoration: const BoxDecoration(
-              color: Color(0xFF10A37F),
+              color: _ink,
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
@@ -494,7 +504,7 @@ class _HomeScreenState extends State<_HomeScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
             decoration: BoxDecoration(
               color: isUser
-                  ? const Color(0xFF10A37F)
+                  ? _ink
                   : message.isError
                       ? Theme.of(context).colorScheme.errorContainer
                       : const Color(0xFFF1F1F2),
@@ -583,7 +593,7 @@ class _HomeScreenState extends State<_HomeScreen> {
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(24),
                       borderSide: const BorderSide(
-                        color: Color(0xFF10A37F),
+                        color: _ink,
                         width: 1.5,
                       ),
                     ),

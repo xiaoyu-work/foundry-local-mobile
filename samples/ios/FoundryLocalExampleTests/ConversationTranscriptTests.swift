@@ -32,6 +32,20 @@ final class ConversationTranscriptTests: XCTestCase {
         XCTAssertFalse(transcript.messages.last?.isThinking ?? true)
     }
 
+    func testVisibleTextDropsLeadingBlankLinesButKeepsParagraphBreaks() {
+        var transcript = ConversationTranscript()
+        transcript.beginTurn("Hello")
+
+        transcript.receiveText("\r")
+        transcript.receiveText("\n\tOn-device answer")
+        transcript.receiveText("\r\n\r\nSecond paragraph")
+
+        XCTAssertEqual(
+            transcript.messages.last?.text,
+            "\tOn-device answer\r\n\r\nSecond paragraph"
+        )
+    }
+
     func testFinishingWithoutVisibleTextReplacesThinkingPlaceholder() {
         var transcript = ConversationTranscript()
         transcript.beginTurn("Hello")

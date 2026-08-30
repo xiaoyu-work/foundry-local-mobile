@@ -16,10 +16,50 @@ struct ConversationMessage: Identifiable, Equatable {
     var isThinking = false
 }
 
+private struct AssistantTextBuffer: Equatable {
+    private(set) var text = ""
+    private var pendingPrefix = ""
+    private var started = false
+
+    mutating func append(_ fragment: String) {
+        guard !fragment.isEmpty else {
+            return
+        }
+        if started {
+            text += fragment
+            return
+        }
+
+        pendingPrefix += fragment
+        guard let firstVisible = pendingPrefix.rangeOfCharacter(
+            from: .whitespacesAndNewlines.inverted
+        )?.lowerBound else {
+            return
+        }
+
+        let leadingWhitespace = pendingPrefix[..<firstVisible]
+        if let lastLineBreak = leadingWhitespace.utf8.lastIndex(
+            where: { $0 == 0x0A || $0 == 0x0D }
+        ) {
+            let contentStart = pendingPrefix.utf8.index(after: lastLineBreak)
+            text += String(
+                decoding: pendingPrefix.utf8[contentStart...],
+                as: UTF8.self
+            )
+        } else {
+            text += pendingPrefix
+        }
+        pendingPrefix = ""
+        started = true
+    }
+}
+
 struct ConversationTranscript: Equatable {
     private(set) var messages: [ConversationMessage] = []
+    private var assistantText = AssistantTextBuffer()
 
     mutating func beginTurn(_ prompt: String) {
+        assistantText = AssistantTextBuffer()
         messages.append(ConversationMessage(role: .user, text: prompt))
         messages.append(
             ConversationMessage(role: .assistant, text: "", isThinking: true)
@@ -33,8 +73,9 @@ struct ConversationTranscript: Equatable {
 
     mutating func receiveText(_ fragment: String) {
         let index = activeAssistantIndex
-        messages[index].text += fragment
-        messages[index].isThinking = false
+        assistantText.append(fragment)
+        messages[index].text = assistantText.text
+        messages[index].isThinking = assistantText.text.isEmpty
     }
 
     mutating func finishTurn() {

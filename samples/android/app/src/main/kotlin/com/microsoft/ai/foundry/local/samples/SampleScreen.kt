@@ -48,13 +48,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-
-private val FoundryGreen = Color(0xFF10A37F)
 
 @Composable
 fun SampleScreen(
@@ -241,10 +238,14 @@ private fun ModelAvatar(icon: androidx.compose.ui.graphics.vector.ImageVector) {
     Box(
         modifier = Modifier
             .size(40.dp)
-            .background(FoundryGreen, CircleShape),
+            .background(MaterialTheme.colorScheme.primary, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White)
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+        )
     }
 }
 
@@ -261,7 +262,7 @@ private fun Welcome(modifier: Modifier, loading: Boolean) {
             if (loading) Icons.Rounded.Memory else Icons.Rounded.ChatBubbleOutline,
             contentDescription = null,
             modifier = Modifier.size(48.dp),
-            tint = FoundryGreen,
+            tint = MaterialTheme.colorScheme.primary,
         )
         Spacer(Modifier.height(16.dp))
         Text(
@@ -289,10 +290,14 @@ private fun MessageBubble(turn: ChatTurn, thinking: Boolean = false) {
             Box(
                 modifier = Modifier
                     .size(30.dp)
-                    .background(FoundryGreen, CircleShape),
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Q", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(
+                    "Q",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Spacer(Modifier.width(10.dp))
         }
@@ -300,7 +305,11 @@ private fun MessageBubble(turn: ChatTurn, thinking: Boolean = false) {
             modifier = Modifier
                 .fillMaxWidth(0.78f)
                 .background(
-                    if (isUser) FoundryGreen else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    if (isUser) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHighest
+                    },
                     RoundedCornerShape(20.dp),
                 )
                 .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -314,7 +323,11 @@ private fun MessageBubble(turn: ChatTurn, thinking: Boolean = false) {
             } else {
                 Text(
                     turn.text,
-                    color = if (isUser) Color.White else MaterialTheme.colorScheme.onSurface,
+                    color = if (isUser) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                 )
             }

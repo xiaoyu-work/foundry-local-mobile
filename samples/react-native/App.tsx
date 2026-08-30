@@ -19,11 +19,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {
-  ChatSession,
-  FoundryLocal,
-  Model,
-} from '@foundry-local/react-native';
+import {ChatSession, FoundryLocal, Model} from '@foundry-local/react-native';
 
 type ChatMessage = {
   id: number;
@@ -31,6 +27,45 @@ type ChatMessage = {
   text: string;
   thinking?: boolean;
 };
+
+class AssistantTextBuffer {
+  private output = '';
+  private pendingPrefix = '';
+  private started = false;
+
+  append(fragment: string): string {
+    if (!fragment) {
+      return this.output;
+    }
+    if (this.started) {
+      this.output += fragment;
+      return this.output;
+    }
+
+    this.pendingPrefix += fragment;
+    const firstVisible = this.pendingPrefix.search(/\S/u);
+    if (firstVisible < 0) {
+      return this.output;
+    }
+
+    const leadingWhitespace = this.pendingPrefix.slice(0, firstVisible);
+    const lastLineBreak = Math.max(
+      leadingWhitespace.lastIndexOf('\n'),
+      leadingWhitespace.lastIndexOf('\r'),
+    );
+    this.output +=
+      lastLineBreak >= 0
+        ? this.pendingPrefix.slice(lastLineBreak + 1)
+        : this.pendingPrefix;
+    this.pendingPrefix = '';
+    this.started = true;
+    return this.output;
+  }
+
+  get text(): string {
+    return this.output;
+  }
+}
 
 function App(): React.JSX.Element {
   const [modelPath, setModelPath] = useState('');
@@ -113,9 +148,7 @@ function App(): React.JSX.Element {
       modelRef.current = loadedModel;
       chatRef.current = loadedChat;
       setModelName(info.displayName || info.name);
-      setStatus(
-        `On-device - ${info.executionProvider || 'default EP'}`,
-      );
+      setStatus(`On-device - ${info.executionProvider || 'default EP'}`);
       setIsModelReady(true);
     } catch (error) {
       loadedChat?.close();
@@ -160,6 +193,7 @@ function App(): React.JSX.Element {
     setPrompt('');
     setIsGenerating(true);
     setStatus('Generating on device...');
+    const responseText = new AssistantTextBuffer();
 
     const updateAssistant = (
       update: (message: ChatMessage) => ChatMessage,
@@ -179,15 +213,16 @@ function App(): React.JSX.Element {
         if (!isMounted.current) {
           break;
         }
+        const textSoFar = responseText.append(delta.text);
         updateAssistant(message => ({
           ...message,
-          text: message.text + delta.text,
-          thinking: false,
+          text: textSoFar,
+          thinking: textSoFar.length === 0,
         }));
       }
       updateAssistant(message => ({
         ...message,
-        text: message.text || 'No visible response was generated.',
+        text: responseText.text || 'No visible response was generated.',
         thinking: false,
       }));
       if (isMounted.current) {
@@ -282,8 +317,8 @@ function ModelSetup({
       </View>
       <Text style={styles.setupTitle}>Chat with a local model</Text>
       <Text style={styles.setupDescription}>
-        Choose an ONNX Runtime GenAI model directory. Messages stay private
-        and are generated on this device.
+        Choose an ONNX Runtime GenAI model directory. Messages stay private and
+        are generated on this device.
       </Text>
       <TextInput
         autoCapitalize="none"
@@ -337,7 +372,7 @@ function ModelHeader({
           {status}
         </Text>
       </View>
-      {busy && <ActivityIndicator color="#10a37f" />}
+      {busy && <ActivityIndicator color="#111111" />}
     </View>
   );
 }
@@ -356,11 +391,7 @@ function EmptyConversation(): React.JSX.Element {
   );
 }
 
-function MessageBubble({
-  message,
-}: {
-  message: ChatMessage;
-}): React.JSX.Element {
+function MessageBubble({message}: {message: ChatMessage}): React.JSX.Element {
   const isUser = message.role === 'user';
   return (
     <View
@@ -381,7 +412,7 @@ function MessageBubble({
         ]}>
         {message.thinking ? (
           <View style={styles.thinking}>
-            <ActivityIndicator color="#10a37f" size="small" />
+            <ActivityIndicator color="#111111" size="small" />
             <Text style={styles.assistantText}>Thinking...</Text>
           </View>
         ) : (
@@ -453,7 +484,7 @@ const styles = StyleSheet.create({
   },
   largeAvatar: {
     alignItems: 'center',
-    backgroundColor: '#10a37f',
+    backgroundColor: '#111111',
     borderRadius: 32,
     height: 64,
     justifyContent: 'center',
@@ -493,7 +524,7 @@ const styles = StyleSheet.create({
   },
   loadButton: {
     alignItems: 'center',
-    backgroundColor: '#10a37f',
+    backgroundColor: '#111111',
     borderRadius: 14,
     flexDirection: 'row',
     gap: 8,
@@ -530,7 +561,7 @@ const styles = StyleSheet.create({
   },
   avatar: {
     alignItems: 'center',
-    backgroundColor: '#10a37f',
+    backgroundColor: '#111111',
     borderRadius: 20,
     height: 40,
     justifyContent: 'center',
@@ -596,7 +627,7 @@ const styles = StyleSheet.create({
   },
   messageAvatar: {
     alignItems: 'center',
-    backgroundColor: '#10a37f',
+    backgroundColor: '#111111',
     borderRadius: 15,
     height: 30,
     justifyContent: 'center',
@@ -615,7 +646,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   userBubble: {
-    backgroundColor: '#10a37f',
+    backgroundColor: '#111111',
   },
   assistantBubble: {
     backgroundColor: '#f1f5f9',
@@ -660,7 +691,7 @@ const styles = StyleSheet.create({
   },
   sendButton: {
     alignItems: 'center',
-    backgroundColor: '#10a37f',
+    backgroundColor: '#111111',
     borderRadius: 22,
     height: 44,
     justifyContent: 'center',

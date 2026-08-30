@@ -2,7 +2,7 @@
  * @format
  */
 
-import {Text, View} from 'react-native';
+import {StyleSheet, Text, View} from 'react-native';
 import React from 'react';
 import {afterEach, beforeEach, expect, it, jest} from '@jest/globals';
 
@@ -72,9 +72,23 @@ it('starts with one-time model setup instead of chat diagnostics', () => {
   });
 
   expect(tree!.root.findByProps({testID: 'model-setup'})).toBeTruthy();
-  expect(() =>
-    tree!.root.findByProps({testID: 'chat-composer'}),
-  ).toThrow();
+  expect(() => tree!.root.findByProps({testID: 'chat-composer'})).toThrow();
+});
+
+it('uses a monochrome primary action', () => {
+  act(() => {
+    tree = renderer.create(<App />);
+  });
+  act(() => {
+    tree!.root
+      .findByProps({testID: 'model-path-input'})
+      .props.onChangeText('/models/qwen3');
+  });
+
+  const buttonStyle = StyleSheet.flatten(
+    tree!.root.findByProps({testID: 'load-model-button'}).props.style,
+  );
+  expect(buttonStyle.backgroundColor).toBe('#111111');
 });
 
 it('switches to the model header, message list, and composer after loading', async () => {
@@ -100,9 +114,7 @@ it('keeps the user turn and streams text into an assistant message', async () =>
   await loadModel(tree!);
 
   act(() => {
-    tree!.root
-      .findByProps({testID: 'chat-input'})
-      .props.onChangeText('Hello');
+    tree!.root.findByProps({testID: 'chat-input'}).props.onChangeText('Hello');
   });
   await act(async () => {
     await tree!.root.findByProps({testID: 'send-button'}).props.onPress();
@@ -122,6 +134,29 @@ it('keeps the user turn and streams text into an assistant message', async () =>
       .findAllByType(View)
       .filter(node => node.props.testID === 'assistant-message'),
   ).toHaveLength(1);
+});
+
+it('drops leading blank lines but keeps paragraph breaks in streamed text', async () => {
+  mockCompleteStreaming.mockImplementation(async function* () {
+    yield {text: '\n'};
+    yield {text: '\n    Local answer'};
+    yield {text: '\n\nSecond paragraph'};
+  });
+  act(() => {
+    tree = renderer.create(<App />);
+  });
+  await loadModel(tree!);
+
+  act(() => {
+    tree!.root.findByProps({testID: 'chat-input'}).props.onChangeText('Hello');
+  });
+  await act(async () => {
+    await tree!.root.findByProps({testID: 'send-button'}).props.onPress();
+  });
+
+  const assistant = tree!.root.findByProps({testID: 'assistant-message'});
+  const response = assistant.findAllByType(Text).at(-1)?.props.children;
+  expect(response).toBe('    Local answer\n\nSecond paragraph');
 });
 
 async function loadModel(rendered: ReactTestRenderer): Promise<void> {

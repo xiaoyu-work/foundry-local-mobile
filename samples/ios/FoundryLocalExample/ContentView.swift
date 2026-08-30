@@ -4,6 +4,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private extension Color {
+    static let monochromeAccent = Color(uiColor: .label)
+    static let onMonochromeAccent = Color(uiColor: .systemBackground)
+}
+
 struct ContentView: View {
     @StateObject private var viewModel = ExampleViewModel()
     @State private var isChoosingModel = false
@@ -23,6 +28,7 @@ struct ContentView: View {
             .navigationBarHidden(true)
         }
         .navigationViewStyle(.stack)
+        .tint(.monochromeAccent)
         .fileImporter(
             isPresented: $isChoosingModel,
             allowedContentTypes: [.folder],
@@ -50,9 +56,9 @@ private struct SetupView: View {
             VStack(spacing: 18) {
                 Image(systemName: "cpu")
                     .font(.system(size: 34, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.onMonochromeAccent)
                     .frame(width: 64, height: 64)
-                    .background(Color.accentColor)
+                    .background(Color.monochromeAccent)
                     .clipShape(Circle())
 
                 Text("Chat with a local model")
@@ -81,10 +87,11 @@ private struct SetupView: View {
                     HStack {
                         if viewModel.isLoading {
                             ProgressView()
-                                .tint(.white)
+                                .tint(.onMonochromeAccent)
                         }
                         Text(viewModel.isLoading ? "Loading..." : "Load model")
                             .fontWeight(.semibold)
+                            .foregroundStyle(Color.onMonochromeAccent)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -95,7 +102,7 @@ private struct SetupView: View {
 
                 if let progress = viewModel.loadProgress, viewModel.isLoading {
                     ProgressView(value: progress)
-                        .tint(.accentColor)
+                        .tint(.monochromeAccent)
                 }
 
                 Text(viewModel.status)
@@ -144,9 +151,9 @@ private struct ModelHeader: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
-                .foregroundColor(.white)
+                .foregroundColor(.onMonochromeAccent)
                 .frame(width: 40, height: 40)
-                .background(Color.accentColor)
+                .background(Color.monochromeAccent)
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 2) {
@@ -180,7 +187,7 @@ private struct MessageList: View {
                     VStack(spacing: 12) {
                         Image(systemName: "bubble.left.and.bubble.right")
                             .font(.system(size: 42))
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.monochromeAccent)
                         Text("How can I help?")
                             .font(.title2.weight(.semibold))
                         Text("Responses are generated locally on this device.")
@@ -218,9 +225,9 @@ private struct MessageBubble: View {
             if message.role == .assistant {
                 Text("Q")
                     .font(.caption.weight(.bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.onMonochromeAccent)
                     .frame(width: 30, height: 30)
-                    .background(Color.accentColor)
+                    .background(Color.monochromeAccent)
                     .clipShape(Circle())
             } else {
                 Spacer(minLength: 48)
@@ -239,10 +246,12 @@ private struct MessageBubble: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .foregroundColor(message.role == .user ? .white : .primary)
+            .foregroundColor(
+                message.role == .user ? .onMonochromeAccent : .primary
+            )
             .background(
                 message.role == .user
-                    ? Color.accentColor
+                    ? Color.monochromeAccent
                     : Color(uiColor: .secondarySystemBackground)
             )
             .clipShape(RoundedRectangle(cornerRadius: 20))
@@ -283,9 +292,9 @@ private struct Composer: View {
             Button(action: send) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.onMonochromeAccent)
                     .frame(width: 42, height: 42)
-                    .background(canSend ? Color.accentColor : Color.secondary)
+                    .background(canSend ? Color.monochromeAccent : Color.secondary)
                     .clipShape(Circle())
             }
             .disabled(!canSend)
