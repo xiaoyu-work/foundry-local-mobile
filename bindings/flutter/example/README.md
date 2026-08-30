@@ -23,8 +23,8 @@ flutter run -d <ios-device-id>
 ```
 
 The first two commands build and stage both native XCFrameworks consumed by
-the local Flutter plugin. Release archives already contain those frameworks,
-so consumers of the published package do not run this source-build step.
+the local Flutter plugin. Keep those generated frameworks in the plugin's
+ignored `ios/Frameworks` directory while building the example locally.
 
 The source directory must contain `chat_template.jinja`, `genai_config.json`,
 `model.onnx`, `model.onnx.data`, `tokenizer.json`, and

@@ -17,7 +17,7 @@ device is connected.
 
 Modify the existing Flutter plugin example rather than creating another sample app.
 The example already consumes the SDK through its public Dart API, so extending it tests
-the same integration path a Flutter customer uses without duplicating package and CI
+the same integration path a Flutter customer uses without duplicating package
 configuration.
 
 The model is bundled with the app. It is staged locally under a git-ignored asset
@@ -75,8 +75,8 @@ SDK must therefore be built from its pinned ONNX Runtime GenAI source:
 2. `scripts/build_apple.sh --build-type Release` builds device and simulator
    XCFramework slices.
 3. The two resulting frameworks are copied into
-   `bindings/flutter/ios/Frameworks/`, matching the existing podspec and release
-   workflow:
+   `bindings/flutter/ios/Frameworks/`, matching the paths declared by the existing
+   podspec:
    - `FoundryLocalMobile.xcframework`
    - `onnxruntime-genai.xcframework`
 

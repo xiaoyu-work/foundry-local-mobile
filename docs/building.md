@@ -52,7 +52,7 @@ SHA-256 without re-fetching.
 
 ## Build the core
 
-For a plain native build (this is what CI runs to prove the code compiles cleanly):
+For a plain native build:
 
 ```bash
 cmake -S core -B build/linux -DCMAKE_BUILD_TYPE=Release
@@ -302,7 +302,6 @@ configure failure. The example pins it explicitly in `android/app/build.gradle`.
 | `./scripts/build.sh android-binding` | `bindings/android/build/outputs/aar/foundry-local-mobile-release.aar` |
 | `./scripts/build_apple.sh` | `build/apple/FoundryLocalMobile.xcframework/` |
 | `flutter build apk --debug` (in `bindings/flutter/example/`) | `bindings/flutter/example/build/app/outputs/flutter-apk/app-debug.apk` |
-| CI `Release` workflow | `foundry-local-mobile-{android-jniLibs.zip,android.aar,apple-xcframework.zip,flutter.tar.gz,react-native.tgz}` on the tagged GitHub Release. |
 
 ## Troubleshooting
 
@@ -372,7 +371,7 @@ invoking Gradle.
 
 **`UnsatisfiedLinkError: No implementation found for … NativeBridge.xxx`.**
 The JNI wrapper `.so` is present but does not export a `Java_*` symbol the
-Kotlin `external fun` calls. Reproduce the CI check locally:
+Kotlin `external fun` calls. Reconcile the symbols locally:
 
 ```bash
 python3 scripts/list_kotlin_native_symbols.py bindings/android/src/main/kotlin \
@@ -384,18 +383,3 @@ diff /tmp/kt.txt /tmp/jni.txt
 ```
 
 The two lists must be identical.
-
-## Continuous integration
-
-The `CI` workflow (`.github/workflows/ci.yml`) runs the Linux core build with `-Werror`,
-`shellcheck` on every script, YAML parse on every workflow, the Android core cross-build
-on every ABI, the Apple XCFramework build, and the Android binding's `assembleRelease`
-task with a JNI symbol reconciliation step that catches Kotlin ↔ JNI drift. The `Release` workflow
-(`.github/workflows/release.yml`) builds every platform artifact on a `v*.*.*` tag and
-attaches them to the GitHub Release.
-
-Neither workflow runs end-to-end inference: CI builds ONNX Runtime GenAI from source
-(staged by `scripts/fetch_onnxruntime_genai.sh`) and links it into the core, but it does
-not load a real model or generate tokens on a CI runner. The build itself is the useful
-signal; the current end-to-end proof point for text chat and streaming is a manual
-Windows run against the OGA `qwen3-5` fixture model, not an automated CI job.

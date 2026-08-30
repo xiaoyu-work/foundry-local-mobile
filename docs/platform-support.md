@@ -73,8 +73,8 @@ android {
 }
 ```
 
-Both sample apps in this repo do exactly that, and CI asserts no `lib/x86/` slice
-survives in either APK.
+Both sample apps in this repo do exactly that. Inspect the packaged APK before release
+to confirm that no `lib/x86/` slice survives.
 
 ### Apple
 
@@ -154,8 +154,8 @@ simulator.
 ### Desktop — `device_profile_desktop.cc`
 
 Only the **CPU** EP is registered. Linux and Windows are developer targets, not
-shipping targets, and this keeps the core buildable on a CI runner without an
-emulator or a device.
+shipping targets, and this keeps the core buildable on a developer machine without
+an emulator or a device.
 
 ## Model size budgets
 
@@ -196,7 +196,7 @@ and risking an OS kill.
 * **iOS simulator has no ANE.** CoreML-targeted models match by name but execute on the
   simulator's CPU. Test NPU code paths on device.
 * **Windows and Linux are not shipping targets.** They compile so the core can be
-  built and inspected on a developer's laptop and by CI. There is no packaging story
+  built and inspected on a developer's laptop. There is no packaging story
   for either, and thermal and low-power state are not detected there.
 * **Thermal state and low-power mode** are pushed down from the binding on both
   platforms (`flm_manager_notify_lifecycle`). If a binding does not push them, the
