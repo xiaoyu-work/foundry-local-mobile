@@ -24,6 +24,10 @@ The SDK is **path-only**. You supply a local directory containing either:
   `manifest.json` and no `genai_config.json`, which OGA itself resolves per execution
   provider.
 
+For tools and examples that produce flat OGA models, see
+[Microsoft Olive](https://github.com/microsoft/Olive) and
+[ONNX Runtime Mobius](https://github.com/onnxruntime/mobius).
+
 Getting that directory onto the device (bundled in the app, downloaded by your own code,
 unzipped from your own storage) is entirely up to you. The SDK does not fetch, cache,
 verify or manage models on your behalf.
