@@ -10,11 +10,6 @@ Foundry Local Mobile is a small C++ core plus four idiomatic SDKs (Kotlin, Swift
 TypeScript) that load a local [ONNX Runtime GenAI](https://github.com/microsoft/onnxruntime-genai)
 (OGA) model and run chat inference directly on-device, entirely offline.
 
-> **Naming note.** "Foundry Local Mobile" is this project's name. It is **not** a wrapper
-> around the separate [Microsoft Foundry Local](https://github.com/microsoft/Foundry-Local)
-> desktop runtime, catalog or downloader — that dependency has been removed entirely. The
-> core links directly against the ONNX Runtime GenAI C API.
-
 User data never leaves the device, responses start immediately with zero network latency,
 and your app works fully offline. No per-token costs, no API keys, no backend to maintain,
 and no SDK-managed model catalog or download service.
