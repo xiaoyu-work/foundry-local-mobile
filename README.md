@@ -50,10 +50,7 @@ chat.completeStreaming("What is the golden ratio?").collect { delta -> print(del
 | **React Native** | `@foundry-local/react-native` (npm) | TypeScript — `Promise` + async iterators |
 
 All four bindings expose the same path-first `loadModel(path, executionProvider,
-providerOptions)` shape and sit on the same native core, so behaviour is identical across
-platforms. Self-contained release bundles are implemented for every binding;
-physical-device validation is still pending — see [Current maturity](#current-maturity)
-below.
+providerOptions)` shape and sit on the same native core.
 
 ## Model directory requirements
 
@@ -99,26 +96,6 @@ with whatever process put the files on disk.
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the full breakdown.
-
-## Current maturity
-
-Be precise about what is proven and what is not:
-
-| Capability | Status |
-|---|---|
-| Load a local OGA model directory (flat or package) | Implemented |
-| Text chat completion, streaming deltas | Implemented — Windows end-to-end tested against the OGA `qwen3-5` fixture model |
-| Multi-turn history (export/restore/undo/clear) | Implemented and Windows E2E-tested |
-| Audio transcription (batch and streaming) | Implemented directly with OGA; compatible-model E2E and phone validation still pending |
-| Embeddings | Implemented for `hidden_states`-style outputs with float32, float16 and bfloat16 conversion; model E2E pending |
-| Multimodal chat input | Implemented for local-path or base64 image/audio content through OGA processors; real-model/device E2E pending |
-| Structured tool-call and reasoning deltas | Implemented for models exposing OGA BOT/EOT and BOR/EOR special-token IDs; compatible-model E2E pending |
-| Android build | Compiles for `arm64-v8a` and `x86_64`; on-device E2E not yet proven |
-| iOS build | Compiles against the C ABI; on-device E2E not yet proven |
-| Flutter / React Native | Self-contained Android/Apple release packaging implemented; device validation pending |
-
-There is no catalog, no remote model download, no transport layer, and no SDK-managed
-cache deletion anywhere in this SDK — those concerns belong entirely to your app.
 
 ## Build summary
 
@@ -234,16 +211,6 @@ directory and stream chat output; see [samples/README.md](samples/README.md).
 - [Model packages](docs/model-packages.md) — flat OGA models vs. OGA package directories
 - [Building from source](docs/building.md) — NDK / Xcode toolchains and packaging
 - [Platform support](docs/platform-support.md) — OS versions, ABIs, accelerators
-
-## Limitations
-
-- No catalog, no remote model download/transport, no SDK-managed cache or cache deletion.
-- Audio transcription, embeddings, multimodal chat and structured tool-call parsing are
-  implemented but still need compatible-model and physical-device E2E coverage.
-- Android and iOS on-device (physical hardware) end-to-end validation is not yet proven;
-  today's proof point is a Windows E2E run against the OGA `qwen3-5` fixture model.
-- Flutter and React Native ship self-contained Android and Apple native artifacts;
-  physical-device validation is still pending.
 
 ## License
 
