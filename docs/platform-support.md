@@ -100,6 +100,11 @@ against whichever provider you pass in.
 
 The lists below are what `FillExecutionProviders` registers on each platform.
 
+Provider names accepted by `loadModel()` are normalized at the core boundary.
+Use the short OGA names (`CoreML`, `QNN`, `XNNPACK`, `CPU`); the common
+`CoreMLExecutionProvider` and `XNNPACKExecutionProvider` ORT names remain
+accepted for compatibility.
+
 
 ### Android — `device_profile_android.cc`
 

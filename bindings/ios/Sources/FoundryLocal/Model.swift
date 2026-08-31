@@ -11,7 +11,7 @@ import FoundryLocalMobile
 /// ```swift
 /// let model = try await sdk.loadModel(
 ///     at: "/path/to/model",
-///     executionProvider: "CoreMLExecutionProvider"
+///     executionProvider: "CoreML"
 /// )
 /// let chat = try model.createChatSession()
 /// ```
@@ -71,7 +71,7 @@ public final class Model: @unchecked Sendable {
     /// runtime. To create an already-loaded handle from a local directory, prefer
     /// ``FoundryLocal/loadModel(at:executionProvider:providerOptions:progress:)``.
     ///
-    /// - Parameter executionProvider: Optional EP override, e.g. `"CoreMLExecutionProvider"`.
+    /// - Parameter executionProvider: Optional EP override, e.g. `"CoreML"`.
     /// - Parameter providerOptions: Optional key-value EP configuration, forwarded as
     ///   `provider_options` to the OGA session. Keys and values are provider-specific
     ///   (e.g. `["use_fp16": "1"]` for CoreML).

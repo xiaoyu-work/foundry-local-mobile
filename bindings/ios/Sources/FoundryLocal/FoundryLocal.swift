@@ -76,7 +76,7 @@ public final class FoundryLocal: @unchecked Sendable {
     /// ```swift
     /// let model = try await sdk.loadModel(
     ///     at: "/path/to/model/dir",
-    ///     executionProvider: "CoreMLExecutionProvider"
+    ///     executionProvider: "CoreML"
     /// )
     /// let chat = try model.createChatSession()
     /// ```
@@ -84,7 +84,7 @@ public final class FoundryLocal: @unchecked Sendable {
     /// - Parameter path: Absolute filesystem path to the model directory. The
     ///   directory must already exist on disk.
     /// - Parameter executionProvider: Optional execution provider override, e.g.
-    ///   `"CoreMLExecutionProvider"`.
+    ///   `"CoreML"`.
     /// - Parameter providerOptions: Optional key-value EP configuration, forwarded
     ///   as `provider_options` to the OGA session (e.g. `["use_fp16": "1"]`).
     /// - Parameter progress: Optional progress callback for the load phase.

@@ -22,7 +22,11 @@ let sdk = try FoundryLocal(config: FoundryLocalConfig(appName: "Notes"))
 // Load a model from a local directory.
 let model = try await sdk.loadModel(
     at: "/path/to/models/qwen2.5-0.5b",
-    executionProvider: "CoreMLExecutionProvider"
+    executionProvider: "CoreML",
+    providerOptions: [
+        "ModelFormat": "MLProgram",
+        "MLComputeUnits": "ALL"
+    ]
 )
 
 // Chat.

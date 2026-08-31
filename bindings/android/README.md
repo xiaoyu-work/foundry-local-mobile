@@ -66,7 +66,7 @@ val modelDir = BundledAssets.extractToFilesDir(context, "models/qwen2.5-0.5b", "
 
 val model = foundry.loadModel(
     path = modelDir.absolutePath,
-    executionProvider = "QNNExecutionProvider",
+    executionProvider = "QNN",
 )
 ```
 

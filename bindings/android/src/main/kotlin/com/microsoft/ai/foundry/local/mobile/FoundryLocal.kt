@@ -69,7 +69,7 @@ public class FoundryLocal internal constructor(
      * ```kotlin
      * val model = foundry.loadModel(
      *     path = "/data/models/phi-4-mini",
-     *     executionProvider = "QNNExecutionProvider",
+     *     executionProvider = "QNN",
      * )
      * val chat = model.createChatSession()
      * ```

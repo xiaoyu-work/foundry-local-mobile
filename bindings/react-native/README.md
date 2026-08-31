@@ -63,7 +63,7 @@ Load a model directly from a local directory path:
 
 ```ts
 const model = await foundry.loadModel('/absolute/path/to/model', {
-  executionProvider: 'QNNExecutionProvider',
+  executionProvider: 'QNN',
   providerOptions: { backend_path: 'libQnnHtp.so' },
 });
 ```
@@ -91,10 +91,8 @@ Cancellation propagates automatically. Breaking the `for await` loop calls the i
 
 ## Tool calling
 
-> **Not yet complete.** The native core does not currently detect or parse
-> model-emitted tool calls: `result.toolCalls` is always `null` and no
-> `toolCall` delta is emitted, even when `tools` are supplied. The shape below
-> documents the intended API once structured tool-call parsing lands.
+The native core parses OGA BOT/EOT tool blocks and emits `toolCall` deltas.
+Models must expose the corresponding special-token IDs through OGA.
 
 `tool_calls[].arguments` is a JSON **string**, not a parsed object. A model may emit arguments that do not match the declared tool schema, and deciding whether that is fatal is the app's call. `tool_calls` and `usage` on `CompleteResult` are `null`, not empty, when there is nothing to report:
 

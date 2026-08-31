@@ -3,6 +3,8 @@
 
 #include "model.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 
@@ -12,6 +14,20 @@ namespace flm {
 namespace {
 
 namespace fs = std::filesystem;
+
+std::string NormalizeExecutionProvider(std::string provider) {
+  std::string normalized = provider;
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+
+  if (normalized == "coreml" || normalized == "coremlexecutionprovider") {
+    return "CoreML";
+  }
+  if (normalized == "xnnpack" || normalized == "xnnpackexecutionprovider") {
+    return "XNNPACK";
+  }
+  return provider;
+}
 
 /// Read genai_config.json from a model directory and extract metadata.
 nlohmann::json ReadGenaiConfig(const std::string& path) {
@@ -224,7 +240,7 @@ nlohmann::json Model::Load(const nlohmann::json& options, JobContext& context) {
   std::string ep;
   nlohmann::json provider_options;
   if (options.is_object()) {
-    ep = options.value("execution_provider", std::string());
+    ep = NormalizeExecutionProvider(options.value("execution_provider", std::string()));
     if (options.contains("provider_options") && options["provider_options"].is_object()) {
       provider_options = options["provider_options"];
     }
